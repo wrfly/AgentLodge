@@ -1,0 +1,42 @@
+# The overlay for the Docker engine. The main compose.yml is written for podman.
+#
+#   docker compose -p agentlodge --env-file .env \
+#     -f docker/compose.yml -f docker/compose.docker.yml up -d --build
+#
+# The engines differ in exactly two places. Everything else — networks, volumes, dependencies,
+# environment — applies from the main file unchanged.
+#
+# 1. **The client.** The image installs the docker CLI (CONTAINER_CLIENT=docker), PODMAN_BIN
+#    points at docker, and DOCKER_HOST points at the mounted socket. The socket mount itself
+#    needs no change here: the main file's source path is ${PODMAN_SOCK}, so putting
+#    /var/run/docker.sock in .env is enough. The path inside the container stays
+#    /run/podman/podman.sock, and DOCKER_HOST follows it.
+#
+# 2. **app and gateway must run as uid 10001.** Under rootful docker a container's root is
+#    the host's root, so the workspaces/<uid> that app creates come out root:root 0755 —
+#    while the agent container runs as `--user 10001:10001` and cannot even write its own
+#    HOME, so the CLI never starts. Sharing one bind mount needs one uid on both sides.
+#    (Rootless podman does not have this problem: root inside the container maps to you.)
+#
+#
+#    The cost is that app can no longer reach the root:docker 0660 socket, so it is given the
+#    docker group's gid. The data directory also has to exist and be chowned first:
+#
+#      sudo install -d -o 10001 -g 10001 "$DATA_DIR"
+services:
+  app:
+    build:
+      args:
+        CONTAINER_CLIENT: docker
+    user: "10001:10001"
+    group_add: ["${DOCKER_GID:?the host docker group gid, from getent group docker}"]
+    environment:
+      PODMAN_BIN: docker
+      DOCKER_HOST: unix:///run/podman/podman.sock
+
+  gateway:
+    build:
+      args:
+        CONTAINER_CLIENT: docker
+    # Same image, same SQLite file — the uid has to match app's
+    user: "10001:10001"

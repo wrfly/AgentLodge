@@ -1,0 +1,152 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Claude-like palette */
+:root {
+  --bg: #faf9f5;
+  --surface: #ffffff;
+  --sidebar: #f2f0e9;
+  --elevated: #fbfaf6;
+  --text: #2f2f2c;
+  --text-muted: #706e68;
+  --text-faint: #9a978f;
+  --border: #e3e0d6;
+  --border-strong: #d4d0c4;
+  --accent: #c96442;
+  --accent-soft: #f4e3dc;
+  --danger: #b3452f;
+  --bubble: #f0eee6;
+}
+
+.dark {
+  --bg: #262624;
+  --surface: #30302e;
+  --sidebar: #1f1e1d;
+  --elevated: #333331;
+  --text: #ecebe6;
+  --text-muted: #a5a29a;
+  --text-faint: #7d7a72;
+  --border: #3d3c39;
+  --border-strong: #4d4c48;
+  --accent: #d97757;
+  --accent-soft: #3d2e28;
+  --danger: #e2725b;
+  --bubble: #3a3936;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sidebar: var(--sidebar);
+  --color-elevated: var(--elevated);
+  --color-ink: var(--text);
+  --color-muted: var(--text-muted);
+  --color-faint: var(--text-faint);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-bubble: var(--bubble);
+
+  --font-sans:
+    ui-sans-serif, -apple-system, 'SF Pro Text', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
+}
+
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Shiki's two themes, switched by .dark */
+.shiki,
+.shiki span {
+  color: var(--shiki-light);
+  background-color: transparent;
+}
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark);
+}
+
+/* Caret */
+@keyframes caret-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0.15;
+  }
+}
+.caret {
+  display: inline-block;
+  width: 0.45em;
+  height: 1.05em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.fade-up {
+  animation: fade-up 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
+  }
+  .fade-up {
+    animation: none;
+  }
+}

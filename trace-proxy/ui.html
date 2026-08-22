@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Trace Viewer</title>
+<style>
+:root {
+  color-scheme: light;
+  --page:#f9f9f7; --surface:#fcfcfb; --surface-2:#f2f1ec;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781; --grid:#e1e0d9;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --accent:#2a78d6;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --surface-2:#232322;
+    --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781; --grid:#2c2c2a;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --accent:#3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:#0d0d0d; --surface:#1a1a19; --surface-2:#232322;
+  --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781; --grid:#2c2c2a;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --accent:#3987e5;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--page);color:var(--ink);font-family:var(--sans);font-size:13px;line-height:1.5;
+     height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ---------- header ---------- */
+header{background:var(--surface);border-bottom:1px solid var(--grid);padding:10px 16px;flex-shrink:0}
+.hrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-weight:600;font-size:14px;letter-spacing:-.01em}
+.dir{font-family:var(--mono);font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;max-width:34ch;white-space:nowrap}
+.live{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-2)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.dot.on{background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
+.spacer{flex:1}
+button,select,input{font-family:inherit;font-size:12px;color:var(--ink);background:var(--surface-2);
+  border:1px solid var(--grid);border-radius:6px;padding:4px 9px}
+button{cursor:pointer}
+button:hover{border-color:var(--muted)}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* ---------- KPI ---------- */
+.kpis{display:flex;gap:22px;margin-top:9px;flex-wrap:wrap}
+.kpi{display:flex;flex-direction:column;gap:1px}
+.kpi .v{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi .k{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+
+/* ---------- layout ---------- */
+.layout{flex:1;display:flex;min-height:0}
+aside{width:340px;flex-shrink:0;border-right:1px solid var(--grid);display:flex;flex-direction:column;background:var(--surface)}
+.filters{padding:8px;border-bottom:1px solid var(--grid);display:flex;gap:6px;flex-wrap:wrap}
+.filters input{flex:1;min-width:120px}
+.list{flex:1;overflow-y:auto}
+.item{padding:8px 12px;border-bottom:1px solid var(--grid);cursor:pointer;display:flex;flex-direction:column;gap:3px}
+.item:hover{background:var(--surface-2)}
+.item.sel{background:color-mix(in srgb,var(--accent) 12%,transparent);box-shadow:inset 3px 0 0 var(--accent)}
+.item.new{animation:flash 1.4s ease-out}
+@keyframes flash{from{background:color-mix(in srgb,var(--good) 26%,transparent)}}
+.item .l1{display:flex;align-items:center;gap:7px}
+.id{font-family:var(--mono);font-size:11px;color:var(--muted);min-width:26px}
+.pill{font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;font-variant-numeric:tabular-nums}
+.pill.ok{background:color-mix(in srgb,var(--good) 18%,transparent);color:var(--good)}
+.pill.err{background:color-mix(in srgb,var(--critical) 18%,transparent);color:var(--critical)}
+.pill.warn{background:color-mix(in srgb,var(--warning) 22%,transparent);color:var(--ink-2)}
+.path{font-family:var(--mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.item .l2{display:flex;gap:9px;font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.tag{font-size:9.5px;border:1px solid var(--grid);border-radius:3px;padding:0 4px;color:var(--ink-2)}
+
+main{flex:1;overflow-y:auto;padding:0}
+.empty{display:flex;height:100%;align-items:center;justify-content:center;color:var(--muted);flex-direction:column;gap:8px}
+
+/* ---------- tabs ---------- */
+.tabs{display:flex;gap:2px;padding:8px 16px 0;border-bottom:1px solid var(--grid);position:sticky;top:0;background:var(--page);z-index:5}
+.tab{padding:6px 12px;border:none;background:none;border-bottom:2px solid transparent;border-radius:0;color:var(--ink-2)}
+.tab.on{border-bottom-color:var(--accent);color:var(--ink);font-weight:600;background:none}
+.pane{padding:16px}
+
+/* ---------- blocks ---------- */
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:20px 0 8px;font-weight:600}
+h2:first-child{margin-top:0}
+.card{background:var(--surface);border:1px solid var(--grid);border-radius:8px;padding:12px;margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+td{padding:3px 8px 3px 0;vertical-align:top}
+td.k{color:var(--accent);font-family:var(--mono);font-size:11.5px;white-space:nowrap;width:1%}
+td.v{font-family:var(--mono);font-size:11.5px;word-break:break-all;color:var(--ink-2)}
+pre{font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;word-break:break-word;line-height:1.55}
+.mono{font-family:var(--mono)}
+.muted{color:var(--muted)}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---------- token bar ---------- */
+.bar{display:flex;height:26px;border-radius:5px;overflow:hidden;gap:2px;background:var(--surface-2);margin:8px 0 6px}
+.seg{min-width:2px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11px}
+.lg{display:flex;align-items:center;gap:6px}
+.sw{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+.lg .n{font-variant-numeric:tabular-nums;font-weight:600}
+.lg .t{color:var(--muted)}
+
+/* ---------- messages ---------- */
+.msg{border:1px solid var(--grid);border-radius:8px;margin-bottom:8px;background:var(--surface);overflow:hidden}
+.msg>.hd{padding:6px 10px;background:var(--surface-2);display:flex;gap:8px;align-items:center;font-size:11px}
+.role{font-weight:600;text-transform:uppercase;letter-spacing:.05em;font-size:10px}
+.role.user{color:var(--s1)} .role.assistant{color:var(--s3)} .role.system{color:var(--s2)}
+.blk{padding:8px 10px;border-top:1px solid var(--grid)}
+.blk:first-child{border-top:none}
+.btype{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;display:flex;gap:8px;align-items:center}
+.chip{font-size:9.5px;padding:0 5px;border-radius:3px;background:color-mix(in srgb,var(--s4) 22%,transparent);color:var(--ink-2)}
+.fold{max-height:180px;overflow:hidden;position:relative}
+.fold.open{max-height:none}
+.fold:not(.open)::after{content:"";position:absolute;inset:auto 0 0 0;height:44px;
+  background:linear-gradient(transparent,var(--surface))}
+.foldbtn{font-size:10.5px;color:var(--accent);background:none;border:none;padding:4px 0 0;cursor:pointer}
+
+/* ---------- sse ---------- */
+.ev{display:flex;gap:10px;padding:3px 0;border-bottom:1px solid var(--grid);font-family:var(--mono);font-size:11px;align-items:baseline}
+.ev .n{color:var(--muted);min-width:34px;text-align:right;font-variant-numeric:tabular-nums}
+.ev .e{min-width:210px;font-weight:600}
+.ev .d{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;cursor:pointer}
+.ev .d.open{white-space:pre-wrap;overflow:visible}
+.ev.t-text .e{color:var(--s3)} .ev.t-tool .e{color:var(--s4)}
+.ev.t-start .e{color:var(--s1)} .ev.t-stop .e{color:var(--s2)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hrow">
+    <span class="brand">LLM Trace Viewer</span>
+    <span class="dir" id="dir"></span>
+    <span class="live"><span class="dot" id="dot"></span><span id="livetxt">connecting…</span></span>
+    <span class="spacer"></span>
+    <button id="theme">◐ Theme</button>
+  </div>
+  <div class="kpis" id="kpis"></div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="filters">
+      <input id="q" placeholder="search path / model  (press / to focus)">
+      <button id="fErr">errors only</button>
+      <button id="fStream">streamed only</button>
+    </div>
+    <div class="list" id="list"></div>
+  </aside>
+  <main id="main">
+    <div class="empty"><div>← pick a request</div><div class="muted" style="font-size:11px">j / k to move</div></div>
+  </main>
+</div>
+
+<script>
+// '' when standalone, '/__trace' when mounted under the proxy. The server substitutes it.
+const API = '__API_BASE__';
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = (n) => n == null ? '–' : n.toLocaleString('en-US');
+const short = (m) => (m || '').replace(/^(claude|gpt|o\d)-?/, (x) => x).replace(/-20\d{6}$/, '');
+
+let rows = [], sel = null, filters = { q: '', err: false, stream: false };
+
+// ---------------------------------------------------------------- The list and the KPIs
+
+function statusClass(r) {
+  if (r.error) return 'err';
+  if (r.status >= 500) return 'err';
+  if (r.status >= 400) return 'warn';
+  return 'ok';
+}
+
+function visible() {
+  return rows.filter((r) => {
+    if (filters.err && !(r.error || r.status >= 400)) return false;
+    if (filters.stream && !r.stream) return false;
+    if (filters.q) {
+      const hay = `${r.path} ${r.model || ''} ${r.upstream || ''}`.toLowerCase();
+      if (!hay.includes(filters.q.toLowerCase())) return false;
+    }
+    return true;
+  });
+}
+
+function renderList(newIds = new Set()) {
+  const v = visible();
+  $('#list').innerHTML = v.map((r) => {
+    const u = r.usage || {};
+    const inTok = u.input_tokens ?? u.prompt_tokens;
+    const outTok = u.output_tokens ?? u.completion_tokens;
+    const cr = u.cache_read_input_tokens;
+    return `<div class="item ${sel === r.id ? 'sel' : ''} ${newIds.has(r.id) ? 'new' : ''}" data-id="${r.id}">
+      <div class="l1">
+        <span class="id">#${r.id}</span>
+        <span class="pill ${statusClass(r)}">${r.error ? 'ERR' : r.status}</span>
+        <span class="path">${esc(r.path)}</span>
+      </div>
+      <div class="l2">
+        ${r.model ? `<span class="tag">${esc(short(r.model))}</span>` : ''}
+        ${r.stream ? '<span class="tag">SSE</span>' : ''}
+        ${r.attempts ? `<span class="tag" style="color:var(--s2)">↻${r.attempts}</span>` : ''}
+        ${r.queued_ms ? `<span class="tag" style="color:var(--s4)">⧗${fmt(r.queued_ms)}ms</span>` : ''}
+        ${r.truncated ? '<span class="tag" style="color:var(--critical)">truncated</span>' : ''}
+        <span class="num">${fmt(r.duration_ms)}ms</span>
+        ${inTok != null ? `<span class="num">↑${fmt(inTok)}</span>` : ''}
+        ${outTok != null ? `<span class="num">↓${fmt(outTok)}</span>` : ''}
+        ${cr ? `<span class="num" style="color:var(--s1)">⚡${fmt(cr)}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('') || '<div class="empty" style="height:120px">nothing matches</div>';
+
+  $('#list').querySelectorAll('.item').forEach((el) =>
+    el.onclick = () => select(Number(el.dataset.id)));
+}
+
+function renderKPI() {
+  const n = rows.length;
+  const errs = rows.filter((r) => r.error || r.status >= 400).length;
+  let inTok = 0, outTok = 0, cacheRead = 0, cacheWrite = 0, ms = 0, timed = 0;
+  for (const r of rows) {
+    const u = r.usage || {};
+    inTok += u.input_tokens ?? u.prompt_tokens ?? 0;
+    outTok += u.output_tokens ?? u.completion_tokens ?? 0;
+    cacheRead += u.cache_read_input_tokens ?? 0;
+    cacheWrite += u.cache_creation_input_tokens ?? 0;
+    if (r.duration_ms) { ms += r.duration_ms; timed++; }
+  }
+  const totalIn = inTok + cacheRead + cacheWrite;
+  const hit = totalIn ? Math.round((cacheRead / totalIn) * 100) : null;
+  const k = (v, label) => `<div class="kpi"><span class="v num">${v}</span><span class="k">${label}</span></div>`;
+  $('#kpis').innerHTML =
+    k(n, 'requests') +
+    k(errs ? `<span style="color:var(--critical)">${errs}</span>` : '0', 'failed') +
+    k(fmt(totalIn), 'input tokens') +
+    k(fmt(outTok), 'output tokens') +
+    k(hit == null ? '–' : hit + '%', 'cache hits') +
+    k(timed ? fmt(Math.round(ms / timed)) + 'ms' : '–', 'average time');
+}
+
+// ---------------------------------------------------------------- Detail
+
+const TOK_SLOTS = [
+  { key: 'cache_read_input_tokens',     alt: null,               label: 'cache read',  color: 'var(--s1)' },
+  { key: 'cache_creation_input_tokens', alt: null,               label: 'cache write', color: 'var(--s2)' },
+  { key: 'input_tokens',                alt: 'prompt_tokens',    label: 'new input',   color: 'var(--s3)' },
+  { key: 'output_tokens',               alt: 'completion_tokens',label: 'output',      color: 'var(--s4)' },
+];
+
+function tokenBar(usage) {
+  if (!usage) return '';
+  const parts = TOK_SLOTS
+    .map((s) => ({ ...s, n: usage[s.key] ?? (s.alt ? usage[s.alt] : 0) ?? 0 }))
+    .filter((s) => s.n > 0);
+  if (!parts.length) return '';
+  const total = parts.reduce((a, b) => a + b.n, 0);
+  return `<div class="card">
+    <div class="bar">${parts.map((p) =>
+      `<div class="seg" style="flex:${p.n};background:${p.color}" title="${p.label} ${fmt(p.n)}"></div>`).join('')}</div>
+    <div class="legend">${parts.map((p) =>
+      `<span class="lg"><span class="sw" style="background:${p.color}"></span>
+       <span class="n">${fmt(p.n)}</span><span class="t">${p.label} · ${Math.round(p.n / total * 100)}%</span></span>`).join('')}
+    </div>
+  </div>`;
+}
+
+/** raw_headers is [[name,value],…], preserving the case and order the client or upstream sent */
+function rawTable(pairs, fallback) {
+  if (!Array.isArray(pairs) || !pairs.length) return kvTable(fallback);
+  return `<table>${pairs.map(([k, v]) =>
+    `<tr><td class="k">${esc(k)}</td><td class="v">${esc(v)}</td></tr>`).join('')}</table>`;
+}
+
+function kvTable(obj) {
+  const e = Object.entries(obj || {}).filter(([, v]) => v !== null && v !== undefined && v !== '');
+  if (!e.length) return '<div class="muted">(none)</div>';
+  return `<table>${e.map(([k, v]) =>
+    `<tr><td class="k">${esc(k)}</td><td class="v">${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</td></tr>`).join('')}</table>`;
+}
+
+let foldSeq = 0;
+function foldable(text, limit = 600) {
+  const s = String(text ?? '');
+  if (s.length <= limit) return `<pre>${esc(s)}</pre>`;
+  const id = 'f' + (++foldSeq);
+  return `<div class="fold" id="${id}"><pre>${esc(s)}</pre></div>
+    <button class="foldbtn" onclick="document.getElementById('${id}').classList.toggle('open');
+      this.textContent=document.getElementById('${id}').classList.contains('open')?'▲ collapse':'▼ show all (${s.length} chars)'">
+      ▼ show all (${s.length} chars)</button>`;
+}
+
+function renderBlock(b) {
+  const cache = b.cache_control ? '<span class="chip">CACHE</span>' : '';
+  const head = (t, extra = '') => `<div class="btype">${esc(t)}${extra}${cache}</div>`;
+  if (b.type === 'text' || b.type === 'input_text' || b.type === 'output_text')
+    return `<div class="blk">${head(b.type)}${foldable(b.text)}</div>`;
+  if (b.type === 'thinking')
+    return `<div class="blk">${head('thinking')}${foldable(b.thinking)}</div>`;
+  if (b.type === 'tool_use' || b.type === 'function_call')
+    return `<div class="blk">${head(b.type, ` <span style="color:var(--s4);font-weight:600">${esc(b.name)}</span>
+      <span class="muted">${esc(b.id || b.call_id || '')}</span>`)}
+      ${foldable(JSON.stringify(b.input ?? b.arguments ?? {}, null, 2))}</div>`;
+  if (b.type === 'tool_result' || b.type === 'function_call_output') {
+    const c = typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? b.output ?? '', null, 2);
+    return `<div class="blk">${head(b.type, ` <span class="muted">${esc(b.tool_use_id || b.call_id || '')}</span>
+      ${b.is_error ? '<span class="chip" style="background:color-mix(in srgb,var(--critical) 22%,transparent)">ERROR</span>' : ''}`)}
+      ${foldable(c)}</div>`;
+  }
+  if (b.type === 'image' || b.type === 'input_image')
+    return `<div class="blk">${head('image', ` <span class="muted">${esc(b.source?.media_type || '')} ·
+      ${fmt(b.source?.data?.length || 0)} B64 chars</span>`)}</div>`;
+  return `<div class="blk">${head(b.type || '?')}${foldable(JSON.stringify(b, null, 2))}</div>`;
+}
+
+function renderMessages(msgs) {
+  if (!Array.isArray(msgs)) return '<div class="muted">(none)</div>';
+  return msgs.map((m, i) => {
+    const role = m.role || m.type || '?';
+    const blocks = typeof m.content === 'string'
+      ? [{ type: 'text', text: m.content }]
+      : (Array.isArray(m.content) ? m.content : [m]);
+    return `<div class="msg">
+      <div class="hd"><span class="muted">[${i}]</span>
+        <span class="role ${esc(role)}">${esc(role)}</span>
+        <span class="muted">${blocks.length} block</span></div>
+      ${blocks.map(renderBlock).join('')}</div>`;
+  }).join('');
+}
+
+const EV_CLASS = (name, data) => {
+  const inner = data?.delta?.type || data?.content_block?.type || '';
+  const s = `${name} ${inner}`;
+  if (/text_delta|output_text|thinking/.test(s)) return 't-text';
+  if (/tool_use|input_json|function_call/.test(s)) return 't-tool';
+  if (/start|created/.test(s)) return 't-start';
+  if (/stop|completed|done/.test(s)) return 't-stop';
+  return '';
+};
+
+function renderDetail(t) {
+  const m = t.meta, req = t.request || {}, sum = t.summary, rec = t.reconstructed;
+  const usage = rec?.usage || t.responseBody?.usage || m.usage;
+  const body = t.requestBody || {};
+
+  const overview = `
+    <h2>Overview</h2>
+    <div class="card">${kvTable({
+      time: req.time, method: `${m.method} ${esc(req.url || m.path)}`, upstream: m.upstream,
+      status: m.error ? `ERROR ${m.error}` : m.status, duration: `${fmt(m.duration_ms)} ms`,
+      TTFB: t.responseHeaders?.ttfb_ms != null ? `${fmt(t.responseHeaders.ttfb_ms)} ms` : null,
+      model: m.model, streamed: m.stream ? 'yes' : 'no',
+      'upstream protocol': m.upstream_http_version, 'response encoding': m.content_encoding,
+      retries: m.attempts ? `${m.attempts} (${m.attempts + 1} attempts in all)` : null,
+      'local queue': m.queued_ms ? `${fmt(m.queued_ms)} ms` : null,
+      truncated: m.truncated ? `${m.truncated.message} @ ${m.truncated.after_ms}ms, ${m.truncated.events_received ?? '?'} events received` : null,
+      'stop reason': m.stop_reason, 'request body': `${fmt(m.request_bytes)} B`,
+      'SSE events': rec?.event_count,
+    })}</div>
+    ${usage ? '<h2>Token breakdown</h2>' + tokenBar(usage) : ''}
+    ${t.quota ? `<h2>Allowance / rate limits</h2><div class="card">${kvTable(t.quota)}</div>` : ''}
+    ${rec?.rate_limits ? `<h2>Allowance (from the SSE stream)</h2><div class="card"><pre>${esc(JSON.stringify(rec.rate_limits, null, 2))}</pre></div>` : ''}
+    ${rec?.thinking ? `<h2>thinking</h2><div class="card">${foldable(rec.thinking)}</div>` : ''}
+    ${rec?.text ? `<h2>Reply text</h2><div class="card">${foldable(rec.text, 1200)}</div>` : ''}
+    ${(rec?.tool_uses || []).length ? `<h2>Tool calls</h2>` + rec.tool_uses.map((tu) =>
+      `<div class="card"><div class="btype"><span style="color:var(--s4);font-weight:600">${esc(tu.name)}</span>
+       <span class="muted">${esc(tu.id || '')}</span></div>
+       ${foldable(JSON.stringify(tu.parsed ?? tu.input, null, 2))}</div>`).join('') : ''}
+    ${m.retry_log ? `<h2>Retry history</h2><div class="card"><pre>${esc(JSON.stringify(m.retry_log, null, 2))}</pre></div>` : ''}
+    ${t.error ? `<h2>${m.truncated ? 'Where it broke off' : 'Proxy error'}</h2><div class="card"><pre>${esc(JSON.stringify(t.error, null, 2))}</pre></div>` : ''}
+  `;
+
+  const request = `
+    <h2>Request headers <span class="muted" style="text-transform:none;letter-spacing:0">(exactly as the client sent them)</span></h2>
+    <div class="card">${rawTable(req.raw_headers, req.headers)}</div>
+    ${sum ? `<h2>Parameters</h2><div class="card">${kvTable({
+      model: sum.model, stream: sum.stream, max_tokens: sum.max_tokens,
+      temperature: sum.temperature, tool_choice: sum.tool_choice && JSON.stringify(sum.tool_choice),
+      thinking: sum.thinking && JSON.stringify(sum.thinking),
+      metadata: sum.metadata && JSON.stringify(sum.metadata),
+      cache_breakpoints: sum.cache_breakpoints,
+    })}</div>` : ''}
+    ${body.system ? `<h2>system</h2>` + (Array.isArray(body.system) ? body.system : [{ type: 'text', text: body.system }])
+      .map((b, i) => `<div class="card"><div class="btype">[${i}] ${fmt((b.text || '').length)} chars
+        ${b.cache_control ? '<span class="chip">CACHE</span>' : ''}</div>${foldable(b.text)}</div>`).join('') : ''}
+    ${body.instructions ? `<h2>instructions</h2><div class="card">${foldable(body.instructions)}</div>` : ''}
+    ${Array.isArray(body.tools) ? `<h2>tools (${body.tools.length})</h2><div class="card"><table>
+      ${body.tools.map((tl) => {
+        const name = tl.name || tl.function?.name;
+        const desc = tl.description || tl.function?.description || '';
+        const schema = JSON.stringify(tl.input_schema || tl.parameters || tl.function?.parameters || {});
+        return `<tr><td class="k">${esc(name)}</td>
+          <td class="v">desc ${fmt(desc.length)}c · schema ${fmt(schema.length)}c
+          ${tl.cache_control ? '<span class="chip">CACHE</span>' : ''}</td></tr>`;
+      }).join('')}</table></div>` : ''}
+    <h2>messages (${(body.messages || body.input || []).length})</h2>
+    ${renderMessages(body.messages || body.input)}
+  `;
+
+  const response = `
+    <h2>Response headers <span class="muted" style="text-transform:none;letter-spacing:0">(exactly as the upstream sent them)</span></h2>
+    <div class="card">${rawTable(t.responseHeaders?.raw_headers, t.responseHeaders?.headers)}</div>
+    ${rec ? `<h2>Reconstructed from SSE</h2><div class="card">${kvTable({
+      model: rec.model, stop_reason: rec.stop_reason, events: rec.event_count,
+      usage: JSON.stringify(rec.usage),
+    })}</div>${rec.text ? `<div class="card">${foldable(rec.text, 1500)}</div>` : ''}` : ''}
+    ${t.responseBody ? `<h2>Response body</h2><div class="card">${foldable(JSON.stringify(t.responseBody, null, 2), 1500)}</div>` : ''}
+  `;
+
+  const evs = t.stream?.events || [];
+  const sse = evs.length ? `
+    <h2>SSE events (${t.stream.total}${t.stream.truncated ? ', truncated' : ''})</h2>
+    <div class="card">${evs.map((e, i) => {
+      const name = e.event || e.data?.type || '?';
+      const d = JSON.stringify(e.data);
+      return `<div class="ev ${EV_CLASS(name, e.data)}"><span class="n">${i}</span>
+        <span class="e">${esc(name)}</span>
+        <span class="d" onclick="this.classList.toggle('open')">${esc(d)}</span></div>`;
+    }).join('')}</div>` : '<div class="muted" style="padding:16px">this one was not a streamed response</div>';
+
+  const raw = `<h2>Files on disk</h2><div class="card"><table>${(t.files || []).map((f) =>
+    `<tr><td class="k"><a href="${API}/api/raw/${m.id}/${encodeURIComponent(f)}" target="_blank"
+      style="color:var(--accent)">${esc(f)}</a></td><td class="v muted">${esc(m.dir)}/${esc(f)}</td></tr>`).join('')}</table></div>
+    <h2>request.body.json</h2><div class="card">${foldable(JSON.stringify(t.requestBody, null, 2), 1500)}</div>`;
+
+  const panes = { Overview: overview, Request: request, Response: response, SSE: sse, Files: raw };
+  const names = Object.keys(panes);
+  $('#main').innerHTML =
+    `<div class="tabs">${names.map((n, i) =>
+      `<button class="tab ${i === 0 ? 'on' : ''}" data-t="${n}">${n}</button>`).join('')}</div>
+     ${names.map((n, i) => `<div class="pane" data-p="${n}" style="display:${i === 0 ? 'block' : 'none'}">${panes[n]}</div>`).join('')}`;
+
+  $('#main').querySelectorAll('.tab').forEach((b) => b.onclick = () => {
+    $('#main').querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === b));
+    $('#main').querySelectorAll('.pane').forEach((p) => p.style.display = p.dataset.p === b.dataset.t ? 'block' : 'none');
+  });
+  $('#main').scrollTop = 0;
+}
+
+async function select(id) {
+  sel = id;
+  renderList();
+  $('#main').innerHTML = '<div class="empty">loading…</div>';
+  const t = await (await fetch(API + '/api/trace/' + id)).json();
+  if (sel === id) renderDetail(t);
+}
+
+// ---------------------------------------------------------------- Startup
+
+async function boot() {
+  const d = await (await fetch(API + '/api/index')).json();
+  rows = d.rows;
+  $('#dir').textContent = d.traceDir;
+  $('#dir').title = d.traceDir;
+  renderKPI();
+  renderList();
+
+  const es = new EventSource(API + '/api/stream');
+  es.onopen = () => { $('#dot').classList.add('on'); $('#livetxt').textContent = 'live'; };
+  es.onerror = () => { $('#dot').classList.remove('on'); $('#livetxt').textContent = 'disconnected'; };
+  es.onmessage = (ev) => {
+    const r = JSON.parse(ev.data);
+    rows.push(r);
+    renderKPI();
+    renderList(new Set([r.id]));
+  };
+}
+
+$('#q').oninput = (e) => { filters.q = e.target.value; renderList(); };
+$('#fErr').onclick = (e) => { filters.err = !filters.err; e.target.classList.toggle('on', filters.err); renderList(); };
+$('#fStream').onclick = (e) => { filters.stream = !filters.stream; e.target.classList.toggle('on', filters.stream); renderList(); };
+$('#theme').onclick = () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : cur === 'light' ? null : 'dark';
+  if (next) document.documentElement.setAttribute('data-theme', next);
+  else document.documentElement.removeAttribute('data-theme');
+};
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') { if (e.key === 'Escape') e.target.blur(); return; }
+  if (e.key === '/') { e.preventDefault(); $('#q').focus(); return; }
+  const v = visible();
+  if (!v.length) return;
+  const i = v.findIndex((r) => r.id === sel);
+  if (e.key === 'j') select(v[Math.min(i + 1, v.length - 1)].id);
+  if (e.key === 'k') select(v[Math.max(i - 1, 0)].id);
+});
+
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "@agentlodge/gateway-auth",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Credential-injecting, usage-metering gateway: DeepSeek passes straight through, Claude/Codex use the host subscription credentials",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx src/usage.test.ts"
+  },
+  "engines": { "node": ">=22" }
+}

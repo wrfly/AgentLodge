@@ -1,0 +1,33 @@
+{
+  "name": "@agentlodge/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/core/db && cp src/core/db/schema.sql dist/core/db/",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:period": "tsx src/core/db/period.test.ts",
+    "test:secret-file": "tsx src/core/secret-file.test.ts",
+    "test:providers": "tsx src/core/db/providers.test.ts",
+    "test:upstream": "tsx src/gateway/upstream.test.ts",
+    "test:credential": "tsx src/core/credential.test.ts",
+    "test:registry": "tsx src/app/agents/registry.test.ts",
+    "test:i18n": "tsx src/core/i18n/i18n.test.ts",
+    "test:workspace": "tsx src/app/workspace.test.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/cors": "^10.0.2",
+    "@fastify/multipart": "^10.1.1",
+    "fastify": "^5.2.1",
+    "jose": "^6.2.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

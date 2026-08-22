@@ -1,0 +1,22 @@
+node_modules/
+dist/
+data/
+*.log
+.DS_Store
+.env
+.env.local
+.jwt-secret
+
+# What the trace proxy writes to disk: complete prompts in plaintext. Never commit it.
+# A glob rather than named directories: naming them means a new one — someone changing
+# TRACE_DIR, say — slips through, and what slips through is everybody's full conversations,
+# pushed to a remote. The traces-demo sample got in exactly that way.
+trace-proxy/traces*/
+# Generated CommonJS marker; see scripts/ensure-trace-proxy-cjs.mjs
+trace-proxy/package.json
+
+# Real data. Never committed.
+data.backup-*/
+log/
+
+notes.md

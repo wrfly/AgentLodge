@@ -1,0 +1,334 @@
+# Production deployment on Linux.
+#
+# The agent container **has internet access**. The whole point of it is "Claude Code running
+# in a sandbox", which means npm install, git clone, and looking things up. Isolation comes
+# from the container, not from cutting the wire:
+#
+#   agent container ──(agent-net)──▶ gateway ──▶ api.deepseek.com
+#                          └───────▶ the public internet
+#
+# The property that matters is unchanged: **the real API key exists only inside the gateway
+# process**. All the container holds is a 20-minute ticket bound to (user, conversation,
+# turn), and metering cannot be sidestepped.
+#
+# The gateway is the only friendly face on agent-net — app and caddy are not on that network
+# — so an agent cannot reach the main service or anything internal. It gets out the same way
+# any random machine on the internet would.
+#
+# For a version with no network at all, add `internal: true` to agent-net (see the bottom of
+# this file). The price is that the agent can no longer install packages or look anything up.
+
+# The data directory. **Must be a real path on the host; a named volume will not do.**
+#
+# The app container creates agent containers through the mounted podman.sock, and the source
+# path of a `-v` is resolved by podman *on the host*. With a named volume, app only knows the
+# container-side /data, which does not exist on the host, and the result is
+# `statfs /data/workspaces/<uid>: no such file or directory`.
+# A bind mount makes the path mean the same thing on both sides, and HOST_DATA_DIR tells app
+# what it is.
+#
+# **It has to be absolute.** compose resolves a relative path against the directory holding
+# this file, but HOST_DATA_DIR is passed to app verbatim and resolved inside the container
+# against /app — so the two end up pointing at different places. app checks this at startup
+# and exits rather than proceed.
+x-data-dir: &data-dir ${DATA_DIR:?must be an absolute path on the host, e.g. /srv/agentlodge/data}
+
+# The audit proxy's address. **app and gateway must agree on it** — the rule lives in
+# core/egress.ts and is used by both layers: app validates an upstream change made in the
+# console, and the gateway enforces it before a request goes out. Configure only one side and
+# you get "the console refuses to switch, and the gateway sends anyway", which is exactly the
+# contradiction the first deployment ran into.
+x-audit-proxy-url: &audit-proxy-url ${AUDIT_PROXY_URL:-http://audit:8796}
+
+# Directories an upstream key may be read from, colon-separated like PATH.
+# Empty = the defaults `<DATA_DIR>/secrets` and `/run/secrets`, which is enough most of the
+# time: the data directory is already mounted into app and gateway, so a key file goes in its
+# secrets/ subdirectory.
+#
+# **app and gateway must agree on it**: app validates paths and lists directories with it, and
+# the gateway is what actually reads the file. Set on one side only and the console looks
+# perfectly healthy right up until a request answers "no API Key configured".
+x-secret-file-roots: &secret-file-roots ${SECRET_FILE_ROOTS:-}
+
+# The credential for the audit proxy's control API. app and audit must agree on it.
+# Leave it unset and the proxy **does not mount** the control API at all, which turns that
+# part of the console read-only. That is the deliberate default: an endpoint that can edit the
+# allowlist is an endpoint that can aim the audit proxy anywhere.
+x-audit-admin-token: &audit-admin-token ${AUDIT_ADMIN_TOKEN:?must be set, e.g. openssl rand -base64 32}
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/server.Dockerfile
+    environment:
+      # Fixed, and secret: whoever holds it can forge an administrator and the billing
+      # credentials both. Changing it means the DeepSeek and SendGrid keys saved in the
+      # console can never be decrypted again and have to be entered afresh.
+      JWT_SECRET: ${JWT_SECRET:?must be set, see "Deployment" in MANUAL.md}
+      ROLE: app
+      # Must be off when running locally over http: browsers reject a Secure cookie from an
+      # http origin, and what that looks like is a 200 from the login endpoint followed by a
+      # request that is somehow signed out again. Production runs on https and leaves it true.
+      SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
+      DATA_DIR: /data
+      # What the console's "read the key from a file" field validates and lists against; see
+      # the top of this file
+      SECRET_FILE_ROOTS: *secret-file-roots
+      USE_CONTAINERS: "true"
+      AGENT_NETWORK: agentlodge-agent-net
+      AGENT_IMAGE: agentlodge/agent:1.0
+      # ⚠️ Both addresses are needed, and they are not the same thing (DESIGN §2.5.6):
+      #   GATEWAY_URL          what the agent container uses (it is on agent-net)
+      #   GATEWAY_INTERNAL_URL what this process uses (reading gate status for the console)
+      # Omitting the second falls back to 127.0.0.1:8788, which inside the app container is
+      # app itself: ECONNREFUSED, and a console reporting "cannot reach the gateway" while the
+      # gateway is perfectly fine. This deployment hit exactly that.
+      GATEWAY_URL: http://gateway:8788
+      GATEWAY_INTERNAL_URL: http://gateway:8788
+      # What to tell users to put in ANTHROPIC_BASE_URL. Displayed on the settings page only,
+      # and never used for forwarding. Left unset, users copy whatever is in their address
+      # bar — usually right, and wrong the moment a reverse proxy sits on another hostname.
+      PUBLIC_GATEWAY_URL: ${PUBLIC_GATEWAY_URL:-${APP_BASE_URL:-http://localhost}}
+      # Validating an upstream change in the console uses the same rule; see the top of the file
+      AUDIT_PROXY_URL: *audit-proxy-url
+      # How the console's audit-proxy panel reads and writes the proxy's configuration
+      AUDIT_ADMIN_TOKEN: *audit-admin-token
+      # The source path for `-v` when creating an agent container; see the top of the file
+      HOST_DATA_DIR: *data-dir
+      # Inside a container this has to be 0.0.0.0, or Caddy cannot reach it — the default
+      # listens on 127.0.0.1 only
+      HOST: 0.0.0.0
+    volumes:
+      # Long form: a YAML alias substitutes a whole node, so `- *data-dir:/data` is not a
+      # string it can be spliced into
+      - type: bind
+        source: *data-dir
+        target: /data
+        bind: { create_host_path: true }
+      # Needed to create agent containers.
+      # This is the default path on Linux. macOS keeps the podman machine's socket in a
+      # temporary directory; override it with
+      # `PODMAN_SOCK=$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')`.
+      - ${PODMAN_SOCK:-/run/podman/podman.sock}:/run/podman/podman.sock
+    networks: [frontend, backend]
+    depends_on: [gateway]
+    # SELinux hosts — Fedora, RHEL, CoreOS, and the podman machine on macOS — block the
+    # mounted podman.sock, which shows up as "permission denied" inside the container while
+    # everything on the host is fine.
+    # Not `:z` — that **relabels the host's socket**, which can turn round and affect the
+    # host's own podman.
+    security_opt: ["label=disable"]
+    restart: unless-stopped
+
+  # The upstream key does not have to be typed into the console; it can be read from a file
+  # instead — and **this is the container that reads it**. A key produced by another container
+  # (a secret sidecar, a vault agent) is wired in like this:
+  #
+  #   gateway:
+  #     volumes:
+  #       - vault-out:/data/secrets/vault:ro   # <DATA_DIR>/secrets is already allowlisted
+  #   vault-agent:
+  #     volumes:
+  #       - vault-out:/out
+  #
+  # It is read afresh on every request, so when the producer rotates the file the next call
+  # uses the new value. No restart involved.
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/server.Dockerfile
+    environment:
+      # Must be the same value app uses: the gateway verifies the runtime tokens app issues,
+      # and derives from it the key that decrypts the DeepSeek key stored in the database
+      JWT_SECRET: ${JWT_SECRET:?must be set, see "Deployment" in MANUAL.md}
+      ROLE: gateway
+      DATA_DIR: /data
+      # This is the side that actually reads a key file; see the top of the file
+      SECRET_FILE_ROOTS: *secret-file-roots
+      GATEWAY_HOST: 0.0.0.0
+      GATEWAY_PORT: "8788"
+      # The audit proxy's address. **Whether it is used is a console setting**
+      # (egress.useAuditProxy, off by default): switched on with no address configured, every
+      # request is a 503 — fail closed. Switched off, the gateway connects directly and this
+      # address plays no part.
+      AUDIT_PROXY_URL: *audit-proxy-url
+      MAX_UPSTREAM_CONCURRENCY: ${MAX_UPSTREAM_CONCURRENCY:-3}
+    volumes:
+      - type: bind
+        source: *data-dir
+        target: /data
+        bind: { create_host_path: true }
+      # The Claude token authkey-sync writes; see that service below.
+      # A **subdirectory**, not /data/secrets itself — mounting the parent hides every key
+      # file already sitting in DATA_DIR/secrets, and they vanish from the console's dropdown.
+      # The path to type into "read from a file" is /data/secrets/authkey/auth.key
+      #
+      # No depends_on: the gateway reads the file per request, so the sidecar taking a few
+      # seconds longer is fine — and depends_on only promises the container started, never
+      # that the key is there yet.
+      - agentlodge-authkey:/data/secrets/authkey:ro
+    # Three networks:
+    #   agent-net  requests from our own agent containers
+    #   frontend   /v1/* forwarded by Caddy (a user's own claude / codex)
+    #   backend    outbound, to the upstream
+    # The frontend one is needed only for bring-your-own-CLI. Drop it if that feature is not
+    # offered, and the gateway goes back to being reachable only from inside.
+    networks: [agent-net, frontend, backend]
+    # It should not start taking requests before the proxy is up — egress would be refused,
+    # fail closed
+    depends_on: [audit]
+    restart: unless-stopped
+
+  # ── Claude credential sync ──────────────────────────────────────────────
+  #
+  # Pulls accessToken out of ~/.claude/.credentials.json and writes it as a single-line
+  # auth.key on a shared volume — the secret sidecar the gateway's comment above describes.
+  #
+  # Why the credentials file cannot simply be named in the console: that field wants **the key
+  # itself**, and the credentials file is JSON. core/secret-file.ts refuses anything with a
+  # newline in it, and its error message calls out this exact mistake. This step is what turns
+  # the JSON into a single-line token.
+  #
+  # Rotation needs no attention: when the CLI refreshes its token the sidecar writes the new
+  # value within two seconds, and the gateway reads the file per request — so the next request
+  # already uses it. No restart, no browser, and it never touches the database.
+  authkey-sync:
+    # Its own directory with its own go.mod and Dockerfile, so it does not use the
+    # docker/*.Dockerfile + context: .. arrangement — that is for services sharing the
+    # monorepo's source.
+    build:
+      context: ../authkey-sync
+    volumes:
+      # A **directory**, not the file. The credentials file is replaced by writing a temp file
+      # and renaming over it, and a single-file bind mount pins the old inode: the token is
+      # refreshed on the host and the container goes on reading the value from the moment it
+      # started, forever, without a single error to show for it.
+      - ${CLAUDE_CREDENTIALS_DIR:-${HOME}/.claude}:/input:ro
+      - agentlodge-authkey:/data/secrets
+    environment:
+      # Who owns the key that comes out. 10001 is the uid the gateway runs as in
+      # compose.docker.yml, so a 0600 file is readable by the gateway and by nobody else.
+      # (Under rootless podman the gateway is root inside the container and can read it
+      # through the userns regardless.)
+      AUTH_KEY_OWNER: "10001:10001"
+    # Running as root is deliberate, with a wall on each side: the source file is 0600 owned
+    # by the host user, and the key it writes has to end up owned by 10001. Everything except
+    # the capabilities those two things need is dropped.
+    read_only: true
+    cap_drop: [ALL]
+    cap_add:
+      - DAC_READ_SEARCH  # read the host user's 0600 credentials file
+      - CHOWN            # hand the key over to AUTH_KEY_OWNER
+    security_opt: ["no-new-privileges:true"]
+    # No network at all: it reads one file and writes one volume. For a process holding a
+    # token, the fewer places it can reach, the better.
+    network_mode: none
+    restart: unless-stopped
+
+  # ── Audit proxy ─────────────────────────────────────────────────────────
+  #
+  # All egress passes through it. **One instance serves every upstream** — the gateway names
+  # the destination per request with x-forwarded-host, so changing or adding an upstream needs
+  # no change here.
+  #
+  # To give one upstream a dedicated instance: copy this service, pin UPSTREAM_URL (a fixed
+  # value wins over the forwarded header), and name the new service in that provider's "audit
+  # proxy" field in the console.
+  audit:
+    build:
+      context: ..
+      dockerfile: docker/audit-proxy.Dockerfile
+    environment:
+      PROXY_HOST: 0.0.0.0
+      PROXY_PORT: "8796"
+      TRACE_DIR: /traces
+
+      # The control API's credential; see the top of the file
+      PROXY_ADMIN_TOKEN: *audit-admin-token
+      # Enables routing by x-forwarded-host. Without it the proxy 403s any request carrying
+      # the routing header.
+      # Note these are **initial values only** — once changed from the console,
+      # .proxy-config.json on the proxy's volume is what counts.
+      PROXY_DYNAMIC_UPSTREAM: "1"
+      # The allowlist: only these hosts may be forwarded to. Empty = no restriction, which
+      # means anything that can reach the proxy can make it fetch any address at all (SSRF).
+      # The proxy is only on the backend network, but this layer goes in regardless.
+      PROXY_UPSTREAM_ALLOW: ${AUDIT_ALLOW_HOSTS:-api.deepseek.com,api.anthropic.com}
+
+      # ⚠️ The next two must be 0. They are not tuning knobs.
+      # The proxy's own retries quietly swallow an upstream 429, so the gateway's AIMD gate
+      # never sees the signal to back off — and, reading a run of successes, raises
+      # concurrency instead. The upstream is throttling us and we answer by pushing harder.
+      # Concurrency is the same story: two queues in series make the slot accounting
+      # disagree, and the proxy cannot tell users apart, so it can do neither per-user limits
+      # nor fair queueing. In this chain the proxy observes and nothing more.
+      PROXY_RETRY: "0"
+      PROXY_MAX_CONCURRENT: "0"
+
+      # Switches off the proxy's own /__trace interface. Traces are read from the console's
+      # "egress traces" page, which goes through the control API (/__admin/traces) under the
+      # console's own admin authentication — no need to expose the proxy to a browser.
+      # The interface itself still works for local capture (`npm run trace`) and has its own
+      # authentication: loopback, or PROXY_ADMIN_TOKEN.
+      PROXY_UI_PREFIX: ${AUDIT_UI_PREFIX:-}
+
+      # Retention. How long audit data is kept is a compliance question; set it to yours.
+      TRACE_MAX_DAYS: ${AUDIT_MAX_DAYS:-30}
+      TRACE_MAX_COUNT: ${AUDIT_MAX_COUNT:-100000}
+      TRACE_MAX_MB: ${AUDIT_MAX_MB:-10240}
+    volumes:
+      - agentlodge-audit:/traces
+    # backend only: reachable by the gateway (sending requests) and by app (reading traces and
+    # editing configuration for the console), and by neither Caddy nor the internet. A browser
+    # never connects to it directly.
+    networks: [backend]
+    restart: unless-stopped
+
+  caddy:
+    # The frontend build output is baked into the image and served by Caddy's file_server, so
+    # no node is needed at runtime
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+    # Rootless podman cannot bind below 1024 by default ("cannot expose privileged port 80").
+    # Locally, run with HTTP_PORT=8080 HTTPS_PORT=8443; production keeps the defaults.
+    ports: ["${HTTP_PORT:-80}:80", "${HTTPS_PORT:-443}:443"]
+    environment:
+      # Your domain, and Caddy obtains a certificate for it automatically. Left empty it
+      # listens on localhost over http.
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    volumes:
+      - caddy-data:/data
+    networks: [frontend]
+    depends_on: [app]
+    restart: unless-stopped
+
+networks:
+  frontend:
+  backend:
+  agent-net:
+    # Named explicitly: compose otherwise prefixes the project name (<project>_agent-net),
+    # while app passes AGENT_NETWORK to `podman run --network` **verbatim**. With the prefix
+    # they stop matching, and the error is "network agent-net not found".
+    name: agentlodge-agent-net
+    # The network agent containers sit on. It has a route to the internet, deliberately — see
+    # the top of this file.
+    # To cut it off entirely, uncomment the line below (after which the agent can no longer
+    # install anything):
+    # internal: true
+    #
+    # ⚠️ On a cloud host, block 169.254.169.254 (instance metadata) in the host firewall, or
+    #    an agent in a container can read the machine credentials the provider hands out.
+
+volumes:
+  # Audit data. It holds every user's complete prompts; treat backups and access to it as your
+  # compliance requirements demand.
+  agentlodge-audit:
+  # Written by authkey-sync, read-only for the gateway. A volume of its own rather than
+  # writing straight into DATA_DIR/secrets: that would give the sidecar write access to the
+  # entire data directory — database file, workspaces and all — when what it needs is to place
+  # one file.
+  agentlodge-authkey:
+  caddy-data:

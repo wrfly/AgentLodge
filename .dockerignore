@@ -1,0 +1,28 @@
+# The build context is the **repository root** (context: .. in compose).
+# Without these exclusions the builder walks the runtime data directory, which holds private
+# files written by uid 10001 inside a container (`.claude/sessions` is 0700), and the build
+# dies on the spot:
+#
+#   error from sender: open data/workspaces/<uid>/.agent-home/.claude/sessions: permission denied
+#
+# Note this only bites **after the first deployment**: on a clean clone data/ does not exist
+# yet, so the first build sails through.
+# And even with permissions opened up it has no business in the context — that directory holds
+# every user's complete conversations and traces.
+data/
+data.backup-*/
+log/
+trace-proxy/traces*/
+
+# The image runs its own npm ci; the host's copy may not even be for the same platform (native modules)
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# Credentials and local build output — none of it belongs in an image
+.env
+.env.local
+.jwt-secret
+.git/
+*.log

@@ -1,0 +1,72 @@
+{$SITE_ADDRESS:localhost} {
+	encode gzip
+
+	# ⚠️ These must be handle blocks, not a flat reverse_proxy + try_files.
+	#
+	#
+	# Caddy runs directives in its own built-in order, not the order they appear in the file.
+	# `try_files` belongs to the rewrite group and runs **before** `reverse_proxy`, so written
+	# flat, /api/health gets rewritten to /index.html first and the /api/* matcher on
+	# reverse_proxy can never match it again. What that looks like in practice: /api/health
+	# returns the frontend HTML (a 200, but it is the SPA), and POST /v1/messages returns 405
+	# because it is POSTing to a static file.
+	#
+	#
+	# handle blocks are mutually exclusive and evaluated in written order, which is what this
+	# kind of routing wants.
+
+	# SSE needs buffering off, or streamed output is held back and delivered in one lump
+	handle /api/conversations/*/stream {
+		reverse_proxy app:8787 {
+			flush_interval -1
+		}
+	}
+
+	# Where a user's own claude / codex lands: same hostname, but the metering gateway's half.
+	#
+	#
+	# Only /v1/* is exposed. The gateway also has /gate, an admin endpoint that changes the
+	# concurrency limit; it authenticates callers itself, but there is no reason for it to
+	# appear in a public routing table.
+	#
+	#
+	# flush_interval -1 for the same reason as above: agent responses are all SSE, and buffering
+	# turns streaming into one delayed block.
+	handle /v1/* {
+		reverse_proxy gateway:8788 {
+			flush_interval -1
+		}
+	}
+
+	# The other way to connect your own CLI: the credential goes in the **path**
+	# (/u/<credential>/v1/…).
+	#
+	#
+	# Why this exists: the moment Claude Code sees ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY it
+	# stops using the claude.ai session, and the connectors attached to that account along with
+	# /usage stop working. But **ANTHROPIC_BASE_URL alone is not an auth source**: the session
+	# survives untouched, which leaves the path as the only place to put the credential. See
+	# splitPathCredential in core/credential.ts.
+	#
+	#
+	# ⚠️ This path carries a credential. Do not turn on the access log for this site — Caddy
+	# leaves it off by default, and turning it on copies everybody's key into a log file.
+	handle /u/* {
+		reverse_proxy gateway:8788 {
+			flush_interval -1
+		}
+	}
+
+	# The application's own API. /api/hello is Claude Code's liveness probe; both app and
+	# gateway answer it, and landing on app is fine.
+	handle /api/* {
+		reverse_proxy app:8787
+	}
+
+	# Everything else is frontend static assets, with the SPA as the fallback
+	handle {
+		root * /srv
+		file_server
+		try_files {path} /index.html
+	}
+}

@@ -1,0 +1,36 @@
+{
+  "name": "agentlodge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm -w @agentlodge/server run dev",
+    "dev:web": "npm -w @agentlodge/web run dev",
+    "build": "npm -w @agentlodge/web run build && npm -w @agentlodge/server run build",
+    "typecheck": "node scripts/check-layers.mjs && node scripts/check-compose.mjs && node scripts/check-i18n.mjs && npm -w @agentlodge/server run typecheck && npm -w @agentlodge/web run typecheck",
+    "build:agent-image": "podman build -f docker/agent.Dockerfile -t agentlodge/agent:1.0 .",
+    "agent:net": "podman network create --internal agentlodge-agent-net || true",
+    "dev:mock": "node scripts/mock-upstream.mjs",
+    "dev:free": "concurrently -n mock,server,web -c yellow,cyan,magenta \"npm:dev:mock\" \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:containers": "USE_CONTAINERS=true npm run dev",
+    "trace": "node scripts/ensure-trace-proxy-cjs.mjs && PROXY_PORT=${PROXY_PORT:-8796} TRACE_DIR=${TRACE_DIR:-trace-proxy/traces-chain} PROXY_RETRY=${PROXY_RETRY:-0} PROXY_MAX_CONCURRENT=${PROXY_MAX_CONCURRENT:-0} PROXY_TRACE_SKIP=\"${PROXY_TRACE_SKIP:-HEAD /api/hello}\" node trace-proxy/proxy.js",
+    "trace:ui": "node scripts/ensure-trace-proxy-cjs.mjs && TRACE_DIR=${TRACE_DIR:-trace-proxy/traces-chain} node trace-proxy/server.js",
+    "dev:trace": "concurrently -n trace,server,web -c yellow,cyan,magenta \"UPSTREAM_URL=http://127.0.0.1:8788 npm run trace\" \"GATEWAY_URL=http://host.containers.internal:8796 npm run dev:server\" \"npm run dev:web\"",
+    "trace:view": "node scripts/ensure-trace-proxy-cjs.mjs && TRACE_DIR=${TRACE_DIR:-trace-proxy/traces-chain} node trace-proxy/view.js",
+    "trace:probe": "node scripts/ensure-trace-proxy-cjs.mjs && node trace-proxy/ja3-probe.js",
+    "selftest": "bash scripts/selftest.sh",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "test": "node scripts/test-all.mjs",
+    "check:compose": "node scripts/check-compose.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}
