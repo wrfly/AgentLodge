@@ -30,6 +30,7 @@ import {
   type SecretFileProblem,
   looksLikePath,
   type SecretFileListing,
+  type UpstreamAllowanceView,
   isSecretProblem,
   type AuditProxyStatus,
   type AdminTraces,
@@ -108,6 +109,8 @@ function Overview() {
         />
       </div>
 
+      <UpstreamAllowanceCard />
+
       <Card title={t('Last 30 days, all users')}>
         {data.usage.daily.length === 0 ? (
           <Empty text={t('No usage yet')} />
@@ -175,6 +178,111 @@ function Overview() {
         </div>
       </Card>
     </>
+  );
+}
+
+/** How the upstream names its own windows; anything else is shown by its raw key */
+const WINDOW_LABEL: Record<string, string> = {
+  '5h': 'Rolling 5 hours',
+  '7d': 'Rolling 7 days',
+  '7d_oi': 'Rolling 7 days, overage included',
+  overage: 'Overage',
+};
+
+/**
+ * The shared plan's own allowance.
+ *
+ * The one screen where the upstream's figures are the right answer. Everywhere
+ * else they are replaced with the asking user's quota, because one subscription
+ * serves every tenant and the pool's numbers are nobody's allowance in
+ * particular.
+ */
+function UpstreamAllowanceCard() {
+  const t = useT();
+  const [view, setView] = useState<UpstreamAllowanceView | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
+
+  useEffect(() => {
+    const load = () => void admin.upstreamAllowance().then(setView).catch(() => {});
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  if (!view) return null;
+
+  const a = view.allowance;
+  const windows = Object.entries(a?.windows ?? {}).filter(
+    ([, w]) => w.utilization !== null || w.resetsAt !== null,
+  );
+
+  return (
+    <Card
+      title={t('Upstream plan allowance')}
+      description={t('What the shared subscription reports about itself. Users are shown their own quota instead, so this is the only place it is visible.')}
+    >
+      {view.unreachable || view.error ? (
+        <Banner tone="warn">{view.error ?? t('Cannot reach the gateway')}</Banner>
+      ) : !a ? (
+        <Empty text={t('Nothing observed yet — it fills in on the next upstream response.')} />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[12px] text-muted">
+            <span className="font-mono text-ink">{a.provider}</span>
+            {a.status && <span>{a.status}</span>}
+            <span className="text-faint">{t('as of {t}', { t: fmtDate(a.observedAt) })}</span>
+          </div>
+
+          {windows.length === 0 ? (
+            <Empty text={t('The upstream sent no limit windows')} />
+          ) : (
+            windows.map(([key, w]) => (
+              <div key={key}>
+                <div className="mb-1 flex items-baseline justify-between text-[12.5px]">
+                  <span>{t(WINDOW_LABEL[key] ?? key)}</span>
+                  <span className="font-mono tabular-nums">
+                    {w.utilization === null ? '—' : `${Math.round(w.utilization * 100)}%`}
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-line">
+                  <div
+                    className={clsx(
+                      'h-full rounded-full',
+                      (w.utilization ?? 0) >= 0.9 ? 'bg-red-500' : (w.utilization ?? 0) >= 0.75 ? 'bg-amber-500' : 'bg-accent',
+                    )}
+                    style={{ width: `${Math.min(Math.max((w.utilization ?? 0) * 100, 0), 100)}%` }}
+                  />
+                </div>
+                {w.resetsAt && (
+                  <div className="mt-1 text-[11.5px] text-faint">
+                    {t('resets {t}', { t: fmtDate(w.resetsAt) })}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+
+          {a.codex !== undefined && a.codex !== null && (
+            <pre className="overflow-x-auto rounded-lg bg-bubble/60 p-2.5 text-[11.5px]">
+              {JSON.stringify(a.codex, null, 2)}
+            </pre>
+          )}
+
+          <div>
+            <Button variant="ghost" onClick={() => setShowRaw((v) => !v)}>
+              {showRaw ? t('Hide headers') : t('All headers')}
+            </Button>
+            {showRaw && (
+              <pre className="mt-2 overflow-x-auto rounded-lg bg-bubble/60 p-2.5 text-[11.5px] leading-relaxed">
+                {Object.entries(a.raw)
+                  .map(([k, v]) => `${k}: ${v}`)
+                  .join('\n')}
+              </pre>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 

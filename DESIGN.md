@@ -947,6 +947,86 @@ if (upstreamStatus === 404 || upstreamStatus === 400) {
 ```
 该端点**不占用并发 slot、不计费**。
 
+### 7.8 回给 CLI 的额度，是这个用户自己的
+
+上游是**一份共享订阅**，所以上游说的"还剩多少"讲的是**池子**。原样转发就等于把全平台的
+消耗摊给每个用户看，而且那个上限根本不是他的。网关的做法是：上游的额度信息一律不外传，
+换成问话人自己的配额。
+
+三条通道，三种处理：
+
+| 通道 | 上游给的 | 我们给的 |
+|---|---|---|
+| `/v1/messages` 响应头 `anthropic-ratelimit-unified-*` | 池子的 5h / 7d 利用率 | 丢弃。改写成该用户配额换算的一组同名头 |
+| `GET /api/oauth/usage`（`/usage` 面板读它） | 池子的五个窗口 | 网关自己应答，不透传，数据来自 `quota.status(userId)` |
+| Codex 响应体里的 `rate_limits` | 池子的 `used_percent` | 从流里摘掉 |
+
+**两种格式的标度不一样**，都是从 claude 二进制里读出来的，不是猜的：
+
+```
+响应头            utilization 是 0..1 的小数，reset 是 unix 秒
+/api/oauth/usage  utilization 是 0..100 的百分比，resets_at 是 ISO 8601 字符串
+```
+
+在响应头那侧发百分比不是四舍五入的小问题：客户端按 `max(0, min(1, n))` 夹取，
+于是任何超过 1% 的用量都显示成额度打满。
+
+**用户自带 CLI 怎么接进来。** 凭据写进 CLI 自己的配置目录（`CLAUDE_CONFIG_DIR` 指向
+`~/.agentlodge/claude`），不走环境变量、不放 URL。`ANTHROPIC_BASE_URL` 不是认证——空配置
+目录下 `claude auth status` 回 `{"loggedIn": false, "authMethod": "none"}`；放好文件之后回
+`{"loggedIn": true, "authMethod": "claude.ai"}`。**那个文件就是"登录态"，而它由我们签发。**
+脚本由 `app/cli-install.ts` 生成，在 `GET /api/cli/install.sh` 上**公开**（不含密钥，人人
+一份，可以先读再跑），密钥作为参数传进去、单独落在 `~/.agentlodge/key`；包装脚本每次运行
+从那个文件重建凭据，所以换密钥是改一行、不用重装。整条链由集成测试真跑一遍
+（`cli-install.test.ts`：装 → 跑 wrapper → 换 key → 卸载 → rc 精确还原）。
+
+由此，三条通道各自的实际归宿：
+
+**响应头 —— 经过我们，而且被采信。** Claude Code 只在 claude.ai 订阅会话下认这些头
+（`extractQuotaStatusFromHeaders` 开头就是
+`if (!Oqr(ds())) { this.rawUtilization = {}; return null }`），而上面那份凭据正好让会话算
+订阅会话。把利用率回成 0.98，CLI 就发出
+`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","utilization":0.98,"rateLimitType":"five_hour"}}`
+—— 这个数字是网关按该用户配额算的。
+
+**`/usage` 面板 —— 不经过我们，也不需要。** 实测：挂 HTTPS_PROXY 抓 CONNECT，那个请求直连
+`api.anthropic.com:443`，用本机的 claude.ai 凭据，`ANTHROPIC_BASE_URL` 对它无效。而这条
+接法下那个 profile 没登录任何 claude.ai 账号，所以面板既没有额度数字，也不产生任何外联
+（CONNECT 记录为空）。网关上的 `GET /api/oauth/usage` 因此不是给面板用的，它的价值是
+**这条路径永远不会被透传**：真有客户端问过来，答的是他自己的配额。
+
+**Codex 的 `rate_limits` —— 经过我们，在流里摘掉。** 它没有账号 API，额度跟着响应体走，
+而响应体是逐字节转发的，所以这是唯一真的会漏的通道。
+
+**管理员是例外，而且只有他看得到。** 池子的真实数字对某一个用户没有意义，对管理员却是唯一
+要紧的事——套餐还剩多少。所以那些头在丢弃之前先留一份：`gateway/upstream-allowance.ts`
+按原样存下所有 `anthropic-ratelimit*` / `x-codex-*` 头，外加一份解析好的窗口视图，Codex 的
+`rate_limits` 在摘除时顺手交给同一个存储。
+
+存在**网关进程的内存里**，理由和并发闸门一样：这些头只有它看得见，所以后台通过转发来读
+（`app/routes/admin/upstream.ts` → 网关的 `GET /upstream-allowance`）。重启即丢，下一次上游
+响应就填回来——对一个「截至上一次调用」的数字来说这是对的取舍。
+
+原始头和解析视图都存，是因为这是唯一一块「读错比读不出更糟」的屏幕，而上游随时可能加字段。
+
+同一次响应两个答案，实测：
+
+```
+客户端收到   anthropic-ratelimit-unified-5h-utilization: 0.0900   ← 他自己的配额
+管理员看到   5h 0.22 · 7d 0.59 · overage rejected                  ← 上游真实值
+```
+
+Codex 那条与登录方式无关：它没有用量端点，额度跟着响应体走
+（`rate_limits.primary/secondary`，各带 `used_percent` / `window_minutes` / `resets_at` /
+`plan_type`），而响应体是逐字节转发的。所以那条是**唯一真的会漏**的通道，必须在流里摘。
+摘掉而不是替换：字段形状来自抓包，往客户端要解析的流里写一个错的 `resets_at`，
+比让它没得显示更糟；等有一份能对照的抓包再谈替换。
+
+一个周期不结束的配额（`total`）在响应头那侧什么都不报 —— 客户端会丢掉只有利用率没有
+reset 的窗口；它在 `/api/oauth/usage` 里照常出现，那边 `resets_at` 允许为 null。
+
+代码：`apps/server/src/gateway/quota-report.ts`。
+
 ---
 
 ## 8. 配额系统

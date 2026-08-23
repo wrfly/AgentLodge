@@ -32,6 +32,13 @@ import {
   type ResponsesRequest,
 } from './translate.js';
 import { SseSniffer, absorbBody, absorbStream, newUsageAcc, type Wire } from './usage-parser.js';
+import {
+  RateLimitScrubber,
+  oauthUsage,
+  stripRateLimits,
+  unifiedHeaders,
+} from './quota-report.js';
+import * as allowance from './upstream-allowance.js';
 
 /**
  * The metering gateway.
@@ -302,6 +309,7 @@ async function handleProxy(
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache, no-transform',
         connection: 'keep-alive',
+        ...(wire === 'anthropic' ? unifiedHeaders(verdict.status) : {}),
       });
       reply.raw.write(stream);
       reply.raw.end();
@@ -326,14 +334,31 @@ async function handleProxy(
     });
 
     status = upstream.status;
+    /*
+     * The upstream's allowance headers stop here — the client is told about its own quota
+     * instead. They are still the only place the shared plan's real figures exist, and the
+     * administrator has to be able to see them, so they are kept before being dropped.
+     */
+    allowance.record(target.provider.name, target.wire, upstream.headers);
     const retryAfter = Number(upstream.headers.get('retry-after')) * 1000;
     gate.reportUpstream(status, Number.isFinite(retryAfter) ? retryAfter : undefined);
 
     const ct = upstream.headers.get('content-type') ?? 'application/json';
+    /*
+     * The upstream's own headers are not forwarded — only the ones below are written, and
+     * that is deliberate: a shared subscription's allowance headers describe the pool, so
+     * relaying them would show every user the whole platform's consumption. The allowance
+     * this user gets told about is their own quota. See quota-report.ts.
+     *
+     * The figure is the one the quota gate read on the way in, which does not yet include
+     * this request — deliberately, since it has not been billed either. Reading it again
+     * here would cost a second query to move the number by one turn.
+     */
     reply.raw.writeHead(status, {
       'content-type': ct,
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
+      ...(wire === 'anthropic' ? unifiedHeaders(verdict.status) : {}),
     });
 
     if (!upstream.body) {
@@ -349,6 +374,16 @@ async function handleProxy(
         : wire === 'anthropic'
           ? new ChatToAnthropic(reqModel)
           : new ChatToResponses(reqModel);
+      /*
+       * Codex carries the shared account's allowance inside the body rather than in
+       * headers, so on that side the bytes cannot simply be relayed. A translated stream
+       * needs no scrubbing: it is built here from the upstream's content, and nothing that
+       * is not deliberately copied survives.
+       */
+      const scrubber =
+        !translator && wire !== 'anthropic'
+          ? new RateLimitScrubber((rl) => allowance.recordCodex(target.provider.name, target.wire, rl))
+          : null;
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder();
       for (;;) {
@@ -362,18 +397,33 @@ async function handleProxy(
           await reader.cancel().catch(() => {});
           break;
         }
-        reply.raw.write(translator ? Buffer.from(translator.push(text)) : Buffer.from(value));
+        // Untouched paths write the original bytes, not the decoded text, so a relay that
+        // rewrites nothing stays byte-identical
+        reply.raw.write(
+          translator
+            ? Buffer.from(translator.push(text))
+            : scrubber
+              ? Buffer.from(scrubber.push(text))
+              : Buffer.from(value),
+        );
       }
-      if (translator && !reply.raw.destroyed) reply.raw.write(Buffer.from(translator.end()));
+      if (!reply.raw.destroyed) {
+        if (translator) reply.raw.write(Buffer.from(translator.end()));
+        else if (scrubber) reply.raw.write(Buffer.from(scrubber.end()));
+      }
       reply.raw.end();
     } else {
       const text = await upstream.text();
       acc.ttftMs = Date.now() - startedAt;
       absorbBody(target.wire, text, acc);
-      // Non-streaming only happens on the Anthropic side, for probes and fallbacks; Codex
-      // always streams
+      // Non-streaming is rare — probes and fallbacks — but a Codex-shaped body would carry
+      // the shared account's allowance in it just the same
       reply.raw.write(
-        target.translate && wire === 'anthropic' ? chatResponseToAnthropic(text, reqModel) : text,
+        target.translate && wire === 'anthropic'
+          ? chatResponseToAnthropic(text, reqModel)
+          : wire === 'anthropic'
+            ? text
+            : (stripRateLimits(text, (rl) => allowance.recordCodex(target.provider.name, target.wire, rl)) ?? text),
       );
       reply.raw.end();
     }
@@ -554,6 +604,27 @@ export function buildGateway(): FastifyInstance {
     return reply.code(200).send({ input_tokens: approx });
   });
 
+  /**
+   * What Claude Code's `/usage` panel reads.
+   *
+   * The upstream has this endpoint and it answers for **the shared subscription**, so the
+   * one thing that must not happen is a passthrough. It is answered here, from the asking
+   * user's own quota, and the upstream is never consulted.
+   *
+   * Authenticated exactly like /v1/messages: same credential, same resolution. A CLI that
+   * kept its claude.ai login sends that login in Authorization, which is not a credential
+   * of ours — the path credential is what identifies the user, and it wins (credentialOf).
+   */
+  app.get('/api/oauth/usage', async (req, reply) => {
+    const who = await resolveCredential(credentialOf(req), 'anthropic');
+    if (!who) {
+      return reply
+        .code(401)
+        .send(anthropicError('authentication_error', tr(req, 'The credential is invalid or has expired')));
+    }
+    return reply.code(200).send(oauthUsage(quota.status(who.sub)));
+  });
+
   app.post('/responses', (req, reply) => handleProxy(req, reply, 'responses'));
   // Where Codex lands in openai-chat mode, and any OpenAI client can use it directly
   app.post('/v1/chat/completions', (req, reply) => handleProxy(req, reply, 'chat'));
@@ -573,6 +644,14 @@ export function buildGateway(): FastifyInstance {
   const adminOnly = { preHandler: [attachUser, requireAdmin] };
 
   app.get('/gate', adminOnly, async (): Promise<GateStats> => gate.stats());
+
+  /**
+   * The shared plan's own allowance, as the upstream last reported it.
+   *
+   * Only this process sees those headers — they are dropped before the response leaves — so
+   * the console has to ask for them here, the same way it asks for gate status.
+   */
+  app.get('/upstream-allowance', adminOnly, async () => ({ allowance: allowance.snapshot() }));
 
   app.patch('/gate', adminOnly, async (req, reply) => {
     const body = (req.body ?? {}) as { maxConcurrency?: number };

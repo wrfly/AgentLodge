@@ -8,6 +8,8 @@ import * as trace from '../../core/trace.js';
 import { requireUser } from '../../core/auth/guard.js';
 import { config } from '../../core/config.js';
 import { tr } from '../../core/i18n/locale.js';
+import { installCommand, installScript } from '../cli-install.js';
+import { installText, publicBase } from './cli.js';
 
 const guard = { preHandler: requireUser };
 
@@ -198,6 +200,16 @@ export function registerMeRoutes(app: FastifyInstance): void {
       })),
       /** What to put in BASE_URL. Unset, the frontend falls back to the current origin. */
       baseUrl: config.publicGatewayUrl,
+      /**
+       * How this machine's Claude Code is pointed here: one command, and the script it
+       * downloads. The script is served separately and unauthenticated (routes/cli.ts) —
+       * it is the same for everybody; the key rides in the command, where the placeholder
+       * is, because the console is the only place a freshly created key exists.
+       */
+      install: {
+        command: installCommand(publicBase(req)),
+        script: installScript(publicBase(req), installText(req)),
+      },
     };
   });
 

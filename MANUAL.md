@@ -383,15 +383,29 @@ docker exec agentlodge-audit-1 node trace-proxy/view.js 11 --events   # SSE 逐�
 ## 用自己的 CLI 接进来
 
 除了网页对话，用户可以把**本机的 Claude Code / Codex** 指到本服务，共用同一个账号和额度。
-在 `/api-keys` 建一把密钥（明文只显示一次），然后：
+在 `/api-keys` 建一把密钥（明文只显示一次），页面上给出一条命令：
 
 ```bash
-# Claude Code
-export ANTHROPIC_BASE_URL=https://你的域名
-export ANTHROPIC_AUTH_TOKEN=al_xxxxx
-claude
+curl -fsSL https://你的域名/api/cli/install.sh | sh -s -- al_xxxxx
+```
 
-# Codex
+脚本本身在那个地址上公开可读（不含任何密钥，人人一份），界面上也折叠着全文，可以先看再跑。
+它落下这些东西：
+
+```
+~/.agentlodge/key            密钥，单独一个文件，权限 600 —— 换 key 只改这里
+~/.agentlodge/claude/        CLI 的配置目录，凭据由包装脚本每次运行时重建
+~/.agentlodge/bin/claude     包装脚本：读 key 文件、写凭据、设好 BASE_URL，再 exec 真正的 claude
+你的 shell rc                加一行，把上面那个 bin 放到 PATH 最前
+```
+
+之后**照常敲 `claude`** 就是连本服务。**换密钥不用重装**——把新的写进 `~/.agentlodge/key`
+就行，下一次运行自动生效。卸载执行 `~/.agentlodge/uninstall.sh`，rc 那一行和整个目录一起
+删掉。
+
+Codex 没有对应的配置目录机制，仍然走环境变量：
+
+```bash
 export OPENAI_API_KEY=al_xxxxx
 codex -c model_provider=agentlodge \
       -c model_providers.agentlodge.base_url=https://你的域名/v1/ \
@@ -399,6 +413,22 @@ codex -c model_provider=agentlodge \
 ```
 
 `Authorization: Bearer` 和 `x-api-key` 两种头都认。
+
+### 凭据为什么放在配置目录里
+
+**`ANTHROPIC_BASE_URL` 不是认证**。空配置目录下 `claude auth status` 回
+`{"loggedIn": false, "authMethod": "none"}`，所以只设 BASE_URL 它仍然要你登录。凭据文件
+就是那次"登录"，而它由我们签发：放好文件之后同一条命令回
+`{"loggedIn": true, "authMethod": "claude.ai", "subscriptionType": "max"}`。
+
+`CLAUDE_CONFIG_DIR` 是这件事安全的前提：文件写在我们自己的目录里，用户 `~/.claude` 下的
+登录一个字节都不碰，两者并存。代价是这个会话是**独立的 profile**——自己的 settings.json、
+MCP、历史记录。
+
+一句提醒：**这用的是未公开的文件格式**（字段来自 CLI 自己的 OAuth 保存逻辑：`accessToken`、
+`refreshToken`、`expiresAt`、`scopes`、`subscriptionType`）。两个 scope 少不得，
+`user:inference` 决定会话算不算已登录，`user:profile` 是账号面板要检查的。CLI 改结构这条
+就会断，所以它是便利，不是契约。
 
 ### 和网页对话的差别只有一处
 
@@ -415,6 +445,34 @@ codex -c model_provider=agentlodge \
 | 认证 / 配额 / 限流 / 记账 / trace | ✅ | ✅ **同一套代码** |
 
 用量记在同一个账上，`/usage` 和 `/api-keys` 都看得到；`/traces` 里每条会标「网页对话」还是「自带 CLI」。
+
+### CLI 里看到的额度，是他自己的
+
+上游是一份共享订阅，所以上游返回的"还剩多少"是**整个平台**的。网关不转发它，改成回这个
+用户自己的配额：
+
+- `claude` 的 `/usage` 面板读 `GET /api/oauth/usage` —— 网关自己应答，不透传
+- 每个 `/v1/messages` 响应上的 `anthropic-ratelimit-unified-*` 头，按该用户的配额重写
+- Codex 的额度跟着响应体走（`rate_limits`），在流里摘掉
+
+配额周期跟 Claude Code 写死的两个窗口对不上，所以按周期长度落位：**24 小时以内**落在
+「Current session」，其余落在「Current week」。数字是对的，标题是它的。
+
+`claude` 的 `/usage` 面板是个例外：它**不经过我们**。实测——挂 HTTPS_PROXY 抓 CONNECT，
+那个请求直连 `api.anthropic.com:443`，用的是本机的 claude.ai 登录，`ANTHROPIC_BASE_URL`
+对它无效。
+
+而这条接法里那台机器在这个 profile 下没登录任何 claude.ai 账号，所以面板既没有额度数字，
+也不产生任何外联（实测：CONNECT 记录为空）。**用不着我们覆写，它根本不去问。**
+
+限额提醒走的是响应头，那条确实经过我们，而且确实被采信。把利用率回成 0.98，CLI 就发出：
+
+```json
+{"type":"rate_limit_event","rate_limit_info":{
+  "status":"allowed_warning","utilization":0.98,"rateLimitType":"five_hour","resetsAt":1787485541}}
+```
+
+这个 0.98 是网关按**该用户自己的配额**算出来的，跟共享订阅用了多少无关。
 
 ### 部署时要打通的三件事
 
@@ -488,6 +546,9 @@ codex -c model_provider=agentlodge \
 - 管理员可手动清零某个用户的当期用量（**不删账单**，只把统计起点往后挪，可撤销）
 - 计费 token = 输入 + 缓存读取×0.1 + 缓存写入 + 输出×1.5（权重可在后台改）
 - 超额时 402 拦截并禁用输入框；用量过 90% 自动发提醒邮件（每周期一封）
+- **上游套餐额度只给管理员看**：后台总览有一张卡，显示这份共享订阅自己报的
+  5h / 7d 利用率、重置时刻、overage 状态，外加原始响应头。用户那侧看到的是各自的配额
+  —— 同一次响应，两个答案（`§ CLI 里看到的额度`）
 - 个人页：**今天/昨天/本周/本月/近 7 天/近 30 天/本配额周期/全部/自定义区间**
   - 短跨度按小时出图，长跨度按天出图
   - 每个区间都给：总量、剩余、按 agent+模型拆分、按会话拆分

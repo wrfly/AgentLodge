@@ -1,6 +1,6 @@
 # AgentLodge
 
-**[火星文](./README.md) · [English](./README.en.md) · [中文](./README.zh.md)**
+**[中文](./README.md) · [English](./README.en.md)**
 
 Claude Code and Codex, wrapped as a multi-tenant web service. Every user gets
 their own sandboxed agent; you hold one upstream key and hand out none.
@@ -13,6 +13,53 @@ their own sandboxed agent; you hold one upstream key and hand out none.
 - **Every outbound request can be recorded** through an audit proxy, with the
   full prompt, for as long as your compliance rules say.
 - **Agents run in containers**, one per user, each with its own workspace.
+
+## Features
+
+**Accounts**
+- [x] Invite-code registration, plus email invites bound to one address (SendGrid)
+- [x] Access token + refresh-token rotation; **a replayed token is treated as a leak** and
+      every session for that user is revoked
+- [x] Password change, password reset, multi-device management, instant lockout on suspend
+- [x] Failed logins throttled by IP and by address, separately
+
+**Metering and quota**
+- [x] Every agent request goes through the gateway; usage is sniffed off the SSE stream call
+      by call
+- [x] The quota gate stops a turn from inside it; daily / weekly / monthly / total periods,
+      with the reset moment settable to the hour
+- [x] Global concurrency gate (≤3 in flight by default), per-user rotation, AIMD back-off,
+      tunable without a restart
+- [x] Billing by tokens or by money; the price table is editable and past bills keep the
+      price of their time
+- [x] **Each user is shown their own allowance**, never the shared plan's — the response
+      headers are rewritten from their quota
+- [x] **The administrator alone sees the upstream plan's real utilisation** and reset times
+
+**Isolation**
+- [x] One long-lived container per user: non-root, all capabilities dropped, memory / CPU /
+      PID limits
+- [x] Only that user's workspace is mounted, and the container holds no credential
+- [x] Workspace paths are resolved for real, with symlink escapes covered by tests
+
+**Ways in**
+- [x] The web app: a close copy of the Claude interface, with memory, attachments, Markdown
+      and syntax highlighting
+- [x] Your own CLI: one command to install, then run `claude` as usual
+- [x] Both wire protocols — Anthropic Messages and OpenAI Responses
+- [x] Upstream providers can be added, edited and switched live, including a built-in mock
+
+**Operations**
+- [x] An audit proxy that records every outbound request, full prompt, with a switch and a
+      purge in the console
+- [x] Quotas, prices, concurrency, providers and site settings all change without a restart
+- [x] Interface and API messages in English, Chinese, Japanese and Russian
+- [x] Images split by component; two files and `docker compose` bring the stack up
+
+**Not yet**
+- [ ] Balance trends and three-way reconciliation, conversation search, attachments
+      referenced inside a conversation (M4)
+- [ ] Multi-instance deployment — the concurrency gate becomes a Redis semaphore (M5)
 
 ## Quick start
 

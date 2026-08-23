@@ -17,6 +17,7 @@ import { installLocale } from './core/i18n/locale.js';
 import { registerAuthRoutes } from './app/routes/auth.js';
 import { registerAdminRoutes } from './app/routes/admin/index.js';
 import { registerMeRoutes } from './app/routes/me.js';
+import { registerCliRoutes } from './app/routes/cli.js';
 import { registerConversationRoutes } from './app/routes/conversations.js';
 import { MAX_UPLOAD_BYTES } from './app/workspace.js';
 import { buildGateway, gate } from './gateway/index.js';
@@ -159,6 +160,7 @@ registerAuthRoutes(app);
 registerConversationRoutes(app);
 registerMeRoutes(app);
 registerAdminRoutes(app);
+registerCliRoutes(app);
 
 app.get('/api/health', async () => ({
   ok: true,

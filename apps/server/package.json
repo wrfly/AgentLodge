@@ -16,7 +16,10 @@
     "test:credential": "tsx src/core/credential.test.ts",
     "test:registry": "tsx src/app/agents/registry.test.ts",
     "test:i18n": "tsx src/core/i18n/i18n.test.ts",
-    "test:workspace": "tsx src/app/workspace.test.ts"
+    "test:workspace": "tsx src/app/workspace.test.ts",
+    "test:quota-report": "tsx src/gateway/quota-report.test.ts",
+    "test:cli-install": "tsx src/app/cli-install.test.ts",
+    "test:upstream-allowance": "tsx src/gateway/upstream-allowance.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

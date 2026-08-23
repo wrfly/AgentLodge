@@ -16,6 +16,7 @@ export function ApiKeysPage() {
   const t = useT();
   const [keys, setKeys] = useState<ApiKeyRow[] | null>(null);
   const [baseUrl, setBaseUrl] = useState('');
+  const [install, setInstall] = useState<{ command: string; script: string } | null>(null);
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
   const [fresh, setFresh] = useState<string | null>(null);
@@ -28,6 +29,7 @@ export function ApiKeysPage() {
       // With PUBLIC_GATEWAY_URL unset, fall back to this origin — which is exactly
       // right for single-machine development
       setBaseUrl(r.baseUrl || window.location.origin);
+      setInstall(r.install);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -76,18 +78,7 @@ export function ApiKeysPage() {
           title={t('New key')}
           description={t('Shown once. Dismiss this and the plaintext is gone — we store only a hash.')}
         >
-          <div className="space-y-3">
-            <div>
-              <div className="mb-1 text-[12px] text-muted">{t('The key (for Codex, or for a request header)')}</div>
-              <CopyBox text={fresh} mono />
-            </div>
-            <div>
-              <div className="mb-1 text-[12px] text-muted">
-                {t('For Claude Code — the credential is already in the address, nothing else to set')}
-              </div>
-              <CopyBox text={claudeBaseUrl(baseUrl, fresh)} mono />
-            </div>
-          </div>
+          <CopyBox text={fresh} mono />
           <div className="mt-3">
             <Button variant="ghost" onClick={() => setFresh(null)}>
               {t('I have saved it')}
@@ -178,53 +169,64 @@ export function ApiKeysPage() {
         </Card>
       )}
 
-      <Setup baseUrl={baseUrl} fresh={fresh} />
+      <Setup baseUrl={baseUrl} fresh={fresh} install={install} />
     </Page>
   );
 }
 
 /**
- * The address Claude Code uses: the credential rides in the path rather than in
- * ANTHROPIC_AUTH_TOKEN.
+ * The install command, with the key dropped in.
  *
- * Setting ANTHROPIC_AUTH_TOKEN (or ANTHROPIC_API_KEY) makes Claude Code decide
- * there is another auth source and stop using the claude.ai login, which takes
- * the account's connectors and `/usage` with it. Setting only
- * ANTHROPIC_BASE_URL is not an auth source.
- *
- * The path segment is the key with its `al_` prefix removed, so it reads as a
- * random slug rather than a key. The server puts the prefix back — see
- * core/credential.ts.
+ * The key only exists in the browser, and only for as long as this page is open:
+ * the server hands the plaintext over once, at creation, and keeps a hash. Before
+ * that — or after a reload — the placeholder is left visible so it reads as
+ * something to replace rather than as a working command.
  */
-function claudeBaseUrl(baseUrl: string, key: string): string {
-  return `${baseUrl}/u/${key.replace(/^al_/, '')}`;
+function fillIn(command: string, key: string | null): string {
+  return command.replace('__AGENTLODGE_KEY__', key ?? '<your key>');
 }
 
-function Setup({ baseUrl, fresh }: { baseUrl: string; fresh: string | null }) {
+function Setup({
+  baseUrl,
+  fresh,
+  install,
+}: {
+  baseUrl: string;
+  fresh: string | null;
+  install: { command: string; script: string } | null;
+}) {
   const t = useT();
   return (
     <Card
       title={t('Setup')}
       description={
         fresh
-          ? t('Below is the key you just created — copy it straight out.')
-          : t('Replace <your key> with the string you got when you created it, without the leading al_.')
+          ? t('The key you just created is already filled in below.')
+          : t('Replace <your key> with the key you got when you created it, al_ and all.')
       }
     >
       <div className="space-y-4">
         <Block title="Claude Code">
-          <CopyBox
-            text={`export ANTHROPIC_BASE_URL=${fresh ? claudeBaseUrl(baseUrl, fresh) : `${baseUrl}/u/<your key>`}\nclaude`}
-          />
+          {install ? (
+            <>
+              <CopyBox text={fillIn(install.command, fresh)} />
+              <Script text={install.script} />
+            </>
+          ) : (
+            <Spinner />
+          )}
           <p className="mt-2 text-[12px] leading-relaxed text-muted">
-            {t('The credential is in the address, so do NOT also set ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY — either one makes Claude Code stop using your claude.ai login, and the connectors and /usage on that account stop working with it. The trade is that this address is itself a credential: keep it out of issues, screenshots and public logs.')}
+            {t('It writes the key to ~/.agentlodge/key, a claude wrapper next to it, and one line on your shell rc. Swapping the key later is one edit of that file — the wrapper rebuilds the rest on every run.')}
+          </p>
+          <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
+            {t('Then open a new terminal and run claude as usual. Your own claude.ai login lives elsewhere and is untouched; quota and billing are the same account as the web app. Undo it with ~/.agentlodge/uninstall.sh.')}
           </p>
         </Block>
 
         <Block title="Codex">
           <CopyBox
             text={[
-              `export OPENAI_API_KEY=<your key>`,
+              `export OPENAI_API_KEY=${fresh ?? '<your key>'}`,
               `codex \\`,
               `  -c model_provider=agentlodge \\`,
               `  -c model_providers.agentlodge.name=AgentLodge \\`,
@@ -247,6 +249,29 @@ function Setup({ baseUrl, fresh }: { baseUrl: string; fresh: string | null }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+/**
+ * The script the command downloads, behind a fold.
+ *
+ * `curl … | sh` is only as good as the reader's chance to look first, and a
+ * seventy-line block above the fold would push everything else off the screen.
+ */
+function Script({ text }: { text: string }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-1.5">
+      <Button variant="ghost" onClick={() => setOpen((v) => !v)}>
+        {open ? t('Hide the script') : t('Read the script first')}
+      </Button>
+      {open && (
+        <pre className="mt-2 max-h-96 overflow-auto rounded-lg bg-bubble/60 p-3 text-[11.5px] leading-relaxed">
+          {text}
+        </pre>
+      )}
+    </div>
   );
 }
 

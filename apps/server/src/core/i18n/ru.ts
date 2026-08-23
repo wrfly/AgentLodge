@@ -72,4 +72,11 @@ export const ru: Record<string, string> = {
   'The password has to be at least 8 characters': 'Пароль должен быть не короче 8 символов',
   'That password is too long': 'Пароль слишком длинный',
   'The password cannot be all digits': 'Пароль не может состоять только из цифр',
+  'AgentLodge: claude now runs against this server.': 'AgentLodge: claude теперь работает через этот сервер.',
+  'open a new terminal, then run: claude': 'откройте новый терминал и запустите: claude',
+  'undo:': 'удалить:',
+  'claude was not found on PATH. Install Claude Code first, then run this again.': 'claude не найден в PATH. Сначала установите Claude Code, затем запустите снова.',
+  'to swap the key later, edit this file:': 'чтобы заменить ключ позже, отредактируйте этот файл:',
+  'This script takes your key as an argument: … | sh -s -- al_xxxxx': 'Скрипт принимает ключ аргументом: … | sh -s -- al_xxxxx',
+  'AgentLodge: the key file is missing. Put the key back, or install again.': 'AgentLodge: файл ключа отсутствует. Верните ключ или установите заново.',
 };

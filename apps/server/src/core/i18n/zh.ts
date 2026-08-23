@@ -72,4 +72,11 @@ export const zh: Record<string, string> = {
   'The password has to be at least 8 characters': '密码至少 8 位',
   'That password is too long': '密码过长',
   'The password cannot be all digits': '密码不能全是数字',
+  'AgentLodge: claude now runs against this server.': 'AgentLodge：claude 现在连的是本服务。',
+  'open a new terminal, then run: claude': '新开一个终端，然后运行：claude',
+  'undo:': '卸载：',
+  'claude was not found on PATH. Install Claude Code first, then run this again.': 'PATH 里找不到 claude。先装 Claude Code，再执行一次。',
+  'to swap the key later, edit this file:': '以后换 key 就改这个文件：',
+  'This script takes your key as an argument: … | sh -s -- al_xxxxx': '这个脚本要把 key 作为参数传进来：… | sh -s -- al_xxxxx',
+  'AgentLodge: the key file is missing. Put the key back, or install again.': 'AgentLodge：key 文件不见了。把 key 写回去，或者重新装一次。',
 };

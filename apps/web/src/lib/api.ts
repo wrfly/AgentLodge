@@ -364,7 +364,10 @@ export const me = {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
-  apiKeys: () => request<{ keys: ApiKeyRow[]; baseUrl: string }>('/api/me/api-keys'),
+  apiKeys: () =>
+    request<{ keys: ApiKeyRow[]; baseUrl: string; install: { command: string; script: string } }>(
+      '/api/me/api-keys',
+    ),
   /** The plaintext comes back this once, and is never retrievable again */
   createApiKey: (name: string) =>
     request<{ key: ApiKeyRow; plaintext: string }>('/api/me/api-keys', {
@@ -649,6 +652,42 @@ export interface ProviderInput {
   note?: string;
 }
 
+/** One of the upstream's own limit windows, on the scale its headers use (0..1) */
+export interface UpstreamAllowanceWindow {
+  utilization: number | null;
+  resetsAt: string | null;
+  status: string | null;
+}
+
+/**
+ * What the shared subscription reports about itself.
+ *
+ * Users are shown their own quota instead — the pool's figures are nobody's
+ * allowance in particular. This is the administrator's view of the plan.
+ */
+export interface UpstreamAllowance {
+  provider: string;
+  wire: string;
+  observedAt: string;
+  status: string | null;
+  resetsAt: string | null;
+  representative: string | null;
+  /** Keyed by the upstream's own abbreviations: 5h, 7d, 7d_oi, overage */
+  windows: Record<string, UpstreamAllowanceWindow>;
+  /** Everything the upstream said on the subject, unparsed */
+  raw: Record<string, string>;
+  /** Codex reports in the response body rather than in headers */
+  codex?: unknown;
+}
+
+export interface UpstreamAllowanceView {
+  enabled: boolean;
+  /** null until an upstream response has passed through the gateway since it started */
+  allowance?: UpstreamAllowance | null;
+  unreachable?: boolean;
+  error?: string;
+}
+
 export interface GateStatus {
   enabled: boolean;
   containers: { enabled: boolean; ok: boolean; detail: string; running: number };
@@ -795,6 +834,7 @@ export const admin = {
     }),
 
   gate: () => request<GateStatus>('/api/admin/gate'),
+  upstreamAllowance: () => request<UpstreamAllowanceView>('/api/admin/upstream-allowance'),
   setGateConcurrency: (maxConcurrency: number) =>
     request<GateStatus>('/api/admin/gate', {
       method: 'PATCH',

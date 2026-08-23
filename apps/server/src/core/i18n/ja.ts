@@ -72,4 +72,11 @@ export const ja: Record<string, string> = {
   'The password has to be at least 8 characters': 'パスワードは 8 文字以上である必要があります',
   'That password is too long': 'パスワードが長すぎます',
   'The password cannot be all digits': 'パスワードを数字だけにはできません',
+  'AgentLodge: claude now runs against this server.': 'AgentLodge: claude はこのサーバーに接続するようになりました。',
+  'open a new terminal, then run: claude': '新しいターミナルを開いて claude を実行してください',
+  'undo:': 'アンインストール:',
+  'claude was not found on PATH. Install Claude Code first, then run this again.': 'PATH に claude が見つかりません。Claude Code をインストールしてからもう一度実行してください。',
+  'to swap the key later, edit this file:': 'キーを差し替えるときはこのファイルを編集してください:',
+  'This script takes your key as an argument: … | sh -s -- al_xxxxx': 'このスクリプトはキーを引数として受け取ります: … | sh -s -- al_xxxxx',
+  'AgentLodge: the key file is missing. Put the key back, or install again.': 'AgentLodge: キーファイルが見つかりません。キーを戻すか、再インストールしてください。',
 };

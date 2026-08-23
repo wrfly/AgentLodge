@@ -16,9 +16,10 @@ import * as secretFiles from './secret-files.js';
 import * as audit from './audit.js';
 import * as auditProxy from './audit-proxy.js';
 import * as traces from './traces.js';
+import * as upstream from './upstream.js';
 
 export function registerAdminRoutes(app: FastifyInstance): void {
-  for (const m of [overview, users, pricing, invites, settings, gate, providers, secretFiles, audit, auditProxy, traces]) {
+  for (const m of [overview, users, pricing, invites, settings, gate, providers, secretFiles, audit, auditProxy, traces, upstream]) {
     m.register(app);
   }
 }
