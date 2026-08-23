@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   BarChart3,
   Brain,
+  Fingerprint,
   ChevronsUpDown,
   KeyRound,
   LogOut,
@@ -19,12 +20,10 @@ import clsx from 'clsx';
 import { useChat } from '../store/chat';
 import { useAuth } from '../store/auth';
 import type { AgentId, ConversationSummary } from '../lib/protocol';
-import { ThemeToggle } from './ThemeToggle';
 import { AgentSwitcher } from './AgentSwitcher';
 import { QuotaBar } from './QuotaBar';
 import { navigate, useRoute } from '../lib/route';
 import { useT } from '../lib/i18n';
-import { LocaleToggle } from './LocaleToggle';
 import { exportConversation } from '../lib/api';
 
 /**
@@ -247,14 +246,13 @@ export function Sidebar({ agent }: { agent: AgentId }) {
 }
 
 /**
- * Account menu: usage, memory, traces, keys, settings and admin, plus theme,
- * language and sign-out, all folded into one row.
+ * Account menu: every page that is not a conversation, plus sign-out, folded
+ * into the user row.
  *
- * These used to be six full-width buttons stacked under a theme switch and a
- * user row, which filled most of the lower half of the sidebar and squeezed the
- * conversation list — the thing the sidebar is for — into whatever was left.
- * They are all low-traffic entry points, and the user row was already the
- * identity area, so folding them in turns six rows into one.
+ * They are all low-traffic entry points and the row was already the identity
+ * area, so folding them in leaves the sidebar to the conversation list — which
+ * is what it is for. Theme and language live on the settings page with the rest
+ * of the preferences.
  *
  * Opens upward (bottom-full): the row is pinned to the bottom of the sidebar,
  * so there is no space below it.
@@ -271,6 +269,7 @@ function AccountMenu() {
 
   const items = [
     { path: '/usage', label: 'Usage', icon: BarChart3, name: 'usage' },
+    { path: '/profile', label: 'How you work', icon: Fingerprint, name: 'profile' },
     { path: '/memory', label: 'Memory', icon: Brain, name: 'memory' },
     { path: '/traces', label: 'Request traces', icon: Radar, name: 'traces' },
     { path: '/api-keys', label: 'API keys', icon: KeyRound, name: 'api-keys' },
@@ -306,11 +305,6 @@ function AccountMenu() {
               </button>
             ))}
 
-            <div className="my-1 border-t border-line" />
-            <div className="space-y-1.5 px-2 py-1">
-              <ThemeToggle />
-              <LocaleToggle />
-            </div>
             <div className="my-1 border-t border-line" />
 
             <button
