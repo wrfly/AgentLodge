@@ -19,4 +19,7 @@ RUN npm -w @agentlodge/web run build
 
 FROM caddy:2
 COPY --from=build /src/apps/web/dist /srv
+# The project page — the same file GitHub Pages publishes, served here at /landing/ so
+# the bare address introduces the project instead of opening with a login form
+COPY site /srv/landing
 COPY docker/Caddyfile /etc/caddy/Caddyfile

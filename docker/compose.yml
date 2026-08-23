@@ -311,6 +311,9 @@ services:
       # Your domain, and Caddy obtains a certificate for it automatically. Left empty it
       # listens on localhost over http.
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      # Where the bare address sends someone. The default is the project page; /claude
+      # opens the application directly, which is what a deployment with no public face wants.
+      LANDING_PATH: ${LANDING_PATH:-/landing/}
     volumes:
       - caddy-data:/data
     networks: [frontend]

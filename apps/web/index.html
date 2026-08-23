@@ -10,6 +10,10 @@
     <meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>AgentLodge</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏕️</text></svg>"
+    />
     <script>
       // Settle theme and language before the first paint, so neither flashes.
       // Kept in sync with lib/theme.ts and lib/i18n.ts — same storage keys,
@@ -22,13 +26,18 @@
           (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.classList.toggle('dark', dark);
 
-        var locales = ['en', 'zh', 'ja', 'ru'];
+        var locales = ['en', 'zh', 'zh-Hant', 'ja', 'ru', 'de', 'fr', 'es', 'pt'];
         var saved = localStorage.getItem('agentlodge-locale');
         if (locales.indexOf(saved) < 0) {
           saved = 'en';
           var tags = navigator.languages || [navigator.language || ''];
           for (var i = 0; i < tags.length; i++) {
-            var base = String(tags[i]).toLowerCase().split('-')[0];
+            var tag = String(tags[i]).toLowerCase();
+            // Chinese is the one split by script rather than reduced to its
+            // primary subtag; localeOf in lib/i18n.ts does the same
+            var base = tag.indexOf('zh') === 0
+              ? (/hant|-tw|-hk|-mo/.test(tag) ? 'zh-Hant' : 'zh')
+              : tag.split('-')[0];
             if (locales.indexOf(base) >= 0) {
               saved = base;
               break;

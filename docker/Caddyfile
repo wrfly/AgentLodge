@@ -63,6 +63,20 @@
 		reverse_proxy app:8787
 	}
 
+	# The bare address gets the project page rather than a login form. A redirect rather
+	# than serving it in place, because the page's own links and images are relative — the
+	# same file is published to GitHub Pages under a project path, and only relative URLs
+	# work in both. LANDING_PATH=/claude turns it off for a deployment with no public face.
+	redir / {$LANDING_PATH:/landing/} 302
+
+	# Its own files, before the SPA fallback below — that fallback rewrites anything it
+	# cannot find to index.html, which would answer a missing screenshot with the
+	# application's HTML and a 200.
+	handle /landing/* {
+		root * /srv
+		file_server
+	}
+
 	# Everything else is frontend static assets, with the SPA as the fallback
 	handle {
 		root * /srv

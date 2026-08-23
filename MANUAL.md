@@ -502,6 +502,7 @@ CLI 那两条线是**平台的**窗口，不是每个人自己的：边界取上
 
 | 路径 | 说明 |
 |---|---|
+| `/` | 跳转到 `/landing/`——项目介绍页，右上角有登录入口 |
 | `/claude` `/codex` | 对话，各自独立的会话列表、工作目录、模型选择 |
 | `/usage` | 个人用量：额度、30 天趋势、按 agent/模型/会话拆分 |
 | `/memory` | 记忆：看/改/删/加，可撤销 |
@@ -514,17 +515,23 @@ CLI 那两条线是**平台的**窗口，不是每个人自己的：边界取上
 
 ### 项目页
 
-`site/index.html` 是项目的展示页，发布在 GitHub Pages 上（`.github/workflows/pages.yml`，
-改动 `site/` 就自动发布）。它**不由本服务提供**——展示页放在自己的域名上，等于要公开这个
-域名才能介绍项目。
+`site/index.html` 一处维护，两处发布：
 
-- 一个自包含的 HTML：内联样式和脚本、中英双语（跟随浏览器）、深浅色跟随系统，没有构建步骤
-- 资源引用一律相对路径，因为 Pages 把它放在仓库名的子路径下（本仓库是
-  <https://wrfly.kfd.me/AgentLodge/>，账号配了自定义域名；没配的话是
-  `<owner>.github.io/<repo>/`）
+- **GitHub Pages**（`.github/workflows/pages.yml`，改动 `site/` 就自动发布）——
+  <https://wrfly.kfd.me/AgentLodge/>。放在这里而不是只放自己域名上，是因为展示页放在自己
+  域名上，等于要公开这个域名才能介绍项目
+- **本部署的 `/landing/`**，裸地址 302 跳过去。所以打开域名看到的是项目介绍，不是一个
+  光秃秃的登录框
+
+一个自包含的 HTML：内联样式和脚本、中英双语（跟随浏览器，右上角下拉框可切）、深浅色跟随
+系统，没有构建步骤。资源引用一律相对路径——Pages 把它放在仓库名的子路径下，绝对路径会 404。
+
+- **登录按钮靠探测决定显不显示**：页面 `HEAD /api/hello`（两个 server 角色都会应答的存活
+  端点），有应答才显示。同一个文件在 Pages 上没有应用可进，那边就不会出现这个按钮。
+  探测比猜域名准
 - **截图**：丢进 `site/`，命名 `shot-chat.png`、`shot-usage.png`、`shot-memory.png`、
   `shot-admin.png`。没放的会自己从页面上消失，四张都没有的话整节都不显示
-- 页面上没有通往应用的链接：它不知道、也不该知道谁把这个项目部署在哪
+- **关掉**：`LANDING_PATH=/claude`，裸地址直接进应用
 
 ## 功能
 
@@ -806,6 +813,7 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 |---|---|---|
 | `PORT` | `8787` | |
 | `DATA_DIR` | `./data` | |
+| `LANDING_PATH` | `/landing/` | caddy 用。裸地址跳到哪；设成 `/claude` 就没有介绍页，直接进应用 |
 | `TZ` | `UTC` | **部署机器的时区**。按时间分桶的东西都用它：用量记录算哪一天、配额窗口落在哪。启动横幅会打印实际解析到的时区，对不上就是没生效。取值 `cat /etc/timezone`。⚠️ 别用挂 `/etc/localtime` 代替：`date` 会显示对，Node 仍然是 UTC |
 | `JWT_SECRET` | 随机 | ⚠️ 不设置则每次重启换密钥，已加密的设置项（API key）解不开，需重填 |
 | `SECURE_COOKIES` | `false` | 生产设 `true` |

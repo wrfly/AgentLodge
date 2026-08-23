@@ -192,7 +192,9 @@ export function Sidebar({ agent }: { agent: AgentId }) {
   return (
     <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-line bg-sidebar">
       <div className="flex items-center justify-between px-3 py-3">
-        <span className="px-1 text-[14px] font-semibold tracking-tight">AgentLodge</span>
+        <span className="flex items-center gap-1.5 px-1 text-[14px] font-semibold tracking-tight">
+          <span aria-hidden>🏕️</span> AgentLodge
+        </span>
         <button
           onClick={() => setSidebar(false)}
           className="flex size-7 items-center justify-center rounded-md text-faint hover:bg-bubble hover:text-ink md:hidden"
