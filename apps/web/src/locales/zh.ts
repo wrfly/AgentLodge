@@ -497,4 +497,7 @@ export const zh: Record<string, string> = {
   'The upstream returned an empty list': '上游返回了空列表',
   'Fewer': '收起',
   '{n} older': '{n} 个旧版本',
+  'SendGrid API Key': 'SendGrid API Key',
+  'Refresh the model list hourly': '每小时刷新模型列表',
+  'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': '每小时问一次当前启用的上游有哪些模型，并覆盖该 provider 的列表。关闭则完全保持你填的内容。无论开关如何，「从上游拉取」按钮都可用。',
 };

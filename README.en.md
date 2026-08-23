@@ -53,7 +53,8 @@ their own sandboxed agent; you hold one upstream key and hand out none.
 - [x] An audit proxy that records every outbound request, full prompt, with a switch and a
       purge in the console
 - [x] Quotas, prices, concurrency, providers and site settings all change without a restart
-- [x] Interface and API messages in English, Chinese, Japanese and Russian
+- [x] Interface, console settings and API messages in English, Chinese, Japanese and Russian,
+      with coverage checked by `npm run typecheck` rather than by eye
 - [x] Images split by component; two files and `docker compose` bring the stack up
 
 **Not yet**

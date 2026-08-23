@@ -497,4 +497,7 @@ export const ja: Record<string, string> = {
   'The upstream returned an empty list': '上流は空のリストを返しました',
   'Fewer': '折りたたむ',
   '{n} older': '旧バージョン {n} 件',
+  'SendGrid API Key': 'SendGrid API キー',
+  'Refresh the model list hourly': 'モデル一覧を 1 時間ごとに更新',
+  'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': '有効な上流に 1 時間ごとにモデル一覧を問い合わせ、その provider の一覧を上書きします。オフなら入力したままです。どちらの場合でも「上流から取得」ボタンは使えます。',
 };

@@ -497,4 +497,7 @@ export const ru: Record<string, string> = {
   'The upstream returned an empty list': 'Апстрим вернул пустой список',
   'Fewer': 'Свернуть',
   '{n} older': 'ещё {n} старых',
+  'SendGrid API Key': 'Ключ API SendGrid',
+  'Refresh the model list hourly': 'Обновлять список моделей каждый час',
+  'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': 'Раз в час спрашивает активный апстрим, какие у него модели, и перезаписывает список этого провайдера. Выключено — список остаётся таким, как введён. В любом случае кнопка «Получить с апстрима» продолжает работать.',
 };

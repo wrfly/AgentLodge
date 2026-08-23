@@ -65,6 +65,15 @@ for (const file of files) {
 // The doc comment in lib/i18n.ts uses this as an example of what not to do
 used.delete('apiKeys.revoke');
 
+/*
+ * The System settings page renders `t(s.label)` and `t(s.hint)` — a variable, so the scan
+ * above cannot see either one. That is the blind spot named at the top of this file, and it
+ * had swallowed every setting on the page: each one showed English in every locale and
+ * nothing complained. The literals live in one array, so they can be read from there.
+ */
+const specSrc = fs.readFileSync(`${SERVER}/core/db/settings.ts`, 'utf8');
+for (const m of specSrc.matchAll(/\b(?:label|hint): '((?:[^'\\]|\\.)*)'/g)) used.add(m[1]);
+
 for (const loc of LOCALES) {
   const src = fs.readFileSync(`${WEB}/locales/${loc}.ts`, 'utf8');
   const have = new Set(
@@ -111,6 +120,6 @@ if (problems.length) {
   process.exit(1);
 }
 console.log(
-  `✓ i18n OK — web ${used.size} keys, server ${serverUsed.size} keys, `
+  `✓ i18n OK — web ${used.size} keys (settings labels included), server ${serverUsed.size} keys, `
     + `${LOCALES.length} locales fully covered, no \`t\` shadowing`,
 );
