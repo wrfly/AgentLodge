@@ -190,6 +190,8 @@ export function create(input: CreateInput): Conversation {
 
 export interface Patch {
   title?: string;
+  /** Set when the title came from the user, which stops anything else renaming it */
+  titleCustom?: boolean;
   model?: string;
   effort?: string;
   agentSessionId?: string;
@@ -197,10 +199,14 @@ export interface Patch {
 
 export function update(id: string, userId: string, patch: Patch): boolean {
   const fields: string[] = [];
-  const params: Array<string | null> = [];
+  const params: Array<string | number | null> = [];
   if (patch.title !== undefined) {
     fields.push('title = ?');
     params.push(patch.title);
+  }
+  if (patch.titleCustom !== undefined) {
+    fields.push('title_custom = ?');
+    params.push(flag(patch.titleCustom));
   }
   if (patch.model !== undefined) {
     fields.push('model = ?');
@@ -283,4 +289,21 @@ export function deriveTitle(text: string): string {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (!clean) return 'New chat';
   return clean.length > 28 ? `${clean.slice(0, 28)}…` : clean;
+}
+
+/**
+ * Name a conversation after what it turned out to be about.
+ *
+ * Skips one the user named: an automatic title is a better guess than the opening message,
+ * but it is still a guess, and theirs is not.
+ */
+export function retitle(id: string, title: string): boolean {
+  return (
+    run(
+      'update conversations set title = ?, updated_at = ? where id = ? and title_custom = 0',
+      title,
+      nowIso(),
+      id,
+    ).changes > 0
+  );
 }

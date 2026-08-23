@@ -148,7 +148,9 @@ create table if not exists conversations (
   summary          text,
   summary_at       text,
   -- How many messages the summary covers, so a conversation that has moved on is spotted
-  summary_upto     integer
+  summary_upto     integer,
+  -- The user named this one themselves, so nothing else may rename it
+  title_custom     integer not null default 0
 );
 create index if not exists idx_conv_user on conversations(user_id, updated_at desc);
 create index if not exists idx_conv_user_agent on conversations(user_id, agent, updated_at desc);

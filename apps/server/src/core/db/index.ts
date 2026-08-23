@@ -99,7 +99,7 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -157,6 +157,14 @@ function migrate(d: DatabaseSync): void {
       ['summary_upto', 'integer'],
     ] as const) {
       if (!have.has(name)) d.exec(`alter table conversations add column ${name} ${type}`);
+    }
+  }
+
+  if (from < 3) {
+    // Titles start as the opening message and are replaced once there is a summary to
+    // name the conversation by. One the user typed is theirs and stays.
+    if (!columns(d, 'conversations').has('title_custom')) {
+      d.exec('alter table conversations add column title_custom integer not null default 0');
     }
   }
 

@@ -136,6 +136,39 @@ console.log('\n=== What the page reads back ===');
   ok('no portrait until one is written', recap.portrait(userId) === undefined);
 }
 
+console.log('\n=== Naming the conversation after what it was about ===');
+{
+  const r = recap.parseRecap('用 podman 部署\n\n他们在排查容器起不来的问题，最后发现是挂载路径写错了。');
+  ok('the first line becomes the title', r.title === '用 podman 部署', r.title);
+  ok('and is not left in the summary', r.summary.startsWith('他们在排查'), r.summary);
+
+  ok('quotes are stripped', recap.parseRecap('"Deploying with podman"\n\nA summary.').title === 'Deploying with podman');
+  ok('so is a heading marker', recap.parseRecap('# Deploying\n\nA summary.').title === 'Deploying');
+  ok('and a trailing stop', recap.parseRecap('部署问题。\n\n一段总结。').title === '部署问题');
+
+  const long = recap.parseRecap(`${'x'.repeat(40)}\n\nA summary.`);
+  ok('a long-ish title is cut, not dropped', long.title?.length === 29, String(long.title?.length));
+
+  // The whole answer as one paragraph is a summary, not a title
+  const blob = recap.parseRecap('They were trying to work out why the container would not start, and it turned out to be the mount path.');
+  ok('one long line is all summary', blob.title === undefined, blob.title);
+  ok('and nothing is lost from it', blob.summary.startsWith('They were trying'));
+
+  const titleOnly = recap.parseRecap('Just a title');
+  ok('a title with no summary is not a title', titleOnly.title === undefined);
+}
+
+console.log('\n=== A name the user typed is theirs ===');
+{
+  const mine = conversation('mine', 4);
+  ok('an automatic name lands', convs.retitle(mine, 'What it was about'));
+  ok('and is what the conversation is called', convs.meta(mine, userId)?.title === 'What it was about');
+
+  convs.update(mine, userId, { title: 'My own name', titleCustom: true });
+  ok('renaming by hand stops the next one', !convs.retitle(mine, 'Something else'));
+  ok('and leaves theirs alone', convs.meta(mine, userId)?.title === 'My own name');
+}
+
 console.log('\n=== What the sweep picks up ===');
 {
   const long_ago = new Date(Date.now() - 60 * 60_000).toISOString();

@@ -51,7 +51,11 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { title?: string; model?: string; effort?: string };
     const patch: convRepo.Patch = {};
-    if (typeof body.title === 'string' && body.title.trim()) patch.title = body.title.trim();
+    if (typeof body.title === 'string' && body.title.trim()) {
+      patch.title = body.title.trim();
+      // Named by hand, so the summariser leaves it alone from here on
+      patch.titleCustom = true;
+    }
     // Changing model or effort affects later turns only; existing messages are untouched
     if (typeof body.model === 'string') patch.model = body.model.trim();
     if (typeof body.effort === 'string') patch.effort = body.effort.trim();

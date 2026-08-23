@@ -35,11 +35,44 @@ export const BATCH = 12;
 
 const SUMMARY_PROMPT = `Below is one conversation between a person and an AI assistant.
 
-In two or three sentences, say what they were trying to do, what was decided, and anything
-left unfinished. Write it so that someone returning in a month knows whether this is the
-conversation they were looking for.
+Answer with a title on the first line, a blank line, then a summary.
 
-Write in the language the person writes in. Answer with the summary and nothing else.`;
+The title names what the conversation turned out to be about — the subject, not how it
+opened. At most 24 characters. No quotes, no full stop, no "conversation about".
+
+The summary is two or three sentences: what they were trying to do, what was decided, and
+anything left unfinished. Write it so that someone returning in a month knows whether this
+is the conversation they were looking for.
+
+Write both in the language the person writes in, and answer with nothing else.`;
+
+/** Titles are cut to the same length as the one derived from an opening message */
+const TITLE_MAX = 28;
+
+/**
+ * Split the answer into the title and the summary.
+ *
+ * A title is only taken when the first line looks like one — short, and with something
+ * after it. Anything else is treated as all summary and the conversation keeps the name it
+ * has: a wrong title is in front of the user forever, a missing one costs nothing.
+ */
+export function parseRecap(answer: string): { title?: string; summary: string } {
+  const lines = answer.trim().split('\n');
+  const first = (lines[0] ?? '').trim();
+  const rest = lines.slice(1).join('\n').trim();
+
+  const title = first
+    .replace(/^#+\s*/, '')
+    .replace(/^["'“”「『]|["'“”」』]$/g, '')
+    .replace(/[.。!！]+$/, '')
+    .trim();
+
+  if (!rest || !title || title.length > TITLE_MAX * 2) return { title: undefined, summary: answer.trim() };
+  return {
+    title: title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX)}…` : title,
+    summary: rest,
+  };
+}
 
 const PORTRAIT_PROMPT = `Below are summaries of the conversations one person has had with an
 AI assistant, and some counts from their usage.
@@ -109,7 +142,7 @@ async function summarizeOne(userId: string, id: string, messages: number): Promi
   const body = transcript(id, userId);
   if (body.length < 80) return false;
 
-  const summary = (await ask(userId, `${SUMMARY_PROMPT}\n\n---\n\n${body}`, 300)).trim();
+  const { title, summary } = parseRecap(await ask(userId, `${SUMMARY_PROMPT}\n\n---\n\n${body}`, 400));
   if (!summary) return false;
 
   run(
@@ -120,6 +153,9 @@ async function summarizeOne(userId: string, id: string, messages: number): Promi
     id,
     userId,
   );
+  // The name it started with is the first thing that was said; this is what it turned out
+  // to be about. Skipped when the user has named it themselves.
+  if (title) convRepo.retitle(id, title);
   return true;
 }
 
