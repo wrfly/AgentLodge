@@ -4,8 +4,8 @@ import { getNumber } from './settings.js';
 
 export type Role = 'user' | 'admin';
 export type UserStatus = 'active' | 'suspended';
-export type { QuotaPeriod } from './period.js';
-import type { QuotaPeriod } from './period.js';
+export type { LimitKind, QuotaScope } from '../protocol.js';
+import type { LimitKind, QuotaScope } from '../protocol.js';
 
 export interface User {
   id: string;
@@ -22,36 +22,34 @@ export interface User {
 
 export interface Quota {
   userId: string;
-  tokenLimit: number | null;
-  period: QuotaPeriod;
+  /** Limit by billable tokens, or by money in micro-units */
+  limitKind: LimitKind;
+  currency: string;
+  /**
+   * The three ceilings, in the unit `limitKind` names. null means that window is unlimited.
+   *
+   * The windows are the platform's — one 5-hour window, one week, one month, the same
+   * instants for everybody. See core/db/period.ts for why they cannot be per-user.
+   */
+  window: number | null;
+  week: number | null;
+  month: number | null;
   hardStop: boolean;
-  updatedAt: string;
-  updatedBy?: string;
-  /** The period a quota warning email has already been sent for */
-  warnedPeriod?: string;
+  /** A top-up: extra allowance on one window, expiring when that window resets */
+  boost?: { scope: QuotaScope; amount: number; until: string };
   /**
    * When an administrator zeroed it by hand.
    *
-   * Counting takes max(period start, resetAt), so a manual reset only affects the current
-   * period; the next one follows its natural boundary as usual.
+   * Counting takes max(window start, resetAt), so it only affects windows already running;
+   * the next one begins at its own boundary as usual.
    */
   resetAt?: string;
-
-  /* --- rolling periods: "usable for N hours after the top-up" --- */
-  /** Window length, in hours */
-  periodHours?: number;
-  /** Where this user's window starts, usually the moment of the top-up */
-  cycleStart?: string;
-  /** true renews the window on expiry; false makes it a one-off that stops when used up or expired */
-  autoRenew: boolean;
-
-  /* --- What the limit is measured in --- */
-  /** tokens: billable tokens. cost: money. */
-  limitKind: 'tokens' | 'cost';
-  /** Money ceiling, in micro-units */
-  costLimitMicro: number | null;
-  currency: string;
+  /** The window a quota warning email has already gone out for */
+  warnedPeriod?: string;
+  updatedAt: string;
+  updatedBy?: string;
 }
+
 
 interface UserRow {
   id: string;
@@ -68,19 +66,20 @@ interface UserRow {
 
 interface QuotaRow {
   user_id: string;
-  token_limit: number | null;
-  period: string;
+  limit_kind?: string | null;
+  window_limit?: number | null;
+  week_limit?: number | null;
+  month_limit?: number | null;
   hard_stop: number;
+  boost_scope?: string | null;
+  boost_amount?: number | null;
+  boost_until?: string | null;
+  reset_at?: string | null;
+  warned_period?: string | null;
   updated_at: string;
   updated_by: string | null;
-  warned_period?: string | null;
-  reset_at?: string | null;
-  period_hours?: number | null;
-  cycle_start?: string | null;
-  auto_renew?: number | null;
-  limit_kind?: string | null;
-  cost_limit_micro?: number | null;
 }
+
 
 const toUser = (r: UserRow): User => ({
   id: r.id,
@@ -95,22 +94,29 @@ const toUser = (r: UserRow): User => ({
   passwordChangedAt: r.password_changed_at ?? undefined,
 });
 
+/** The one currency quotas are priced in. Kept where it was, next to the only reader. */
+const CURRENCY = 'CNY';
+
 const toQuota = (r: QuotaRow): Quota => ({
   userId: r.user_id,
-  tokenLimit: r.token_limit,
-  period: r.period as QuotaPeriod,
-  hardStop: bool(r.hard_stop),
+  limitKind: r.limit_kind === 'cost' ? 'cost' : 'tokens',
+  currency: CURRENCY,
+  window: r.window_limit ?? null,
+  week: r.week_limit ?? null,
+  month: r.month_limit ?? null,
+  hardStop: r.hard_stop === 1,
+  // A boost with no scope or no expiry is not a boost; treat it as absent rather than
+  // half-applying it
+  boost:
+    r.boost_scope && r.boost_amount != null && r.boost_until
+      ? { scope: r.boost_scope as QuotaScope, amount: r.boost_amount, until: r.boost_until }
+      : undefined,
+  resetAt: r.reset_at ?? undefined,
+  warnedPeriod: r.warned_period ?? undefined,
   updatedAt: r.updated_at,
   updatedBy: r.updated_by ?? undefined,
-  warnedPeriod: r.warned_period ?? undefined,
-  resetAt: r.reset_at ?? undefined,
-  periodHours: r.period_hours ?? undefined,
-  cycleStart: r.cycle_start ?? undefined,
-  autoRenew: r.auto_renew === null || r.auto_renew === undefined ? true : bool(r.auto_renew),
-  limitKind: (r.limit_kind as 'tokens' | 'cost') ?? 'tokens',
-  costLimitMicro: r.cost_limit_micro ?? null,
-  currency: 'CNY',
 });
+
 
 /* ---------------- Reads ---------------- */
 
@@ -168,14 +174,16 @@ export function create(input: CreateUserInput): User {
     now,
   );
 
-  // A quota carried by the invite code wins; otherwise the global default
-  const limit =
+  // A monthly ceiling carried by the invite code wins; otherwise the global default. The
+  // other two windows start unlimited: a deployment that only cares about the month should
+  // not have the other two invented for it.
+  const month =
     input.tokenLimit !== undefined ? input.tokenLimit : (getNumber('quota.defaultTokenLimit') ?? null);
   run(
-    `insert into user_quotas (user_id, token_limit, period, hard_stop, updated_at)
-     values (?, ?, 'monthly', 1, ?)`,
+    `insert into user_quotas (user_id, limit_kind, month_limit, hard_stop, updated_at)
+     values (?, 'tokens', ?, 1, ?)`,
     id,
-    limit,
+    month,
     now,
   );
 
@@ -208,37 +216,36 @@ export function remove(id: string): void {
 export function getQuota(userId: string): Quota {
   const r = get<QuotaRow>('select * from user_quotas where user_id = ?', userId);
   if (r) return toQuota(r);
-  // Fallback for older rows that have no quota
+
+  // A user created before this table had a row for them
   const now = nowIso();
+  const month = getNumber('quota.defaultTokenLimit') ?? null;
   run(
-    `insert into user_quotas (user_id, token_limit, period, hard_stop, updated_at) values (?, ?, 'monthly', 1, ?)`,
+    `insert into user_quotas (user_id, limit_kind, month_limit, hard_stop, updated_at)
+     values (?, 'tokens', ?, 1, ?)`,
     userId,
-    getNumber('quota.defaultTokenLimit') ?? null,
+    month,
     now,
   );
   return {
     userId,
-    tokenLimit: getNumber('quota.defaultTokenLimit') ?? null,
-    period: 'monthly',
+    limitKind: 'tokens',
+    currency: CURRENCY,
+    window: null,
+    week: null,
+    month,
     hardStop: true,
     updatedAt: now,
-    autoRenew: true,
-    limitKind: 'tokens',
-    costLimitMicro: null,
-    currency: 'CNY',
   };
 }
 
 export interface QuotaPatch {
-  tokenLimit?: number | null;
-  period?: QuotaPeriod;
+  limitKind?: LimitKind;
+  /** null clears a ceiling, which means that window stops being limited */
+  window?: number | null;
+  week?: number | null;
+  month?: number | null;
   hardStop?: boolean;
-  periodHours?: number | null;
-  /** 'now' starts the clock at this moment — what a top-up does */
-  cycleStart?: string | null;
-  autoRenew?: boolean;
-  limitKind?: 'tokens' | 'cost';
-  costLimitMicro?: number | null;
 }
 
 export function markWarned(userId: string, period: string): void {
@@ -246,56 +253,82 @@ export function markWarned(userId: string, period: string): void {
 }
 
 /**
- * Zero the current period's usage by hand.
+ * Zero this user's usage in the windows currently running.
  *
- * usage_records are not deleted — those are the books and do not get edited. The counting
- * start simply moves forward. The warning flag is cleared too, so the new period can send
- * its reminder again.
+ * Counting takes max(window start, reset_at), so a reset only affects windows that have
+ * already begun; the next one starts at its own boundary, which is what keeps the
+ * boundaries the same for everybody even after an administrator intervenes.
  */
 export function resetUsage(userId: string, at: string | null = nowIso()): void {
   run('update user_quotas set reset_at = ?, warned_period = null where user_id = ?', at, userId);
 }
 
-/** Undo a manual reset and go back to the natural period */
+/** Undo a manual reset and count from the window's own start again */
 export function undoResetUsage(userId: string): void {
   resetUsage(userId, null);
+}
+
+/**
+ * A top-up: extra allowance on one window, gone when that window resets.
+ *
+ * @param until the end of the window it applies to, taken at the moment of granting. There
+ * is no renewal and no separate clock — the window's own boundary is the expiry, so a
+ * top-up cannot give one user a schedule of their own.
+ */
+export function grantBoost(
+  userId: string,
+  scope: QuotaScope,
+  amount: number,
+  until: string,
+  updatedBy?: string,
+): Quota {
+  getQuota(userId); // makes sure the row exists
+  run(
+    `update user_quotas set boost_scope = ?, boost_amount = ?, boost_until = ?,
+       warned_period = null, updated_at = ?, updated_by = ?
+     where user_id = ?`,
+    scope,
+    Math.max(0, Math.round(amount)),
+    until,
+    nowIso(),
+    updatedBy ?? null,
+    userId,
+  );
+  return getQuota(userId);
+}
+
+export function clearBoost(userId: string): void {
+  run(
+    'update user_quotas set boost_scope = null, boost_amount = null, boost_until = null where user_id = ?',
+    userId,
+  );
 }
 
 export function setQuota(userId: string, patch: QuotaPatch, updatedBy?: string): Quota {
   const current = getQuota(userId);
   const next: Quota = {
     ...current,
-    ...patch,
-    // null in the patch means "clear it", which has to become undefined to satisfy Quota's type
-    periodHours: patch.periodHours === null ? undefined : (patch.periodHours ?? current.periodHours),
-    cycleStart:
-      patch.cycleStart === 'now'
-        ? nowIso()
-        : patch.cycleStart === null
-          ? undefined
-          : (patch.cycleStart ?? current.cycleStart),
-    autoRenew: patch.autoRenew ?? current.autoRenew,
     limitKind: patch.limitKind ?? current.limitKind,
-    costLimitMicro:
-      patch.costLimitMicro === undefined ? current.costLimitMicro : patch.costLimitMicro,
+    // undefined leaves a ceiling alone; null clears it
+    window: patch.window === undefined ? current.window : patch.window,
+    week: patch.week === undefined ? current.week : patch.week,
+    month: patch.month === undefined ? current.month : patch.month,
+    hardStop: patch.hardStop ?? current.hardStop,
     updatedAt: nowIso(),
     updatedBy: updatedBy ?? current.updatedBy,
   };
   run(
     `update user_quotas set
-       token_limit = ?, period = ?, hard_stop = ?, updated_at = ?, updated_by = ?,
-       period_hours = ?, cycle_start = ?, auto_renew = ?, limit_kind = ?, cost_limit_micro = ?
+       limit_kind = ?, window_limit = ?, week_limit = ?, month_limit = ?,
+       hard_stop = ?, updated_at = ?, updated_by = ?
      where user_id = ?`,
-    next.tokenLimit,
-    next.period,
+    next.limitKind,
+    next.window,
+    next.week,
+    next.month,
     flag(next.hardStop),
     next.updatedAt,
     next.updatedBy ?? null,
-    next.periodHours ?? null,
-    next.cycleStart ?? null,
-    flag(next.autoRenew),
-    next.limitKind,
-    next.costLimitMicro,
     userId,
   );
   return next;

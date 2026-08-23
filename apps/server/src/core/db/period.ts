@@ -92,6 +92,51 @@ export function rollingExpired(now: Date, spec: RollingSpec): boolean {
   return now >= rollingEndAt(now, spec);
 }
 
+/* ---------------- The platform's rolling 5-hour window ---------------- */
+
+/** What the upstream calls a 5-hour window, and what we mirror it with */
+export const WINDOW_MS = 5 * 60 * 60_000;
+
+export interface WindowBounds {
+  start: Date;
+  end: Date;
+}
+
+/**
+ * The 5-hour window everybody shares.
+ *
+ * One subscription has one 5-hour window, and the upstream states when it resets on every
+ * response. Mirroring that instant is the whole point: a window measured from each user's
+ * own first message would tell somebody who started at four that they have until nine,
+ * when the pool empties at seven and they are refused with their quota barely touched.
+ *
+ * @param upstreamReset the last reset the upstream reported, ISO 8601. It may be in the
+ * past — nothing has gone through the gateway for a while — so the cadence is carried
+ * forward from it in 5-hour steps rather than discarded: the phase is what matters, and the
+ * phase does not drift.
+ *
+ * With no observation at all, the window falls back to the clock, cut from the same anchor
+ * hour the other periods use. Still identical for everybody, which is the requirement;
+ * simply not aligned to the upstream's own reset until one has been seen.
+ */
+export function windowBoundsAt(
+  now: Date,
+  upstreamReset?: string | null,
+  anchorIn?: Partial<PeriodAnchor>,
+): WindowBounds {
+  const observed = upstreamReset ? new Date(upstreamReset).getTime() : NaN;
+  const phase = Number.isFinite(observed)
+    ? observed
+    : // The anchor hour on the epoch's own day, so every deployment cuts the same instants
+      new Date(1970, 0, 1, normalizeAnchor(anchorIn).hour).getTime();
+
+  // How many whole windows separate now from that phase, rounded towards -∞ so a phase in
+  // the future works out the same way as one in the past
+  const steps = Math.floor((now.getTime() - phase) / WINDOW_MS);
+  const start = new Date(phase + steps * WINDOW_MS);
+  return { start, end: new Date(start.getTime() + WINDOW_MS) };
+}
+
 export function periodStartAt(
   period: QuotaPeriod,
   now: Date,

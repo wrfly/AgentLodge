@@ -227,8 +227,8 @@ export const api = {
 
 /* ---------------- Usage and memory ---------------- */
 
-export type { QuotaPeriod, QuotaStatus, LimitKind } from './protocol';
-import type { QuotaPeriod, QuotaStatus } from './protocol';
+export type { QuotaScope, QuotaStatus, QuotaWindow, LimitKind } from './protocol';
+import type { QuotaScope, QuotaStatus } from './protocol';
 
 export type RangePreset =
   | 'today' | 'yesterday' | 'week' | 'month'
@@ -403,14 +403,12 @@ export const publicApi = {
 
 export interface AdminUser extends PublicUser {
   quota: {
-    tokenLimit: number | null;
-    period: QuotaPeriod;
-    hardStop: boolean;
+    /** The three ceilings, in the unit limitKind names. null means that window is unlimited. */
+    window: number | null;
+    week: number | null;
+    month: number | null;
     limitKind: 'tokens' | 'cost';
-    costLimitMicro: number | null;
-    periodHours?: number;
-    cycleStart?: string;
-    autoRenew: boolean;
+    hardStop: boolean;
   };
   usage: { period: UsageTotals; month: UsageTotals; allTime: UsageTotals };
   conversations: number;
@@ -728,20 +726,18 @@ export const admin = {
     patch: {
       status?: 'active' | 'suspended';
       role?: 'user' | 'admin';
-      tokenLimit?: number | null;
-      period?: QuotaPeriod;
+      /** The three ceilings; null clears one, undefined leaves it alone */
+      window?: number | null;
+      week?: number | null;
+      month?: number | null;
       hardStop?: boolean;
-      periodHours?: number | null;
-      cycleStart?: string | null;
-      autoRenew?: boolean;
       limitKind?: 'tokens' | 'cost';
-      costLimitMicro?: number | null;
     },
   ) => request<AdminUser>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  /** Top up: set the allowance, the window length, and where the window starts, in one go */
+  /** Top up: extra allowance on one of the platform's windows, gone when that window resets */
   topup: (
     id: string,
-    input: { amount?: number; tokenLimit?: number; hours: number; autoRenew?: boolean; note?: string },
+    input: { amount?: number; tokens?: number; scope?: QuotaScope; note?: string },
   ) =>
     request<{ ok: boolean; quota: QuotaStatus }>(`/api/admin/users/${id}/topup`, {
       method: 'POST',

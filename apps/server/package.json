@@ -22,7 +22,8 @@
     "test:upstream-allowance": "tsx src/gateway/upstream-allowance.test.ts",
     "test:models": "tsx src/gateway/models.test.ts",
     "test:protocol": "tsx src/core/protocol.test.ts",
-    "test:model-refresh": "tsx src/gateway/model-refresh.test.ts"
+    "test:model-refresh": "tsx src/gateway/model-refresh.test.ts",
+    "test:quota": "tsx src/core/quota.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

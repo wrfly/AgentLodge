@@ -1,96 +1,113 @@
 import * as usersRepo from './db/users.js';
 import * as usageRepo from './db/usage.js';
-import * as pricing from './db/pricing.js';
-import {
-  describeAnchor,
-  rollingExpired,
-  type QuotaPeriod,
-  type RollingSpec,
-} from './db/period.js';
+import { WINDOW_MS, periodEndAt, periodStartAt, windowBoundsAt } from './db/period.js';
 import { quotaAnchor } from './db/settings.js';
+import { getStringFresh } from './db/settings.js';
+import type { QuotaScope, QuotaStatus, QuotaWindow } from './protocol.js';
 
-export type { QuotaStatus, LimitKind } from './protocol.js';
-import type { QuotaStatus } from './protocol.js';
+export type { QuotaStatus, QuotaWindow, LimitKind, QuotaScope } from './protocol.js';
 
-const PERIOD_LABEL: Record<QuotaPeriod, string> = {
-  rolling: 'window',
-  daily: 'day',
-  weekly: 'week',
-  monthly: 'month',
-  total: 'billing period',
-};
+/**
+ * What a user has left, in each of the platform's three windows.
+ *
+ * **The windows belong to the platform, the amounts belong to the user.** One subscription
+ * has one 5-hour window, one week and one month; they begin and end at the same instants
+ * for everybody, and only the consumption inside them differs. Windows measured from each
+ * user's own first message would tell somebody who started at four that their allowance
+ * runs until nine, when the pool empties at seven and they are refused with most of their
+ * quota unspent.
+ *
+ * A ceiling of null means that window is not limited — a deployment that only cares about
+ * the monthly total leaves the other two empty and nothing about them is enforced or shown.
+ */
 
-export function periodLabel(p: QuotaPeriod): string {
-  return PERIOD_LABEL[p] ?? 'period';
+const SCOPES: QuotaScope[] = ['window', 'week', 'month'];
+
+export function scopeLabel(scope: QuotaScope): string {
+  return scope === 'window' ? '5-hour window' : scope === 'week' ? 'week' : 'month';
 }
 
-function rollingSpecOf(q: usersRepo.Quota): RollingSpec | undefined {
-  if (q.period !== 'rolling') return undefined;
-  return {
-    hours: q.periodHours ?? 24,
-    // With no start point set, fall back to when the quota was last changed
-    cycleStart: q.cycleStart ?? q.updatedAt,
-    autoRenew: q.autoRenew,
-  };
+/** Where each window begins and ends. The 5-hour one follows the upstream; see period.ts. */
+export function boundsOf(scope: QuotaScope, now = new Date()): { start: Date; end: Date } {
+  if (scope === 'window') {
+    return windowBoundsAt(now, getStringFresh('quota.windowResetAt'), quotaAnchor());
+  }
+  const period = scope === 'week' ? 'weekly' : 'monthly';
+  const anchor = quotaAnchor();
+  const start = periodStartAt(period, now, anchor);
+  // Both have an end; the fallback is only there because the signature allows null for
+  // 'total', which is not a scope any more
+  const end = periodEndAt(period, now, anchor) ?? new Date(start.getTime() + WINDOW_MS);
+  return { start, end };
+}
+
+function ceilingOf(q: usersRepo.Quota, scope: QuotaScope): number | null {
+  return scope === 'window' ? q.window : scope === 'week' ? q.week : q.month;
 }
 
 /**
- * Counting starts at max(the period's natural start, the administrator's manual reset).
+ * A top-up counts only on the window it was granted for, and only until that window ends.
  *
- * A manual reset only affects the current period: once the period rolls over, the
- * natural start overtakes it and the normal rhythm resumes by itself.
+ * Expiry is the window's own boundary rather than a clock of its own — that is what stops a
+ * top-up from handing one user a schedule nobody else is on.
  */
-export function status(userId: string): QuotaStatus {
+function boostOf(q: usersRepo.Quota, scope: QuotaScope, now: Date): number {
+  if (!q.boost || q.boost.scope !== scope) return 0;
+  return new Date(q.boost.until).getTime() > now.getTime() ? q.boost.amount : 0;
+}
+
+function windowStatus(
+  userId: string,
+  q: usersRepo.Quota,
+  scope: QuotaScope,
+  now: Date,
+): QuotaWindow {
+  const { start, end } = boundsOf(scope, now);
+  // A manual reset moves the counting start forward inside a window already running; the
+  // next window still begins at its own boundary
+  const from =
+    q.resetAt && new Date(q.resetAt) > start ? q.resetAt : start.toISOString();
+
+  const totals = usageRepo.totalsForUser(userId, { from, to: end.toISOString() });
+  const used = q.limitKind === 'cost' ? totals.costMicro : totals.billableTokens;
+
+  const ceiling = ceilingOf(q, scope);
+  const boost = boostOf(q, scope, now);
+  const limit = ceiling === null ? null : ceiling + boost;
+
+  return {
+    scope,
+    limit,
+    boost,
+    used,
+    remaining: limit === null ? null : Math.max(limit - used, 0),
+    ratio: limit === null || limit <= 0 ? 0 : Math.min(used / limit, 1),
+    startsAt: start.toISOString(),
+    endsAt: end.toISOString(),
+    exceeded: limit !== null && used >= limit,
+  };
+}
+
+export function status(userId: string, now = new Date()): QuotaStatus {
   const q = usersRepo.getQuota(userId);
-  const rolling = rollingSpecOf(q);
-  const anchor = quotaAnchor();
-  const now = new Date();
+  const windows = Object.fromEntries(
+    SCOPES.map((scope) => [scope, windowStatus(userId, q, scope, now)]),
+  ) as Record<QuotaScope, QuotaWindow>;
 
-  const natural = usageRepo.periodStart(q.period, now, rolling);
-  const since = q.resetAt && q.resetAt > natural ? q.resetAt : natural;
-  const end = usageRepo.periodEnd(q.period, now, rolling);
-
-  const totals = usageRepo.totalsForUser(userId, { from: since });
-  const used = totals.billableTokens;
-  const usedMicro = totals.costMicro;
-
-  const expired = rolling ? rollingExpired(now, rolling) : false;
-
-  const exceededByToken = q.tokenLimit !== null && used >= q.tokenLimit;
-  const exceededByCost = q.costLimitMicro !== null && usedMicro >= q.costLimitMicro;
-  const exceeded =
-    expired || (q.limitKind === 'cost' ? exceededByCost : exceededByToken);
-
-  const ratio =
-    q.limitKind === 'cost'
-      ? q.costLimitMicro && q.costLimitMicro > 0
-        ? Math.min(usedMicro / q.costLimitMicro, 1)
-        : 0
-      : q.tokenLimit && q.tokenLimit > 0
-        ? Math.min(used / q.tokenLimit, 1)
-        : 0;
+  const limited = SCOPES.map((s) => windows[s]).filter((w) => w.limit !== null);
+  // The one that will refuse first: whichever limited window is furthest along
+  const tightest = limited.length
+    ? limited.reduce((a, b) => (b.ratio > a.ratio ? b : a)).scope
+    : null;
 
   return {
     limitKind: q.limitKind,
-    limit: q.tokenLimit,
-    costLimitMicro: q.costLimitMicro,
     currency: q.currency,
-    used,
-    usedMicro,
-    remaining: q.tokenLimit === null ? null : Math.max(q.tokenLimit - used, 0),
-    remainingMicro:
-      q.costLimitMicro === null ? null : Math.max(q.costLimitMicro - usedMicro, 0),
-    ratio,
-    period: q.period,
-    periodStart: since,
-    periodEnd: end,
-    resetsInMs: end ? Math.max(new Date(end).getTime() - Date.now(), 0) : null,
-    resetAt: q.resetAt,
-    anchorLabel: describeAnchor(q.period, anchor, rolling),
-    expired,
     hardStop: q.hardStop,
-    exceeded,
-    warning: ratio >= 0.9,
+    windows,
+    exceeded: limited.some((w) => w.exceeded),
+    warning: limited.some((w) => w.ratio >= 0.9),
+    tightest,
   };
 }
 
@@ -101,45 +118,34 @@ export interface Verdict {
 }
 
 /**
- * The quota check. Called in two places, and both are needed:
- *   1. before sending a message — an exhausted quota starts no turn, and the user is
- *      told immediately
- *   2. before every upstream call in the gateway — the only place that can stop a turn
- *      **while it is running**
+ * The gate. Any window over its ceiling refuses, and the message names which one.
+ *
+ * A soft quota reports the same status and allows the request: an administrator who wants
+ * to watch before enforcing gets the warnings without the refusals.
  */
-export function check(userId: string): Verdict {
-  const s = status(userId);
-  if (!s.hardStop) return { allow: true, status: s };
+export function check(userId: string, now = new Date()): Verdict {
+  const s = status(userId, now);
+  if (!s.exceeded || !s.hardStop) return { allow: true, status: s };
 
-  if (s.expired) {
-    return {
-      allow: false,
-      reason: `This allowance has expired (${s.anchorLabel}); ask an administrator to top it up`,
-      status: s,
-    };
-  }
+  const hit = SCOPES.map((scope) => s.windows[scope]).find((w) => w.exceeded)!;
+  const unit = s.limitKind === 'cost' ? s.currency : 'tokens';
+  const amount = (v: number): string =>
+    s.limitKind === 'cost' ? (v / 1_000_000).toFixed(2) : String(v);
 
-  if (s.exceeded) {
-    const spent =
-      s.limitKind === 'cost'
-        ? `${pricing.formatMoney(s.usedMicro, s.currency)} / ${pricing.formatMoney(s.costLimitMicro ?? 0, s.currency)}`
-        : `${s.used.toLocaleString()} / ${(s.limit ?? 0).toLocaleString()} tokens`;
-    const resetHint =
-      s.resetsInMs === null ? '' : `, resets in ${formatDuration(s.resetsInMs)}`;
-    return {
-      allow: false,
-      reason: `Quota used up (${spent} this ${periodLabel(s.period)}${resetHint})`,
-      status: s,
-    };
-  }
-
-  return { allow: true, status: s };
+  return {
+    allow: false,
+    reason:
+      `Quota used up for this ${scopeLabel(hit.scope)} `
+      + `(${amount(hit.used)} / ${amount(hit.limit ?? 0)} ${unit}, `
+      + `resets in ${formatDuration(new Date(hit.endsAt).getTime() - now.getTime())})`,
+    status: s,
+  };
 }
 
 export function formatDuration(ms: number): string {
-  const mins = Math.ceil(ms / 60_000);
-  if (mins < 60) return `${mins} min`;
-  const hours = Math.ceil(mins / 60);
+  const minutes = Math.max(0, Math.round(ms / 60_000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
   if (hours < 48) return `${hours} h`;
-  return `${Math.ceil(hours / 24)} d`;
+  return `${Math.round(hours / 24)} d`;
 }

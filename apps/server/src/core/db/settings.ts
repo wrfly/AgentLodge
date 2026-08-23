@@ -202,6 +202,19 @@ export const SETTING_SPECS: SettingSpec[] = [
   // agent
   {
     /*
+     * Not a setting anybody edits: the gateway writes it when the upstream reports when its
+     * 5-hour window resets, and both processes read it to cut that window at the same
+     * instant. It lives here because the settings table is the only store both containers
+     * already share, and it is hidden because there is nothing here for a person to decide.
+     */
+    key: 'quota.windowResetAt',
+    label: 'Upstream 5-hour window reset',
+    group: 'quota',
+    type: 'string',
+    hidden: true,
+  },
+  {
+    /*
      * The model list itself stays on the provider — it is a property of an endpoint, and the
      * note at the top of this file explains why none of those live here. This only decides
      * **who writes it**: left off, whatever the administrator typed; turned on, the upstream
@@ -320,6 +333,21 @@ export function getBool(key: string): boolean {
  * allow a particular egress. It is not on a hot path. Do not use it for frequently read
  * configuration.
  */
+/**
+ * Read past the cache.
+ *
+ * The cache is per process and the two containers share one database, so anything one of
+ * them writes has to be read this way by the other or it is a restart behind.
+ */
+export function getStringFresh(key: string): string | undefined {
+  const row = get<{ value: string }>('select value from settings where key = ?', key);
+  if (row?.value) {
+    const v = decrypt(row.value);
+    if (v) return v;
+  }
+  return SPEC_BY_KEY.get(key)?.default;
+}
+
 export function getBoolFresh(key: string): boolean {
   const spec = SPEC_BY_KEY.get(key);
   const row = get<{ value: string }>('select value from settings where key = ?', key);

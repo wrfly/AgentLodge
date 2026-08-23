@@ -79,4 +79,5 @@ export const ru: Record<string, string> = {
   'to swap the key later, edit this file:': 'чтобы заменить ключ позже, отредактируйте этот файл:',
   'This script takes your key as an argument: … | sh -s -- al_xxxxx': 'Скрипт принимает ключ аргументом: … | sh -s -- al_xxxxx',
   'AgentLodge: the key file is missing. Put the key back, or install again.': 'AgentLodge: файл ключа отсутствует. Верните ключ или установите заново.',
+  'This user is billed the other way; change the quota first': 'У этого пользователя другой способ тарификации — сначала измените квоту',
 };

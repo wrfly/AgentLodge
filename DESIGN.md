@@ -1060,30 +1060,42 @@ reset 的窗口；它在 `/api/oauth/usage` 里照常出现，那边 `resets_at`
 
 L2 拦不住"一个 turn 内跑了 50 次调用把额度打爆"，L3 能。两者都要有。
 
-### 8.2 配额检查逻辑
+### 8.2 三个窗口，边界全平台统一
 
-```ts
-function checkQuota(q: UserQuota, usage: Usage): QuotaVerdict {
-  if (!q.hard_stop) return { allow: true, warn: usage.pct > 0.9 };
-  if (q.mode === 'tokens' || q.mode === 'both') {
-    if (q.token_limit && usage.weighted >= q.token_limit)
-      return { allow: false, reason: 'token_limit_exceeded' };
-  }
-  if (q.mode === 'cost' || q.mode === 'both') {
-    if (q.cost_limit_micro && usage.cost >= q.cost_limit_micro)
-      return { allow: false, reason: 'cost_limit_exceeded' };
-  }
-  return { allow: true, warn: usage.pct > 0.9 };
-}
-```
+一个用户有**三个上限**：5 小时、周、月，任一超了就拦，单个留空表示那个窗口不限。
 
-**周期滚动**：不需要归档任务，也没有要清零的计数器 —— 周期起点由 `user_quotas` 上的
-`period` / `cycle_start` / `period_hours` 算出来，聚合时按这个起点过滤 `usage_records` 即可。
-换句话说「新周期」不是一个要触发的动作，而是一个算出来的时间边界（`core/period.ts`，26 个单测）。
+**窗口是平台的，不是每个人自己的。** 一份订阅只有一个 5 小时窗口、一个周、一个月，起止
+时刻对所有人是同一个：
+
+| 窗口 | 边界从哪来 |
+|---|---|
+| 5 小时 | 上游响应头里的 `-5h-reset`。网关收到就写进 `settings`（两个容器唯一共享的存储），app 和 gateway 都从那儿读，切在同一个时刻。没观测到时按锚点小时切，仍然全局一致 |
+| 周 / 月 | 已有的全局锚点设置（周几 / 几号 / 几点），本来就是全局的 |
+
+**为什么不能按用户自己的窗口算**：上游 2 点重置、窗口到 7 点，某人 4 点才发第一条消息。
+按他自己算窗口到 9 点——可 7 点池子就空了，他会带着大把没用完的配额被拒。
+
+上游那个 reset 可能是几小时前观测到的（网关闲置），这时**按 5 小时步长往前推**而不是丢弃：
+要紧的是相位，相位不会漂。注意 5 小时不整除一天，所以窗口会绕着钟走——上游自己的窗口也是
+这样。
+
+**充值 = 给某一个窗口临时抬高上限**，窗口一重置就失效。它以前是「一次性额度 + 自己的
+小时数 + 可自动续」，那正是这套模型要消灭的每用户滚动窗口：4 点充值的人会拥有一套只有他
+有的边界。挂到窗口上之后，它保住了「临时放行某个人」这个用途，而过期时刻是大家共用的。
+
+**手动清零**只把计数起点往窗口内部挪（`max(窗口起点, reset_at)`），**不动边界**——下一个
+窗口照样在自己的边界开始。
+
+**没有归档任务，也没有要清零的计数器**：窗口起点是算出来的时间边界，聚合时按它过滤
+`usage_records` 就行（`core/db/period.ts`，`core/quota.ts` 26 个单测）。
+
+**CLI 上报因此变得精确**：Claude Code 的面板正好也是一个 5 小时窗口加一个周窗口，直接一一
+对应，不需要任何折算（`gateway/quota-report.ts`）。月上限在面板里没有对应的行，只在网页
+`/usage` 里显示。
 
 ### 8.3 管理后台能力
 - 用户列表：用量 / 配额 / 剩余 / 容器状态 / 最后活跃
-- 单个用户：改配额（mode / limit / period / concurrency / hard_stop）、重置本周期用量、暂停账号、强制回收容器、查看其会话与消费明细
+- 单个用户：改三个上限、给某个窗口充值、清零当前窗口用量、暂停账号、强制回收容器、查看其会话与消费明细
 - 批量：给一组用户设置统一配额
 - 邀请码：生成 / 撤销 / 查看使用情况
 - 全局：`MAX_UPSTREAM_CONCURRENCY` 热调、模型价格表、默认配额

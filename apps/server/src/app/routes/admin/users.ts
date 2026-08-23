@@ -17,12 +17,13 @@ export function register(app: FastifyInstance): void {
     const monthStart = usageRepo.periodStart('monthly');
     return usersRepo.list().map((u) => {
       const q = usersRepo.getQuota(u.id);
-      const used = usageRepo.totalsForUser(u.id, usageRepo.periodStart(q.period));
+      // The 5-hour window is the one that bites first, so it is the one the list shows
+      const windowStart = quota.boundsOf('window').start.toISOString();
       return {
         ...usersRepo.toPublic(u),
-        quota: { tokenLimit: q.tokenLimit, period: q.period, hardStop: q.hardStop },
+        quota: { window: q.window, week: q.week, month: q.month, limitKind: q.limitKind, hardStop: q.hardStop },
         usage: {
-          period: used,
+          period: usageRepo.totalsForUser(u.id, windowStart),
           month: usageRepo.totalsForUser(u.id, monthStart),
           allTime: usageRepo.totalsForUser(u.id),
         },
@@ -42,7 +43,7 @@ export function register(app: FastifyInstance): void {
       quotaStatus: quota.status(id),
       usage: {
         daily: usageRepo.dailyForUser(id, 30),
-        byAgent: usageRepo.byAgentForUser(id, usageRepo.periodStart(q.period)),
+        byAgent: usageRepo.byAgentForUser(id, quota.boundsOf('month').start.toISOString()),
         byConversation: usageRepo.byConversationForUser(id, 10),
         allTime: usageRepo.totalsForUser(id),
       },
@@ -56,15 +57,12 @@ export function register(app: FastifyInstance): void {
     const body = (req.body ?? {}) as {
       status?: usersRepo.UserStatus;
       role?: usersRepo.Role;
-      tokenLimit?: number | null;
-      period?: usersRepo.QuotaPeriod;
+      /** The three ceilings, in the unit limitKind names. null clears one. */
+      window?: number | null;
+      week?: number | null;
+      month?: number | null;
       hardStop?: boolean;
-      periodHours?: number | null;
-      /** 'now' starts the clock at this moment */
-      cycleStart?: string | null;
-      autoRenew?: boolean;
       limitKind?: 'tokens' | 'cost';
-      costLimitMicro?: number | null;
     };
     const user = usersRepo.findById(id);
     if (!user) return reply.code(404).send({ error: tr(req, 'No such user') });
@@ -77,10 +75,7 @@ export function register(app: FastifyInstance): void {
 
     if (body.status) usersRepo.setStatus(id, body.status);
     if (body.role) usersRepo.setRole(id, body.role);
-    const quotaKeys = [
-      'tokenLimit', 'period', 'hardStop', 'periodHours',
-      'cycleStart', 'autoRenew', 'limitKind', 'costLimitMicro',
-    ] as const;
+    const quotaKeys = ['window', 'week', 'month', 'hardStop', 'limitKind'] as const;
     if (quotaKeys.some((k) => body[k] !== undefined)) {
       const patch: usersRepo.QuotaPatch = {};
       for (const k of quotaKeys) {
@@ -129,10 +124,10 @@ export function register(app: FastifyInstance): void {
       targetType: 'user',
       targetId: id,
       // Record the figure before zeroing — the books keep a trace
-      detail: { clearedTokens: before.used, period: before.period },
+      detail: { cleared: before.windows.month.used, scope: 'all windows' },
       ip: req.ip,
     });
-    return { ok: true, clearedTokens: before.used, quota: quota.status(id) };
+    return { ok: true, clearedTokens: before.windows.month.used, quota: quota.status(id) };
   });
 
   app.post('/api/admin/users/:id/logout-all', guard, async (req, reply) => {
@@ -151,50 +146,41 @@ export function register(app: FastifyInstance): void {
   });
 
   /**
-   * A top-up: grant an allowance and start the clock now.
+   * A top-up: extra allowance on one window, gone when that window resets.
    *
-   * This is the entry point for "ten units, to be used within three hours" — one call sets
-   * the allowance, the window length, the start point and whether it renews, and clears any
-   * previous manual reset.
+   * It used to start a rolling period with its own clock, which is exactly the per-user
+   * window the quota model exists to remove — a user topped up at four had boundaries
+   * nobody else had. Attached to a window instead, it keeps what it was for (letting one
+   * person through for now) and expires on a boundary everybody shares.
    */
   app.post('/api/admin/users/:id/topup', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!usersRepo.findById(id)) return reply.code(404).send({ error: tr(req, 'No such user') });
 
     const body = (req.body ?? {}) as {
-      /** An amount in whole units; either this or tokenLimit */
+      /** An amount in whole units of money; either this or tokens */
       amount?: number;
-      tokenLimit?: number;
-      /** How many hours it is valid for, e.g. 3 */
-      hours?: number;
-      /** true renews every N hours; false makes it a one-off */
-      autoRenew?: boolean;
+      tokens?: number;
+      /** Which window it lifts. Defaults to the 5-hour one, the one that bites first. */
+      scope?: usersRepo.QuotaScope;
       note?: string;
     };
 
-    const hours = Number(body.hours);
-    if (!Number.isFinite(hours) || hours <= 0)
-      return reply.code(400).send({ error: tr(req, 'The number of hours has to be greater than 0') });
-
+    const scope: usersRepo.QuotaScope =
+      body.scope === 'week' || body.scope === 'month' ? body.scope : 'window';
     const byCost = body.amount !== undefined;
-    if (!byCost && !body.tokenLimit)
+    const amount = byCost ? Math.round(Number(body.amount) * pricing.MICRO) : Number(body.tokens);
+    if (!Number.isFinite(amount) || amount <= 0)
       return reply.code(400).send({ error: tr(req, 'Give either an amount or a token limit') });
 
-    usersRepo.setQuota(
-      id,
-      {
-        period: 'rolling',
-        periodHours: hours,
-        cycleStart: 'now',
-        autoRenew: body.autoRenew ?? false,
-        hardStop: true,
-        limitKind: byCost ? 'cost' : 'tokens',
-        costLimitMicro: byCost ? Math.round(Number(body.amount) * pricing.MICRO) : null,
-        tokenLimit: byCost ? null : Number(body.tokenLimit),
-      },
-      req.user!.id,
-    );
-    // A top-up starts a new period, so any previous manual reset is cleared
+    const current = usersRepo.getQuota(id);
+    if ((byCost ? 'cost' : 'tokens') !== current.limitKind)
+      return reply
+        .code(400)
+        .send({ error: tr(req, 'This user is billed the other way; change the quota first') });
+
+    usersRepo.grantBoost(id, scope, amount, quota.boundsOf(scope).end.toISOString(), req.user!.id);
+    // The boost is the intervention; a previous manual reset should not compound it
     usersRepo.undoResetUsage(id);
 
     audit.log({
@@ -202,7 +188,7 @@ export function register(app: FastifyInstance): void {
       action: 'admin.user.topup',
       targetType: 'user',
       targetId: id,
-      detail: { amount: body.amount, tokenLimit: body.tokenLimit, hours, autoRenew: body.autoRenew, note: body.note },
+      detail: { scope, amount, byCost, note: body.note },
       ip: req.ip,
     });
     return { ok: true, quota: quota.status(id) };

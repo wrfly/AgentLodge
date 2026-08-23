@@ -8,9 +8,12 @@ import { useAgents } from '../store/agents';
 import { useQuota } from '../store/quota';
 import { fmtMoney } from '../lib/api';
 import { AGENTS } from '../lib/route';
-import type { EffortOption, ModelOption } from '../lib/api';
+import type { EffortOption, ModelOption, QuotaScope } from '../lib/api';
 import type { AgentId } from '../lib/protocol';
 import { Picker } from './Picker';
+
+/** Named so a refusal says which window ran out, not just that one did */
+const SCOPE_LABEL: Record<QuotaScope, string> = { window: '5h', week: 'week', month: 'month' };
 
 const MAX_HEIGHT = 240;
 
@@ -43,7 +46,7 @@ export function Composer({ agent }: { agent: AgentId }) {
   const setEffort = useChat((s) => s.setEffort);
 
   const quota = useQuota((s) => s.quota);
-  const blocked = Boolean((quota?.exceeded || quota?.expired) && quota?.hardStop);
+  const blocked = Boolean(quota?.exceeded && quota?.hardStop);
 
   const models = useAgents((s) => s.info(agent)?.models) ?? NO_MODELS;
   // Grouped by family so a dozen names read as four things with older versions behind them
@@ -159,17 +162,19 @@ export function Composer({ agent }: { agent: AgentId }) {
 
         {blocked ? (
           <div className="mt-1.5 text-center text-[11.5px] text-danger">
-            {quota?.expired
-              ? t('Your quota period has ended — ask an administrator to top it up')
-              : quota?.limitKind === 'cost'
-                ? t('Quota used up ({used} / {limit}) — ask an administrator', {
-                    used: fmtMoney(quota.usedMicro, quota.currency),
-                    limit: fmtMoney(quota.costLimitMicro, quota.currency),
-                  })
-                : t('Quota used up ({used} / {limit}) — ask an administrator', {
-                    used: quota?.used.toLocaleString() ?? '',
-                    limit: quota?.limit?.toLocaleString() ?? '',
-                  })}
+            {(() => {
+              // The window that refused is the one to name — "used up" without saying which
+              // window sends people to the console to work it out
+              const hit = quota && Object.values(quota.windows).find((w) => w.exceeded);
+              if (!quota || !hit) return t('Quota used up — ask an administrator');
+              const show = (v: number) =>
+                quota.limitKind === 'cost' ? fmtMoney(v, quota.currency) : v.toLocaleString();
+              return t('{scope} quota used up ({used} / {limit}) — ask an administrator', {
+                scope: SCOPE_LABEL[hit.scope],
+                used: show(hit.used),
+                limit: show(hit.limit ?? 0),
+              });
+            })()}
           </div>
         ) : (
           <div className="mt-1.5 text-center text-[11px] text-faint">

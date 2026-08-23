@@ -105,7 +105,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
       q.preset ?? 'quota',
       q.from,
       q.to,
-      quotaStatus.periodStart,
+      quotaStatus.windows.month.startsAt,
     );
     const window = { from: range.from, to: range.to };
 

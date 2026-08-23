@@ -23,7 +23,7 @@ import {
   type InviteCode,
   fmtMoney,
   type GateStatus,
-  type QuotaPeriod,
+  type QuotaScope,
   type SettingView,
   type Provider,
   type SecretFile,
@@ -1129,26 +1129,26 @@ function GateCard() {
 
 /* ---------------- Users ---------------- */
 
+/**
+ * A top-up lifts one window's ceiling until that window resets.
+ *
+ * There is no clock to set any more: the window's own boundary is the expiry, which is what
+ * keeps every user on the same schedule even when one of them is let through.
+ */
 function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
   const t = useT();
-  const [mode, setMode] = useState<'cost' | 'tokens'>('cost');
-  const [amount, setAmount] = useState('10');
-  const [hours, setHours] = useState('3');
-  const [autoRenew, setAutoRenew] = useState(false);
+  const byCost = user.quota.limitKind === 'cost';
+  const [amount, setAmount] = useState(byCost ? '10' : '5');
+  const [scope, setScope] = useState<QuotaScope>('window');
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    const h = Number(hours);
-    if (!Number.isFinite(h) || h <= 0) return;
     setBusy(true);
     try {
       await admin.topup(user.id, {
-        ...(mode === 'cost'
-          ? { amount: Number(amount) }
-          // Typed in millions, like every other allowance field
-          : { tokenLimit: mToTokens(amount) }),
-        hours: h,
-        autoRenew,
+        // Typed in millions on the token side, like every other allowance field
+        ...(byCost ? { amount: Number(amount) } : { tokens: mToTokens(amount) }),
+        scope,
       });
       onDone();
     } finally {
@@ -1160,68 +1160,69 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
     <div className="mt-3 rounded-lg border border-accent/30 bg-accent-soft/40 p-3">
       <div className="mb-2 text-[12.5px] font-medium">{t('Top up')}</div>
       <div className="flex flex-wrap items-end gap-3">
-        <div className="w-28">
-          <Field label={t('Billing basis')}>
-            <Select value={mode} onChange={(e) => setMode(e.target.value as 'cost' | 'tokens')}>
-              <option value="cost">{t('By amount')}</option>
-              <option value="tokens">{t('By token')}</option>
+        <div className="w-32">
+          <Field label={t('Which window')}>
+            <Select value={scope} onChange={(e) => setScope(e.target.value as QuotaScope)}>
+              <option value="window">{t('This 5-hour window')}</option>
+              <option value="week">{t('This week')}</option>
+              <option value="month">{t('This month')}</option>
             </Select>
           </Field>
         </div>
         <div className="w-28">
-          <Field label={t(mode === 'cost' ? 'Amount' : 'Token limit')}>
-            {mode === 'cost' ? (
+          <Field label={t(byCost ? 'Amount' : 'Extra allowance')}>
+            {byCost ? (
               <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
             ) : (
               <WithUnit className="block" unit="M" value={amount} onChange={setAmount} />
             )}
           </Field>
         </div>
-        <div className="w-24">
-          <Field label={t('Valid for (hours)')}>
-            <Input value={hours} onChange={(e) => setHours(e.target.value)} inputMode="decimal" />
-          </Field>
-        </div>
-        <div className="pb-4">
-          <Toggle checked={autoRenew} onChange={setAutoRenew} label={t('Auto-renew on expiry')} />
-        </div>
         <div className="pb-3.5">
           <Button variant="primary" onClick={() => void submit()} loading={busy}>
             <Wallet size={13} />
-            {t('Top up and start the clock')}
+            {t('Top up')}
           </Button>
         </div>
       </div>
       <p className="mt-1 text-[11.5px] text-faint">
-        {t('The window starts the moment you click. Without auto-renew this is a one-off allowance: it stops when used up or expired, until the next top-up.')}
+        {t('Raises this user\'s ceiling on that window only, and expires when the window resets. Windows are the platform\'s, so this does not give anybody a schedule of their own.')}
       </p>
     </div>
   );
 }
 
+/** Digits and one decimal point: the unit is millions, so 0.5 has to be typeable */
+const clean = (v: string): string => v.replace(/[^\d.]/g, '');
+
 function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) {
   const t = useT();
   const [editing, setEditing] = useState(false);
   const [topup, setTopup] = useState(false);
-  // Typed in millions; the API takes tokens
-  const [limit, setLimit] = useState(user.quota.tokenLimit === null ? '' : tokensToM(user.quota.tokenLimit));
-  const [period, setPeriod] = useState(user.quota.period);
+  // Typed in millions; the API takes the quota's own unit
+  const asM = (v: number | null) => (v === null ? '' : tokensToM(v));
+  const [limitWindow, setLimitWindow] = useState(asM(user.quota.window));
+  const [limitWeek, setLimitWeek] = useState(asM(user.quota.week));
+  const [limitMonth, setLimitMonth] = useState(asM(user.quota.month));
   const [hardStop, setHardStop] = useState(user.quota.hardStop);
   const [busy, setBusy] = useState(false);
 
   const byCost = user.quota.limitKind === 'cost';
+  // The list shows the 5-hour window: it is the one that bites first, and usage.period is
+  // measured over exactly that window on the server
   const used = byCost ? user.usage.period.costMicro : user.usage.period.billableTokens;
-  const cap = byCost ? user.quota.costLimitMicro : user.quota.tokenLimit;
+  const cap = user.quota.window;
   const pct = cap ? Math.min(used / cap, 1) : 0;
   const show = (v: number) => (byCost ? fmtMoney(v) : fmtTokens(v));
 
   const save = async () => {
     setBusy(true);
     try {
-      const trimmed = limit.trim();
+      const ceiling = (v: string) => (v.trim() === '' ? null : mToTokens(v));
       await admin.updateUser(user.id, {
-        tokenLimit: trimmed === '' ? null : mToTokens(trimmed),
-        period,
+        window: ceiling(limitWindow),
+        week: ceiling(limitWeek),
+        month: ceiling(limitMonth),
         hardStop,
       });
       setEditing(false);
@@ -1346,25 +1347,21 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
 
       {editing && (
         <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-line bg-elevated p-3">
-          <div className="w-40">
-            <Field label={t('Quota limit')}>
-              <WithUnit
-                className="block"
-                unit="M"
-                value={limit}
-                onChange={(v) => setLimit(v.replace(/[^\d.]/g, ''))}
-              />
+          {/* Three ceilings, all optional. The windows they apply to are the platform's —
+              the same instants for every user — so there is no period to choose. */}
+          <div className="w-32">
+            <Field label={t('Per 5 hours')} hint={t('empty = unlimited')}>
+              <WithUnit className="block" unit="M" value={limitWindow} onChange={(v) => setLimitWindow(clean(v))} />
             </Field>
           </div>
           <div className="w-32">
-            <Field label={t('Period')}>
-              <Select value={period} onChange={(e) => setPeriod(e.target.value as QuotaPeriod)}>
-                <option value="rolling">{t('Rolling window')}</option>
-                <option value="daily">{t('Daily')}</option>
-                <option value="weekly">{t('Weekly')}</option>
-                <option value="monthly">{t('Monthly')}</option>
-                <option value="total">{t('Total')}</option>
-              </Select>
+            <Field label={t('Per week')} hint={t('empty = unlimited')}>
+              <WithUnit className="block" unit="M" value={limitWeek} onChange={(v) => setLimitWeek(clean(v))} />
+            </Field>
+          </div>
+          <div className="w-32">
+            <Field label={t('Per month')} hint={t('empty = unlimited')}>
+              <WithUnit className="block" unit="M" value={limitMonth} onChange={(v) => setLimitMonth(clean(v))} />
             </Field>
           </div>
           <div className="pb-4">

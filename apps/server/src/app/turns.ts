@@ -25,21 +25,27 @@ import type { MessageBlock, StoredMessage } from '../core/protocol.js';
  */
 async function maybeWarnQuota(userId: string): Promise<void> {
   const status = quota.status(userId);
-  if (!status.warning || status.limit === null) return;
+  if (!status.warning) return;
+
+  // Whichever window is closest to refusing is the one worth writing about
+  const hit = status.tightest ? status.windows[status.tightest] : null;
+  if (!hit || hit.limit === null) return;
 
   const q = usersRepo.getQuota(userId);
-  if (q.warnedPeriod === status.periodStart) return;
+  // One mail per window, not per period: the key names the window and the instant it began
+  const key = `${hit.scope}:${hit.startsAt}`;
+  if (q.warnedPeriod === key) return;
 
   const user = usersRepo.findById(userId);
   if (!user) return;
 
   // Mark before sending: a failure is not retried, so nobody gets nagged repeatedly
-  usersRepo.markWarned(userId, status.periodStart);
+  usersRepo.markWarned(userId, key);
   const base = getString('app.baseUrl', 'http://localhost:5173');
   const tpl = mail.quotaWarningMail({
     username: user.username,
-    used: status.used,
-    limit: status.limit,
+    used: hit.used,
+    limit: hit.limit,
     link: `${base}/usage`,
   });
   await mail.send({ to: user.email, ...tpl, link: `${base}/usage` });

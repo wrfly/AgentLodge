@@ -1,3 +1,4 @@
+import { setSetting } from '../core/db/settings.js';
 import type { Wire } from './usage-parser.js';
 
 /**
@@ -108,7 +109,27 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
     raw,
     codex: last?.codex,
   };
+
+  /*
+   * The 5-hour window's reset is not only the administrator's business: it is the boundary
+   * every user's quota is cut at, and quotas are computed in both containers. So it goes to
+   * the database — the one store the two share — and only when it changes, which is once
+   * every five hours rather than once a request.
+   */
+  const reset = windows['5h']?.resetsAt;
+  if (reset && reset !== lastPersisted) {
+    lastPersisted = reset;
+    try {
+      setSetting('quota.windowResetAt', reset);
+    } catch {
+      // A read-only or busy database must not take the response down with it; the window
+      // falls back to the clock, which is still the same for everybody
+    }
+  }
 }
+
+/** What was last written, so an unchanged reset does not write on every response */
+let lastPersisted: string | undefined;
 
 /**
  * Codex's allowance, which arrives inside the response body rather than in headers.

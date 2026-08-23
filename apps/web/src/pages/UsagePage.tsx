@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
-import { fmtMoney, me, type RangePreset, type SeriesPoint, type UsageReport } from '../lib/api';
+import { fmtMoney, me, type QuotaScope, type RangePreset, type SeriesPoint, type UsageReport } from '../lib/api';
 import { navigate } from '../lib/route';
 import {
   Banner,
@@ -28,13 +28,6 @@ const PRESETS: Array<{ id: RangePreset; label: string }> = [
   { id: 'all', label: 'All time' },
 ];
 
-const PERIOD_LABEL: Record<string, string> = {
-  rolling: 'rolling window',
-  daily: 'daily',
-  weekly: 'weekly',
-  monthly: 'monthly',
-  total: 'total',
-};
 
 /** A minimal bar chart — not worth a charting library for one trend line */
 function Chart({ data, unit }: { data: SeriesPoint[]; unit: 'day' | 'hour' }) {
@@ -78,78 +71,71 @@ function Chart({ data, unit }: { data: SeriesPoint[]; unit: 'day' | 'hour' }) {
   );
 }
 
+/** Longest first, so the card reads from the tightest to the loosest */
+const SCOPES = ['window', 'week', 'month'] as const;
+
 function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
   const t = useT();
   const byCost = quota.limitKind === 'cost';
-  const used = byCost ? quota.usedMicro : quota.used;
-  const cap = byCost ? quota.costLimitMicro : quota.limit;
-  const left = byCost ? quota.remainingMicro : quota.remaining;
   const show = (v: number) => (byCost ? fmtMoney(v, quota.currency) : v.toLocaleString());
-  const resetHint =
-    quota.resetsInMs === null
-      ? t('never resets')
-      : quota.resetsInMs < 3600_000
-        ? t('resets in {n} minutes', { n: Math.ceil(quota.resetsInMs / 60_000) })
-        : quota.resetsInMs < 48 * 3600_000
-          ? t('resets in {n} hours', { n: Math.ceil(quota.resetsInMs / 3600_000) })
-          : t('resets in {n} days', { n: Math.ceil(quota.resetsInMs / 86400_000) });
+  const title: Record<QuotaScope, string> = {
+    window: t('This 5-hour window'),
+    week: t('This week'),
+    month: t('This month'),
+  };
 
-  if (quota.expired) {
-    return (
-      <Card title={t('Quota')}>
-        <div className="rounded-lg border border-danger/30 bg-danger/8 px-3 py-2.5 text-[13px] text-danger">
-          {t('This quota period has ended — ask an administrator to top it up')}
-        </div>
-        <div className="mt-2 text-[12px] text-faint">{quota.anchorLabel}</div>
-      </Card>
-    );
-  }
+  const limited = SCOPES.filter((s) => quota.windows[s].limit !== null);
 
-  if (cap === null) {
-    return (
-      <Card title={t('Quota')}>
-        <div className="text-[13px] text-muted">
-          {t('This account has no limit. Used this {period}:', {
-            period: t(PERIOD_LABEL[quota.period] ?? 'period'),
-          })}{' '}
-          <span className="font-mono">{quota.used.toLocaleString()}</span> tokens
-          <span className="text-faint">({fmtMoney(quota.usedMicro, quota.currency)})</span>
-        </div>
-        <div className="mt-1.5 text-[12px] text-faint">{quota.anchorLabel}</div>
-      </Card>
-    );
-  }
-
-  const pct = Math.round(quota.ratio * 100);
   return (
     <Card title={t('Quota')}>
-      <div className="mb-2 flex items-baseline justify-between">
-        <span className="font-mono text-[17px] font-semibold tabular-nums">
-          {show(used)}
-          <span className="text-[13px] font-normal text-faint">{' / '}{show(cap)}</span>
-        </span>
-        <span
-          className={clsx(
-            'text-[13px] font-medium',
-            quota.exceeded ? 'text-danger' : quota.warning ? 'text-amber-600' : 'text-muted',
-          )}
-        >
-          {t('{amount} left', { amount: show(left ?? 0) })} · {pct}%
-        </span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-bubble">
-        <div
-          className={clsx(
-            'h-full rounded-full transition-all',
-            quota.exceeded ? 'bg-danger' : quota.warning ? 'bg-amber-500' : 'bg-accent',
-          )}
-          style={{ width: `${Math.max(pct, 1)}%` }}
-        />
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-faint">
-        <span>{quota.anchorLabel} · {resetHint}</span>
-        <span>{t('period started {when}', { when: fmtDate(quota.periodStart) })}</span>
-        {quota.resetAt && <span className="text-accent">{t('an administrator reset it manually')}</span>}
+      {limited.length === 0 ? (
+        <div className="text-[13px] text-muted">
+          {t('This account has no limit. Used this month:')}{' '}
+          <span className="font-mono">{quota.windows.month.used.toLocaleString()}</span>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {limited.map((scope) => {
+            const w = quota.windows[scope];
+            const pct = Math.round(w.ratio * 100);
+            return (
+              <div key={scope}>
+                <div className="mb-1 flex items-baseline justify-between">
+                  <span className="text-[12.5px]">
+                    {title[scope]}
+                    {w.boost > 0 && (
+                      <span className="ml-1.5 text-[11px] text-accent">
+                        {t('+{amount} topped up', { amount: show(w.boost) })}
+                      </span>
+                    )}
+                  </span>
+                  <span className="font-mono text-[12.5px] tabular-nums">
+                    {show(w.used)}
+                    <span className="text-faint">{' / '}{show(w.limit ?? 0)}</span>
+                  </span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-bubble">
+                  <div
+                    className={clsx(
+                      'h-full rounded-full transition-all',
+                      w.exceeded ? 'bg-danger' : w.ratio >= 0.9 ? 'bg-amber-500' : 'bg-accent',
+                    )}
+                    style={{ width: `${Math.max(pct, 1)}%` }}
+                  />
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
+                  <span>{pct}%</span>
+                  <span>{t('{amount} left', { amount: show(w.remaining ?? 0) })}</span>
+                  <span>{t('resets {when}', { when: fmtDate(w.endsAt) })}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-faint">
+        {/* The boundaries are the platform's, so saying so once is enough */}
+        <span>{t('Windows are the same for everyone; only what you spend inside them is yours.')}</span>
         {!quota.hardStop && <span className="text-amber-600">{t('warn only, not enforced')}</span>}
       </div>
     </Card>

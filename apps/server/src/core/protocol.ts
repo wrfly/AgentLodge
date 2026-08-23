@@ -40,38 +40,51 @@ export type ServerEvent =
   | { type: 'queue.waiting'; turnId: string; position: number }
   | { type: 'heartbeat'; ts: number };
 
-export type QuotaPeriod = 'rolling' | 'daily' | 'weekly' | 'monthly' | 'total';
+/**
+ * The platform's three windows.
+ *
+ * Not a per-user period: one subscription has one 5-hour window, one week and one month,
+ * beginning and ending at the same instants for everybody. See core/db/period.ts.
+ */
+export type QuotaScope = 'window' | 'week' | 'month';
 export type LimitKind = 'tokens' | 'cost';
 
-export interface QuotaStatus {
-  /** Limit by tokens or by money */
-  limitKind: LimitKind;
-  /** Billable-token ceiling; null means unlimited */
+/** One of the platform's windows, as it applies to one user */
+export interface QuotaWindow {
+  scope: QuotaScope;
+  /** The ceiling, top-up included, in the unit `limitKind` names. null means unlimited. */
   limit: number | null;
-  /** Money ceiling, in micro-units (1 unit = 1e6); null means unlimited */
-  costLimitMicro: number | null;
-  currency: string;
-
+  /** How much of that ceiling came from a top-up */
+  boost: number;
   used: number;
-  usedMicro: number;
   remaining: number | null;
-  remainingMicro: number | null;
+  /** 0..1, clamped */
   ratio: number;
-
-  period: QuotaPeriod;
-  periodStart: string;
-  periodEnd: string | null;
-  resetsInMs: number | null;
-  resetAt?: string;
-  /** The reset rule, in words */
-  anchorLabel: string;
-  /** A one-off allowance that has expired, awaiting an administrator's top-up */
-  expired: boolean;
-
-  hardStop: boolean;
+  /**
+   * The window's boundaries — **the same instants for every user**.
+   *
+   * A window measured from each user's own first message would tell somebody who started
+   * at four that they have until nine, when the pool empties at seven.
+   */
+  startsAt: string;
+  endsAt: string;
   exceeded: boolean;
-  warning: boolean;
 }
+
+export interface QuotaStatus {
+  limitKind: LimitKind;
+  currency: string;
+  hardStop: boolean;
+  /** All three, always present; an unlimited one has a null limit */
+  windows: Record<QuotaScope, QuotaWindow>;
+  /** Any window over its ceiling */
+  exceeded: boolean;
+  /** Any limited window at 90% or more */
+  warning: boolean;
+  /** Whichever limited window is closest to refusing, or null when none is limited */
+  tightest: QuotaScope | null;
+}
+
 
 /* ---------- Persisted message shapes ---------- */
 

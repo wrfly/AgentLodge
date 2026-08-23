@@ -23,25 +23,38 @@ create table if not exists users (
 );
 
 create table if not exists user_quotas (
-  user_id     text primary key references users(id) on delete cascade,
-  token_limit integer,                              -- null means no limit
-  period      text    not null default 'monthly',   -- monthly | total
-  hard_stop   integer not null default 1,           -- 0 warns without blocking
-  updated_at  text    not null,
-  updated_by  text,
-  -- Which period a warning email has gone out for, so one period does not nag twice
+  user_id      text primary key references users(id) on delete cascade,
+  -- tokens limits by billable tokens; cost limits by money in micro-units
+  limit_kind   text not null default 'tokens',
+  /*
+   * Three ceilings, all in the unit named above, all null-means-unlimited.
+   *
+   * The windows they apply to are the platform's, not each user's: one 5-hour window, one
+   * week, one month, beginning and ending at the same instants for everybody. A window
+   * measured from a user's own first message would tell somebody who started at four that
+   * they have until nine, when the pool empties at seven.
+   */
+  window_limit integer,
+  week_limit   integer,
+  month_limit  integer,
+  hard_stop    integer not null default 1,
+  /*
+   * A top-up raises one window's ceiling, and expires with that window.
+   *
+   * It used to be a rolling allowance with its own start point, which is exactly the
+   * per-user window the model above exists to remove. Attached to a window instead, it
+   * keeps what it was for — letting one person through for now — without giving them
+   * boundaries of their own.
+   */
+  boost_scope  text,                    -- window | week | month
+  boost_amount integer,
+  boost_until  text,                    -- the window's end at the moment it was granted
+  -- When an administrator zeroed it; counting starts at max(window start, reset_at)
+  reset_at     text,
+  -- Which window a warning email has gone out for, so one window does not nag twice
   warned_period text,
-  -- When an administrator zeroed it; counting starts at max(period start, reset_at)
-  reset_at      text,
-  -- Rolling periods: the window length in hours and this user's own start point
-  period_hours  integer,
-  cycle_start   text,
-  -- 1 renews the window on expiry; 0 makes it a one-off that stops when used up or
-  -- expired, until an administrator tops it up
-  auto_renew    integer not null default 1,
-  -- tokens limits by billable tokens; cost limits by money
-  limit_kind    text not null default 'tokens',
-  cost_limit_micro integer
+  updated_at   text not null,
+  updated_by   text
 );
 
 create table if not exists invite_codes (

@@ -84,8 +84,69 @@ export function initDb(): DatabaseSync {
    * like cannot work once new data can look like old data.
    */
   db.exec(fs.readFileSync(schemaPath, 'utf8'));
+  migrate(db);
   console.log(`[db] ${file}`);
   return db;
+}
+
+/**
+ * The one-shot switch the comment above asks for.
+ *
+ * `pragma user_version` is a counter SQLite keeps in the file itself, so "has this run" is
+ * a fact rather than something inferred from what the data looks like — which is how the
+ * previous migration layer rewrote a working configuration on every restart.
+ *
+ * A step only ever adds what is missing: schema.sql already builds a new database complete,
+ * so the same code has to be a no-op there and a repair on an older file.
+ */
+const SCHEMA_VERSION = 1;
+
+function columns(d: DatabaseSync, table: string): Set<string> {
+  return new Set(
+    (d.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>).map((r) => r.name),
+  );
+}
+
+function migrate(d: DatabaseSync): void {
+  const [row] = d.prepare('pragma user_version').all() as Array<{ user_version: number }>;
+  const from = row?.user_version ?? 0;
+  if (from >= SCHEMA_VERSION) return;
+
+  if (from < 1) {
+    /*
+     * Quotas move from one period with one ceiling to three windows with three ceilings.
+     * The old ceiling lands in whichever window its period resembles, so nobody's limit
+     * quietly becomes unlimited; the other two start empty, which reads as "not limited on
+     * that window" and is true.
+     */
+    const have = columns(d, 'user_quotas');
+    for (const [name, type] of [
+      ['limit_kind', "text not null default 'tokens'"],
+      ['window_limit', 'integer'],
+      ['week_limit', 'integer'],
+      ['month_limit', 'integer'],
+      ['boost_scope', 'text'],
+      ['boost_amount', 'integer'],
+      ['boost_until', 'text'],
+    ] as const) {
+      if (!have.has(name)) d.exec(`alter table user_quotas add column ${name} ${type}`);
+    }
+
+    // Only an old file has something to carry over
+    if (have.has('token_limit')) {
+      d.exec(`
+        update user_quotas set
+          week_limit = case when period = 'weekly'
+            then (case when limit_kind = 'cost' then cost_limit_micro else token_limit end) end,
+          month_limit = case when period <> 'weekly'
+            then (case when limit_kind = 'cost' then cost_limit_micro else token_limit end) end
+        where week_limit is null and month_limit is null
+      `);
+    }
+  }
+
+  d.exec(`pragma user_version = ${SCHEMA_VERSION}`);
+  console.log(`[db] migrated ${from} → ${SCHEMA_VERSION}`);
 }
 
 export function closeDb(): void {
