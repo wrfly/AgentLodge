@@ -133,11 +133,9 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
           })}
         </div>
       )}
-      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-faint">
-        {/* The boundaries are the platform's, so saying so once is enough */}
-        <span>{t('Windows are the same for everyone; only what you spend inside them is yours.')}</span>
-        {!quota.hardStop && <span className="text-amber-600">{t('warn only, not enforced')}</span>}
-      </div>
+      {!quota.hardStop && (
+        <div className="mt-3 text-[12px] text-amber-600">{t('warn only, not enforced')}</div>
+      )}
     </Card>
   );
 }

@@ -507,7 +507,6 @@ export const zh: Record<string, string> = {
   '{scope} window': '{scope}窗口',
   'Which window': '作用于哪个窗口',
   'This 5-hour window': '当前 5 小时窗口',
-  'Raises this user\'s ceiling on that window only, and expires when the window resets. Windows are the platform\'s, so this does not give anybody a schedule of their own.': '只抬高该用户在那个窗口里的上限，窗口一重置就失效。窗口是平台的，所以这不会让谁多出一套自己的时间表。',
   'Per 5 hours': '每 5 小时',
   'empty = unlimited': '留空 = 不限',
   'Per week': '每周',
@@ -515,6 +514,6 @@ export const zh: Record<string, string> = {
   'This account has no limit. Used this month:': '这个账号没有上限。本月已用：',
   '+{amount} topped up': '已充值 +{amount}',
   'resets {when}': '{when} 重置',
-  'Windows are the same for everyone; only what you spend inside them is yours.': '窗口的起止时间所有人一致，各自不同的只有窗口里的消耗。',
   'Upstream 5-hour window reset': '上游 5 小时窗口重置时刻',
+  'Expires when that window resets — there is no separate clock to set.': '窗口重置时自动失效，不用另外设有效期。',
 };

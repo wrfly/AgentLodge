@@ -507,7 +507,6 @@ export const ja: Record<string, string> = {
   '{scope} window': '{scope} ウィンドウ',
   'Which window': '対象ウィンドウ',
   'This 5-hour window': '現在の 5 時間ウィンドウ',
-  'Raises this user\'s ceiling on that window only, and expires when the window resets. Windows are the platform\'s, so this does not give anybody a schedule of their own.': 'そのウィンドウにおける上限のみを引き上げ、ウィンドウのリセットで失効します。ウィンドウはプラットフォーム共通なので、特定の利用者だけ別のスケジュールになることはありません。',
   'Per 5 hours': '5 時間あたり',
   'empty = unlimited': '空欄 = 無制限',
   'Per week': '週あたり',
@@ -515,6 +514,6 @@ export const ja: Record<string, string> = {
   'This account has no limit. Used this month:': 'このアカウントに上限はありません。今月の使用量：',
   '+{amount} topped up': '+{amount} 追加済み',
   'resets {when}': '{when} にリセット',
-  'Windows are the same for everyone; only what you spend inside them is yours.': 'ウィンドウの区切りは全員共通で、異なるのはその中で使った量だけです。',
   'Upstream 5-hour window reset': '上流の 5 時間ウィンドウのリセット',
+  'Expires when that window resets — there is no separate clock to set.': 'そのウィンドウのリセット時に自動的に失効します（別途の期限設定は不要）。',
 };

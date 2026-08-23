@@ -507,7 +507,6 @@ export const ru: Record<string, string> = {
   '{scope} window': 'окно: {scope}',
   'Which window': 'Какое окно',
   'This 5-hour window': 'Текущее 5-часовое окно',
-  'Raises this user\'s ceiling on that window only, and expires when the window resets. Windows are the platform\'s, so this does not give anybody a schedule of their own.': 'Поднимает потолок этого пользователя только в этом окне и истекает при его сбросе. Окна общие для платформы, так что ни у кого не появляется собственного расписания.',
   'Per 5 hours': 'За 5 часов',
   'empty = unlimited': 'пусто = без ограничений',
   'Per week': 'За неделю',
@@ -515,6 +514,6 @@ export const ru: Record<string, string> = {
   'This account has no limit. Used this month:': 'У этой учётной записи нет лимита. Использовано за месяц:',
   '+{amount} topped up': 'пополнено на {amount}',
   'resets {when}': 'сброс {when}',
-  'Windows are the same for everyone; only what you spend inside them is yours.': 'Границы окон одинаковы для всех; своим является только то, что потрачено внутри них.',
   'Upstream 5-hour window reset': 'Сброс 5-часового окна апстрима',
+  'Expires when that window resets — there is no separate clock to set.': 'Истекает при сбросе этого окна — отдельный срок задавать не нужно.',
 };

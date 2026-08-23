@@ -1186,7 +1186,7 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
         </div>
       </div>
       <p className="mt-1 text-[11.5px] text-faint">
-        {t('Raises this user\'s ceiling on that window only, and expires when the window resets. Windows are the platform\'s, so this does not give anybody a schedule of their own.')}
+        {t('Expires when that window resets — there is no separate clock to set.')}
       </p>
     </div>
   );
