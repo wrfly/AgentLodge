@@ -118,6 +118,20 @@ umask 077
 printf '%s\\n' "\$KEY" > "\$ROOT/key"
 chmod 600 "\$ROOT/key"
 
+# A config directory of our own starts with no onboarding state, so Claude Code runs its
+# first-run wizard — pick a theme, then sign in — even though the credential is already
+# there. Measured: without this line the wrapper opens on "Welcome to Claude Code / Let's
+# get started" and asks the user to log in, which is the one thing this whole script exists
+# to avoid. Marking onboarding done skips straight to the prompt.
+CONFIG="\$ROOT/claude/.claude.json"
+if [ ! -f "\$CONFIG" ]; then
+  printf '%s\\n' '{"hasCompletedOnboarding":true}' > "\$CONFIG"
+elif ! grep -q 'hasCompletedOnboarding' "\$CONFIG"; then
+  # Inserted after the opening brace, so whatever the CLI has already written is kept.
+  # A temp file rather than sed -i, which takes a different argument on BSD.
+  sed '1s/^{/{"hasCompletedOnboarding":true,/' "\$CONFIG" > "\$CONFIG.tmp" && mv "\$CONFIG.tmp" "\$CONFIG"
+fi
+
 cat > "\$ROOT/bin/claude" <<WRAPPER
 #!/bin/sh
 # The credential is rebuilt from the key file on every run, so replacing the key is one edit.

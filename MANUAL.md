@@ -398,7 +398,9 @@ curl -fsSL https://你的域名/api/cli/install.sh | sh -s -- al_xxxxx
 你的 shell rc                加一行，把上面那个 bin 放到 PATH 最前
 ```
 
-之后**照常敲 `claude`** 就是连本服务。**换密钥不用重装**——把新的写进 `~/.agentlodge/key`
+之后**照常敲 `claude`** 就是连本服务。脚本会把这个配置目录标记成「已完成引导」——
+独立 profile 里没有这个标记的话，Claude Code 会跑首次引导（选主题、然后**要求登录**），
+凭据明明已经放好了也一样。**换密钥不用重装**——把新的写进 `~/.agentlodge/key`
 就行，下一次运行自动生效。卸载执行 `~/.agentlodge/uninstall.sh`，rc 那一行和整个目录一起
 删掉。
 

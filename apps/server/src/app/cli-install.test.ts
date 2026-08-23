@@ -113,6 +113,37 @@ console.log('\n=== The key lives on its own, and the credential is built from it
   fs.rmSync(s.home, { recursive: true, force: true });
 }
 
+console.log('\n=== The first-run wizard is not the user\'s problem ===');
+{
+  const s = sandbox('');
+  s.run(script());
+  const cfg = path.join(s.home, '.agentlodge', 'claude', '.claude.json');
+  ok('a config directory of our own is marked as onboarded', JSON.parse(fs.readFileSync(cfg, 'utf8')).hasCompletedOnboarding === true);
+  fs.rmSync(s.home, { recursive: true, force: true });
+}
+{
+  // What the CLI leaves behind after it has been run once without the flag — which is what
+  // an install made before this existed looks like
+  const s = sandbox('');
+  s.run(script());
+  const cfg = path.join(s.home, '.agentlodge', 'claude', '.claude.json');
+  fs.writeFileSync(cfg, '{\n  "firstStartTime": "2026-08-23T10:40:21.767Z",\n  "machineID": "abc"\n}\n');
+  s.run(script());
+  const after = JSON.parse(fs.readFileSync(cfg, 'utf8'));
+  ok('installing again repairs it', after.hasCompletedOnboarding === true, fs.readFileSync(cfg, 'utf8'));
+  ok('without losing what was there', after.machineID === 'abc' && after.firstStartTime === '2026-08-23T10:40:21.767Z');
+  fs.rmSync(s.home, { recursive: true, force: true });
+}
+{
+  const s = sandbox('');
+  s.run(script());
+  const cfg = path.join(s.home, '.agentlodge', 'claude', '.claude.json');
+  fs.writeFileSync(cfg, '{"hasCompletedOnboarding":true,"theme":"dark"}');
+  s.run(script());
+  ok('and leaves an already-marked one alone', fs.readFileSync(cfg, 'utf8') === '{"hasCompletedOnboarding":true,"theme":"dark"}');
+  fs.rmSync(s.home, { recursive: true, force: true });
+}
+
 console.log('\n=== Swapping the key is one edit, no reinstall ===');
 {
   const s = sandbox('');
