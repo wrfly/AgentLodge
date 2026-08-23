@@ -26,7 +26,9 @@
     "test:quota": "tsx src/core/quota.test.ts",
     "test:memory": "tsx src/app/memory.test.ts",
     "test:profile": "tsx src/core/db/profile.test.ts",
-    "test:recap": "tsx src/app/recap.test.ts"
+    "test:recap": "tsx src/app/recap.test.ts",
+    "reset-password": "tsx src/cli/reset-password.ts",
+    "test:reset-password": "tsx src/cli/reset-password.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

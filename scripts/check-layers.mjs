@@ -30,6 +30,8 @@ const ALLOW = {
   core: new Set(['core']),
   app: new Set(['core', 'app']),
   gateway: new Set(['core', 'gateway']),
+  // Operator commands run without a server; they read and write the database and nothing else
+  cli: new Set(['core']),
   // index.ts is the assembly point: it imports from both sides, so it is unrestricted
   '': new Set(['core', 'app', 'gateway', '']),
 };
@@ -117,6 +119,6 @@ if (unguarded.length) {
 }
 
 console.log(
-  '✓ layers OK (core ← app / gateway, neither side depends on the other); '
+  '✓ layers OK (core ← app / gateway / cli, and none of those three depends on another); '
     + `protocol.ts copies match; ${adminRoutes} admin routes all guarded`,
 );

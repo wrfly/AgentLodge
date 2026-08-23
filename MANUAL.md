@@ -777,6 +777,29 @@ data/
     └── <convId>/        每个会话的工作目录
 ```
 
+## 忘记密码，又没配邮件
+
+邮件没配的话，「忘记密码」那条路是断的——重置链接发不出去。所以有一个只能在部署机器上跑的命令：
+
+```bash
+# 列出所有账号
+docker exec agentlodge-app-1 node apps/server/dist/cli/reset-password.js
+
+# 设一个随机密码，打印出来
+docker exec agentlodge-app-1 node apps/server/dist/cli/reset-password.js admin@example.com
+
+# 或者自己指定（至少 8 位）
+docker exec agentlodge-app-1 node apps/server/dist/cli/reset-password.js admin@example.com '换一个密码'
+
+# 开发时
+npm -w @agentlodge/server run reset-password -- admin@example.com
+```
+
+- **它不校验任何身份，也不需要**：能跑到这一步就已经拿着数据目录了，拿着数据目录的人能干的事
+  比改密码严重得多。真正重要的是它**不经过 HTTP** —— 是一个独立入口，不是一条路由
+- 跟应用内改密码同一套语义：写同样的哈希、撤销该用户**全部会话**、记一条审计（`via: console`）
+- 账号被停用的话它会告诉你，但**不会顺手启用**——要启用得显式加 `--activate`
+
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
