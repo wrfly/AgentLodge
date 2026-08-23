@@ -1,6 +1,6 @@
 # AgentLodge
 
-**[中文](./README.md) · [English](./README.en.md)**
+**[中文](./README.md) · [English](./README.en.md) · [项目页](https://wrfly.kfd.me/AgentLodge/)**
 
 把 Claude Code 和 Codex 包装成多租户的 Web 服务。每个用户有自己的沙箱 agent；
 你只管一把上游 key，一把都不用发出去。

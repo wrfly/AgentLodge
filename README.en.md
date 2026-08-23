@@ -1,6 +1,6 @@
 # AgentLodge
 
-**[中文](./README.md) · [English](./README.en.md)**
+**[中文](./README.md) · [English](./README.en.md) · [Project page](https://wrfly.kfd.me/AgentLodge/)**
 
 Claude Code and Codex, wrapped as a multi-tenant web service. Every user gets
 their own sandboxed agent; you hold one upstream key and hand out none.

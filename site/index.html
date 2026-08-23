@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh" data-lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentLodge — 把 Claude Code 和 Codex 变成多租户服务</title>
+<meta name="description" content="把 Claude Code 和 Codex 包装成多租户的 Web 服务。一把上游 key 留在网关里，每个用户拿的是绑定单次 turn 的票据，配额在 turn 内部就能刹住。">
+<meta property="og:title" content="AgentLodge">
+<meta property="og:description" content="把 Claude Code 和 Codex 包装成多租户的 Web 服务。一把上游 key，一把都不用发出去。">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏕️</text></svg>">
+<style>
+:root{
+  --bg:#faf9f5; --surface:#fff; --sidebar:#f2f0e9; --elevated:#fbfaf6;
+  --text:#2f2f2c; --muted:#706e68; --faint:#9a978f;
+  --border:#e3e0d6; --strong:#d4d0c4; --accent:#c96442; --soft:#f4e3dc; --bubble:#f0eee6;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#262624; --surface:#30302e; --sidebar:#1f1e1d; --elevated:#333331;
+  --text:#ecebe6; --muted:#a5a29a; --faint:#7d7a72;
+  --border:#3d3c39; --strong:#4d4c48; --accent:#d97757; --soft:#3d2e28; --bubble:#3a3936;
+}}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg); color:var(--text); line-height:1.7;
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:15px;
+}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+a{color:inherit}
+[data-lang="zh"] .en,[data-lang="en"] .zh{display:none}
+
+.wrap{max-width:940px;margin:0 auto;padding:0 24px}
+
+nav{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
+nav .wrap{display:flex;align-items:center;gap:12px;height:56px}
+.brand{font-weight:600;letter-spacing:-.01em;margin-right:auto;display:flex;align-items:center;gap:8px}
+.brand span{font-size:18px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);
+  border-radius:9px;padding:6px 13px;font-size:13.5px;text-decoration:none;
+  background:var(--surface);cursor:pointer;color:inherit;white-space:nowrap}
+.btn:hover{border-color:var(--strong)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn.ghost{background:none;border-color:transparent;color:var(--muted)}
+.btn.ghost:hover{color:var(--text);background:var(--bubble)}
+
+header{padding:76px 0 60px;text-align:center}
+h1{font-size:clamp(30px,5.2vw,46px);line-height:1.18;letter-spacing:-.025em;font-weight:640}
+h1 em{font-style:normal;color:var(--accent)}
+.lede{margin:18px auto 0;max-width:620px;color:var(--muted);font-size:16.5px}
+.cta{display:flex;gap:10px;justify-content:center;margin-top:30px;flex-wrap:wrap}
+
+section{padding:52px 0;border-top:1px solid var(--border)}
+h2{font-size:21px;letter-spacing:-.015em;font-weight:620;margin-bottom:6px}
+.sub{color:var(--faint);font-size:13.5px;margin-bottom:26px}
+
+.claims{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(196px,1fr))}
+.claim{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:18px 19px}
+.claim h3{font-size:14.5px;font-weight:620;margin-bottom:7px}
+.claim p{font-size:13.5px;color:var(--muted);line-height:1.65}
+
+.flow{background:var(--surface);border:1px solid var(--border);border-radius:13px;
+  padding:20px;overflow-x:auto}
+.flow pre{font-size:12.5px;line-height:1.75;color:var(--muted);white-space:pre}
+.flow b{color:var(--accent);font-weight:600}
+
+.shots{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+figure{background:var(--surface);border:1px solid var(--border);border-radius:13px;overflow:hidden}
+figure img{display:block;width:100%;height:auto;border-bottom:1px solid var(--border)}
+figcaption{padding:11px 15px;font-size:13px;color:var(--muted)}
+
+.cols{display:grid;gap:26px 34px;grid-template-columns:repeat(auto-fit,minmax(268px,1fr))}
+.cols h3{font-size:13px;font-weight:620;color:var(--faint);letter-spacing:.04em;
+  text-transform:uppercase;margin-bottom:9px}
+ul{list-style:none}
+li{position:relative;padding-left:20px;font-size:13.5px;color:var(--muted);margin-bottom:6px;line-height:1.6}
+li::before{content:"";position:absolute;left:2px;top:.62em;width:9px;height:5px;
+  border-left:1.6px solid var(--accent);border-bottom:1.6px solid var(--accent);
+  transform:rotate(-45deg)}
+li b{color:var(--text);font-weight:600}
+
+pre.sh{background:var(--sidebar);border:1px solid var(--border);border-radius:11px;
+  padding:15px 17px;overflow-x:auto;font-size:12.8px;line-height:1.85;color:var(--text)}
+pre.sh .c{color:var(--faint)}
+
+footer{border-top:1px solid var(--border);padding:30px 0 46px;color:var(--faint);font-size:13px;
+  display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+footer a{margin-left:auto;text-decoration:none;color:var(--muted)}
+footer a:hover{color:var(--text)}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <div class="brand"><span>🏕️</span> AgentLodge</div>
+  <button class="btn ghost" id="lang">English</button>
+  <a class="btn" href="https://github.com/wrfly/AgentLodge" rel="noopener">GitHub</a>
+</div></nav>
+
+<header><div class="wrap">
+  <h1>
+    <span class="zh">把 Claude Code 和 Codex<br>变成<em>多租户服务</em></span>
+    <span class="en">Claude Code and Codex,<br>as a <em>multi-tenant service</em></span>
+  </h1>
+  <p class="lede">
+    <span class="zh">每个用户有自己的沙箱 agent。你只管一把上游 key，一把都不用发出去。</span>
+    <span class="en">Every user gets their own sandboxed agent. You hold one upstream key and hand out none.</span>
+  </p>
+  <div class="cta">
+    <a class="btn primary" href="#deploy"><span class="zh">自己部署</span><span class="en">Deploy it yourself</span></a>
+    <a class="btn" href="https://github.com/wrfly/AgentLodge" rel="noopener">GitHub</a>
+  </div>
+</div></header>
+
+<section><div class="wrap">
+  <div class="claims">
+    <div class="claim">
+      <h3><span class="zh">真实 key 只在网关里</span><span class="en">The key never leaves the gateway</span></h3>
+      <p><span class="zh">agent 手上是绑定 <code>(user, conversation, turn)</code> 的 20 分钟票据。计量绕不过去，容器被拿下也偷不到东西。</span>
+         <span class="en">Agents carry a 20-minute ticket bound to <code>(user, conversation, turn)</code>, so metering cannot be bypassed and a compromised container leaks nothing worth having.</span></p>
+    </div>
+    <div class="claim">
+      <h3><span class="zh">配额在 turn 内部刹住</span><span class="en">Quota stops a turn from inside it</span></h3>
+      <p><span class="zh">不只是门口拦一下。agent 循环跑飞了是当场停，不是事后记账。</span>
+         <span class="en">Not just at the door — an agent loop that runs away is stopped while it runs, not billed for afterwards.</span></p>
+    </div>
+    <div class="claim">
+      <h3><span class="zh">每条出网请求可留证</span><span class="en">Every outbound request can be recorded</span></h3>
+      <p><span class="zh">经审计代理落盘，完整 prompt，留多久按你的合规要求。</span>
+         <span class="en">Through an audit proxy, with the full prompt, for as long as your compliance rules say.</span></p>
+    </div>
+    <div class="claim">
+      <h3><span class="zh">一人一个容器</span><span class="en">One container per user</span></h3>
+      <p><span class="zh">非 root、CapDrop ALL、内存 / CPU / PID 限额，只挂载自己的工作目录。</span>
+         <span class="en">Non-root, all capabilities dropped, memory / CPU / PID limits, and only that user's workspace mounted.</span></p>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <h2><span class="zh">请求怎么走</span><span class="en">Where a request goes</span></h2>
+  <p class="sub"><span class="zh">容器里没有 key，只有一张票据；换 key 的那一步只发生在网关进程里。</span>
+     <span class="en">There is no key in the container, only a ticket. The swap happens inside the gateway process.</span></p>
+  <div class="flow"><pre>
+ <span class="zh">浏览器</span><span class="en">browser</span>  ─→  app  ─→  <b>agent <span class="zh">容器</span><span class="en">container</span></b>  ─→  <b>gateway</b>  ─→  <span class="zh">上游</span><span class="en">upstream</span>
+                       claude / codex        │
+                       <span class="zh">只有 20 分钟票据</span><span class="en">holds a ticket only</span>    │  <span class="zh">在这里换成真 key</span><span class="en">the real key goes on here</span>
+                                             │  <span class="zh">计量 · 配额 · 审计</span><span class="en">metering · quota · audit</span>
+</pre></div>
+</div></section>
+
+<section id="gallery"><div class="wrap">
+  <h2><span class="zh">界面</span><span class="en">What it looks like</span></h2>
+  <p class="sub"><span class="zh">高仿 Claude 的对话界面，加上用量、记忆和后台。</span>
+     <span class="en">A close copy of the Claude interface, plus usage, memory and a console.</span></p>
+  <div class="shots" id="shots">
+    <figure><img src="shot-chat.png" alt=""><figcaption><span class="zh">对话</span><span class="en">Chat</span></figcaption></figure>
+    <figure><img src="shot-usage.png" alt=""><figcaption><span class="zh">用量与配额</span><span class="en">Usage and quota</span></figcaption></figure>
+    <figure><img src="shot-memory.png" alt=""><figcaption><span class="zh">长期记忆</span><span class="en">Long-term memory</span></figcaption></figure>
+    <figure><img src="shot-admin.png" alt=""><figcaption><span class="zh">管理后台</span><span class="en">Admin console</span></figcaption></figure>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <h2><span class="zh">功能</span><span class="en">Features</span></h2>
+  <div class="cols">
+    <div>
+      <h3><span class="zh">账号</span><span class="en">Accounts</span></h3>
+      <ul>
+        <li><span class="zh">邀请码注册、邮件定向邀请</span><span class="en">Invite-code registration and email invites</span></li>
+        <li><span class="zh">token 轮转，<b>重放即判定泄漏</b>并撤销全部会话</span><span class="en">Token rotation; <b>a replayed token is treated as a leak</b> and every session is revoked</span></li>
+        <li><span class="zh">多设备管理、停用即时踢线</span><span class="en">Multi-device management, instant lockout on suspend</span></li>
+      </ul>
+    </div>
+    <div>
+      <h3><span class="zh">计量与配额</span><span class="en">Metering and quota</span></h3>
+      <ul>
+        <li><span class="zh">逐次调用从 SSE 流里旁路解析 usage</span><span class="en">Usage sniffed off the SSE stream, call by call</span></li>
+        <li><span class="zh">5 小时 / 周 / 月三个窗口，边界全平台统一</span><span class="en">Three windows — 5 hours, a week, a month — the same instants for everybody</span></li>
+        <li><span class="zh"><b>每个用户看到的是自己的额度</b>，不是共享池</span><span class="en"><b>Each user is shown their own allowance</b>, never the shared plan's</span></li>
+        <li><span class="zh">按 token 或按金额计费，历史账单锁定当时价格</span><span class="en">Billing by tokens or by money; past bills keep the price of their time</span></li>
+      </ul>
+    </div>
+    <div>
+      <h3><span class="zh">记忆与画像</span><span class="en">Memory and profile</span></h3>
+      <ul>
+        <li><span class="zh"><b>助手在对话里自己记</b>，下次对话自动读回</span><span class="en"><b>The assistant writes memory as you talk</b> and reads it back later</span></li>
+        <li><span class="zh">看得到、改得动、删得掉，改坏了能撤销</span><span class="en">Read it, correct it, delete it, undo a bad change</span></li>
+        <li><span class="zh">每个对话一句话总结，并换成说明内容的标题</span><span class="en">Every conversation summarised in a line, and named after what it was about</span></li>
+        <li><span class="zh">使用画像纯统计，不经过模型</span><span class="en">The usage profile is counted, never inferred</span></li>
+      </ul>
+    </div>
+    <div>
+      <h3><span class="zh">接入方式</span><span class="en">Ways in</span></h3>
+      <ul>
+        <li><span class="zh">网页对话、附件、Markdown + 代码高亮</span><span class="en">The web app, with attachments, Markdown and syntax highlighting</span></li>
+        <li><span class="zh">自带 CLI：一条命令装好，照常敲 <code>claude</code></span><span class="en">Your own CLI: one command to install, then run <code>claude</code> as usual</span></li>
+        <li><span class="zh">Anthropic Messages 与 OpenAI Responses 两套协议</span><span class="en">Both wire protocols — Anthropic Messages and OpenAI Responses</span></li>
+      </ul>
+    </div>
+    <div>
+      <h3><span class="zh">运维</span><span class="en">Operations</span></h3>
+      <ul>
+        <li><span class="zh">出网审计代理，完整 prompt 落盘</span><span class="en">An audit proxy that records every outbound request, full prompt</span></li>
+        <li><span class="zh">额度、价格、并发、provider 后台热改，无需重启</span><span class="en">Quotas, prices, concurrency and providers change without a restart</span></li>
+        <li><span class="zh">界面与提示中英日俄四语，覆盖率由测试保证</span><span class="en">English, Chinese, Japanese and Russian, with coverage checked by tests</span></li>
+      </ul>
+    </div>
+  </div>
+</div></section>
+
+<section id="deploy"><div class="wrap">
+  <h2><span class="zh">部署</span><span class="en">Deploying</span></h2>
+  <p class="sub"><span class="zh">不用 clone 仓库，两个文件就够。</span>
+     <span class="en">No clone needed — two files is the whole of it.</span></p>
+<pre class="sh"><span class="c"># <span class="zh">拿到 compose 和环境变量样例</span><span class="en">fetch the compose file and the example environment</span></span>
+curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml
+curl -fsSL  https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/env.release.example -o .env
+
+<span class="c"># <span class="zh">至少填 JWT_SECRET、AUDIT_ADMIN_TOKEN、DATA_DIR、TZ</span><span class="en">at minimum JWT_SECRET, AUDIT_ADMIN_TOKEN, DATA_DIR, TZ</span></span>
+$EDITOR .env
+docker compose -f compose.release.yml up -d
+docker pull docker.io/wrfly/agentlodge-agent:latest</pre>
+  <p class="sub" style="margin:16px 0 0">
+    <span class="zh">第一个用上启动时打印的邀请码的账号，就是管理员。</span>
+    <span class="en">The console prints a bootstrap invite code — the first account to use it becomes the administrator.</span>
+  </p>
+</div></section>
+
+<footer><div class="wrap" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;width:100%">
+  <span>AgentLodge</span>
+  <a href="https://github.com/wrfly/AgentLodge" rel="noopener">github.com/wrfly/AgentLodge</a>
+</div></footer>
+
+<script>
+// A page that is one file: the language toggle is a class on <html>, so both languages are
+// in the document for anything that reads it without running scripts.
+(function () {
+  var saved = localStorage.getItem('agentlodge-landing-lang');
+  var zh = (navigator.language || '').toLowerCase().indexOf('zh') === 0;
+  set(saved || (zh ? 'zh' : 'en'));
+  document.getElementById('lang').onclick = function () {
+    set(document.documentElement.dataset.lang === 'zh' ? 'en' : 'zh');
+  };
+  function set(l) {
+    document.documentElement.dataset.lang = l;
+    document.documentElement.lang = l;
+    localStorage.setItem('agentlodge-landing-lang', l);
+    document.getElementById('lang').textContent = l === 'zh' ? 'English' : '中文';
+  }
+  // A screenshot that has not been added yet takes its figure with it rather than leaving a
+  // broken frame behind, and the last one out takes the section: a heading over nothing
+  // reads as a page that failed to load.
+  Array.prototype.forEach.call(document.querySelectorAll('#shots img'), function (img) {
+    img.onerror = function () {
+      img.closest('figure').remove();
+      if (!document.querySelector('#shots figure')) document.getElementById('gallery').remove();
+    };
+  });
+})();
+</script>
+</body>
+</html>

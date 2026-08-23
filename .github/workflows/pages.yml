@@ -1,0 +1,46 @@
+# The project page, published to GitHub Pages.
+#
+# The same file the deployment serves at /landing/, so there is one page to keep up to date
+# and it does not have to live on anybody's own domain. It is plain HTML with its styles and
+# script inline, so there is nothing to build — the directory is the artifact.
+#
+# Nothing here is hard-coded to one account: a fork gets its own page at
+# <owner>.github.io/<repo>/ as soon as Pages is enabled in its settings.
+name: pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A queued run waits for the one in flight rather than cancelling it: half-published is
+# worse than late
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

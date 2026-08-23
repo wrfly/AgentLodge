@@ -504,12 +504,27 @@ CLI 那两条线是**平台的**窗口，不是每个人自己的：边界取上
 |---|---|
 | `/claude` `/codex` | 对话，各自独立的会话列表、工作目录、模型选择 |
 | `/usage` | 个人用量：额度、30 天趋势、按 agent/模型/会话拆分 |
-| `/memory` | 记忆编辑器 |
+| `/memory` | 记忆：看/改/删/加，可撤销 |
+| `/profile` | 使用画像 + 会话总结 |
 | `/api-keys` | API 密钥：把本机 CLI 指到本服务 |
 | `/settings` | 改密码、登录设备管理 |
 | `/admin` | 管理后台：总览 / 用户 / 邀请码 / 系统设置 / 审计日志 |
 | `/register?code=` | 邀请注册（邮件链接会预填邀请码和邮箱） |
 | `/reset-password?token=` | 密码重置 |
+
+### 项目页
+
+`site/index.html` 是项目的展示页，发布在 GitHub Pages 上（`.github/workflows/pages.yml`，
+改动 `site/` 就自动发布）。它**不由本服务提供**——展示页放在自己的域名上，等于要公开这个
+域名才能介绍项目。
+
+- 一个自包含的 HTML：内联样式和脚本、中英双语（跟随浏览器）、深浅色跟随系统，没有构建步骤
+- 资源引用一律相对路径，因为 Pages 把它放在仓库名的子路径下（本仓库是
+  <https://wrfly.kfd.me/AgentLodge/>，账号配了自定义域名；没配的话是
+  `<owner>.github.io/<repo>/`）
+- **截图**：丢进 `site/`，命名 `shot-chat.png`、`shot-usage.png`、`shot-memory.png`、
+  `shot-admin.png`。没放的会自己从页面上消失，四张都没有的话整节都不显示
+- 页面上没有通往应用的链接：它不知道、也不该知道谁把这个项目部署在哪
 
 ## 功能
 
