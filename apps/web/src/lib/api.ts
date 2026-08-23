@@ -799,7 +799,10 @@ export const admin = {
     }),
   balance: () => request<BalanceResult>('/api/admin/balance'),
 
-  providers: () => request<{ providers: Provider[]; kinds: Record<string, string> }>('/api/admin/providers'),
+  providers: () =>
+    request<{ providers: Provider[]; kinds: Record<string, string>; autoRefreshModels: boolean }>(
+      '/api/admin/providers',
+    ),
   /** Key files in the allowlisted directories; passing a path also validates that one */
   secretFiles: (path?: string) =>
     request<SecretFileListing>(

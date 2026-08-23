@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import * as audit from '../../../core/db/audit.js';
 import * as providersRepo from '../../../core/db/providers.js';
 import { allowlistProblem, auditProxyProblem } from '../../../core/egress.js';
+import { getBool } from '../../../core/db/settings.js';
 import { inspect } from '../../../core/secret-file.js';
 import { callGateway, guard, keyFileStatuses } from './shared.js';
 import { tr } from '../../../core/i18n/locale.js';
@@ -41,6 +42,12 @@ export function register(app: FastifyInstance): void {
     return {
       providers: rows.map((p) => ({ ...p, keyFileStatus: p.keyFile ? status.get(p.keyFile) : undefined })),
       kinds: providersRepo.KIND_LABEL,
+      /**
+       * The hourly refresh switch, which the console draws at the foot of this card.
+       * It rides along here because listSettings() leaves hidden settings out, and because
+       * the card is already asking — one request instead of two for one boolean.
+       */
+      autoRefreshModels: getBool('agents.autoRefreshModels'),
     };
   });
 

@@ -324,6 +324,7 @@ function ProvidersCard() {
   const t = useT();
   const [rows, setRows] = useState<Provider[] | null>(null);
   const [kinds, setKinds] = useState<Record<string, string>>({});
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProviderDraft>({
     name: '', kind: 'openai-chat', baseUrl: '',
@@ -333,7 +334,10 @@ function ProvidersCard() {
   const [err, setErr] = useState<string | null>(null);
 
   const load = () =>
-    admin.providers().then((d) => { setRows(d.providers); setKinds(d.kinds); }).catch(() => {});
+    admin
+      .providers()
+      .then((d) => { setRows(d.providers); setKinds(d.kinds); setAutoRefresh(d.autoRefreshModels); })
+      .catch(() => {});
 
   useEffect(() => { void load(); }, []);
 
@@ -464,9 +468,54 @@ function ProvidersCard() {
           {t('+ Add upstream')}
         </Button>
       )}
+
+      <AutoRefreshModels on={autoRefresh} reload={load} />
     </Card>
   );
 }
+
+/**
+ * The hourly model refresh, at the foot of the upstream card.
+ *
+ * It is one global setting rather than a field on each provider, because only the active
+ * one is refreshed — the picker draws from that one, and polling upstreams nobody is using
+ * is traffic and key exposure for nothing. It lives here rather than in the generic settings
+ * list so it sits next to the list it overwrites.
+ */
+function AutoRefreshModels({ on, reload }: { on: boolean; reload: () => Promise<void> | void }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await admin.saveSettings({ 'agents.autoRefreshModels': String(next) });
+      await reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 border-t border-line pt-3">
+      {err && <Banner tone="error">{err}</Banner>}
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px]">{t('Refresh the model list hourly')}</div>
+          <div className="mt-0.5 text-[11.5px] leading-relaxed text-faint">
+            {t('Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.')}
+          </div>
+        </div>
+        <Toggle checked={on} disabled={busy} onChange={(v) => void toggle(v)} />
+      </div>
+    </div>
+  );
+}
+
 
 function ProviderForm({
   draft, setDraft, kinds, onSave, busy, existingKey = 'none', providerId,

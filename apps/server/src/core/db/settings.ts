@@ -200,6 +200,10 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Refresh the model list hourly',
     group: 'agents',
     type: 'boolean',
+    // Rendered at the foot of the upstream card instead, next to the list it overwrites and
+    // the button that does the same thing by hand. A switch about a provider's model list,
+    // sitting in a generic list of unrelated settings, is a switch nobody finds.
+    hidden: true,
     default: 'false',
     hint: 'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.',
   },
