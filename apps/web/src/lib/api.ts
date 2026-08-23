@@ -269,10 +269,23 @@ export interface UsageReport {
   quick: { today: UsageTotals; month: UsageTotals; allTime: UsageTotals };
 }
 
+export interface MemoryRecord {
+  file: string;
+  title: string;
+  hook: string;
+  description: string;
+  type: string;
+  body: string;
+  updatedAt?: string;
+}
+
 export interface MemoryDoc {
-  content: string;
-  stats: { bytes: number; lines: number; meaningfulLines: number; updatedAt?: string };
+  records: MemoryRecord[];
+  stats: { records: number; bytes: number; updatedAt?: string };
   maxBytes: number;
+  maxRecords: number;
+  /** The most recent change, when there is one before it to go back to */
+  lastChange?: { at: string; by: 'user' | 'agent' };
 }
 
 /* ---------------- Request traces ---------------- */
@@ -349,12 +362,19 @@ export const me = {
   },
   quota: () => request<QuotaStatus>('/api/me/quota'),
   memory: () => request<MemoryDoc>('/api/me/memory'),
-  saveMemory: (content: string) =>
-    request<{ ok: boolean; stats: MemoryDoc['stats'] }>('/api/me/memory', {
+  saveMemory: (rec: { file?: string; title: string; body: string; hook?: string }) =>
+    request<{ ok: boolean; record: MemoryRecord; stats: MemoryDoc['stats'] }>('/api/me/memory', {
       method: 'PUT',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(rec),
     }),
-  resetMemory: () => request<{ ok: boolean; content: string }>('/api/me/memory', { method: 'DELETE' }),
+  deleteMemory: (file: string) =>
+    request<{ ok: boolean; stats: MemoryDoc['stats'] }>(
+      `/api/me/memory/${encodeURIComponent(file)}`,
+      { method: 'DELETE' },
+    ),
+  undoMemory: () =>
+    request<{ ok: boolean; records: MemoryRecord[] }>('/api/me/memory/undo', { method: 'POST' }),
+  clearMemory: () => request<{ ok: boolean }>('/api/me/memory', { method: 'DELETE' }),
   traces: (limit = 50) =>
     request<{ traces: TraceSummary[]; enabled: boolean }>(`/api/me/traces?limit=${limit}`),
   trace: (id: string) => request<TraceDetail>(`/api/me/traces/${id}`),

@@ -140,29 +140,64 @@ export function registerMeRoutes(app: FastifyInstance): void {
 
   app.get('/api/me/memory', guard, async (req) => {
     const userId = req.user!.id;
+    // The agent writes these files itself during a turn, so record where they stand before
+    // answering — otherwise its work is missing from the history and cannot be undone
+    await memory.snapshot(userId, 'agent');
     return {
-      content: await memory.ensureInitialized(userId),
+      records: await memory.list(userId),
       stats: await memory.stats(userId),
-      maxBytes: memory.MAX_BYTES,
+      maxBytes: memory.MAX_RECORD_BYTES,
+      maxRecords: memory.MAX_RECORDS,
+      // Only the newest, and only so the page can say what undo would take back. The
+      // rest of the history is what undo runs on, not something to put on screen: who
+      // and when, without what, cannot help anyone decide.
+      lastChange: (await memory.history(userId)).slice(-2).map(({ at, by }) => ({ at, by }))[1],
     };
   });
 
   app.put('/api/me/memory', guard, async (req, reply) => {
-    const body = (req.body ?? {}) as { content?: string };
-    if (typeof body.content !== 'string')
+    const body = (req.body ?? {}) as {
+      file?: string;
+      title?: string;
+      body?: string;
+      hook?: string;
+    };
+    if (typeof body.title !== 'string' || typeof body.body !== 'string')
       return reply.code(400).send({ error: tr(req, 'Missing content') });
-    if (Buffer.byteLength(body.content, 'utf8') > memory.MAX_BYTES)
+    if (Buffer.byteLength(body.body, 'utf8') > memory.MAX_RECORD_BYTES)
+      return reply.code(413).send({
+        error: tr(req, 'A memory cannot exceed {kb} KB', { kb: memory.MAX_RECORD_BYTES / 1024 }),
+      });
+    if (!body.file && (await memory.list(req.user!.id)).length >= memory.MAX_RECORDS)
       return reply
-        .code(413)
-        .send({ error: tr(req, 'Memory cannot exceed {kb} KB', { kb: memory.MAX_BYTES / 1024 }) });
+        .code(409)
+        .send({ error: tr(req, 'At most {n} memories', { n: memory.MAX_RECORDS }) });
 
-    await memory.write(req.user!.id, body.content);
+    const rec = await memory.save(req.user!.id, {
+      file: body.file,
+      title: body.title,
+      body: body.body,
+      hook: body.hook,
+    });
+    return { ok: true, record: rec, stats: await memory.stats(req.user!.id) };
+  });
+
+  app.delete('/api/me/memory/:file', guard, async (req) => {
+    const { file } = req.params as { file: string };
+    await memory.remove(req.user!.id, file);
     return { ok: true, stats: await memory.stats(req.user!.id) };
+  });
+
+  /** Back to the way it was before the last change, whoever made it */
+  app.post('/api/me/memory/undo', guard, async (req, reply) => {
+    if (!(await memory.undo(req.user!.id)))
+      return reply.code(409).send({ error: tr(req, 'Nothing to undo') });
+    return { ok: true, records: await memory.list(req.user!.id) };
   });
 
   app.delete('/api/me/memory', guard, async (req) => {
     await memory.clear(req.user!.id);
-    return { ok: true, content: await memory.ensureInitialized(req.user!.id) };
+    return { ok: true };
   });
 
   /* ---------------- Request traces ---------------- */

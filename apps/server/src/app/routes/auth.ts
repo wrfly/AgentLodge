@@ -9,7 +9,6 @@ import { hashPassword, randomToken, verifyPassword } from '../../core/auth/crypt
 import { issueStreamTicket, signAccessToken } from '../../core/auth/tokens.js';
 import { requireUser } from '../../core/auth/guard.js';
 import * as mail from '../mail.js';
-import * as memory from '../memory.js';
 import { tr } from '../../core/i18n/locale.js';
 
 const REFRESH_COOKIE = 'agentlodge_rt';
@@ -164,7 +163,6 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       tokenLimit: invite.presetTokenLimit,
     });
     invitesRepo.consume(invite.id);
-    await memory.ensureInitialized(user.id);
 
     audit.log({
       actorId: user.id,

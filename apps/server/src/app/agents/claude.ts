@@ -4,6 +4,7 @@ import type { MessageBlock, ToolBlock, TurnUsage } from '../../core/protocol.js'
 import { probeBin } from './probe.js';
 import { claudeEnv } from './provider.js';
 import { launch } from './launch.js';
+import * as memory from '../memory.js';
 import { getString } from '../../core/db/settings.js';
 import * as providers from '../../core/db/providers.js';
 import type {
@@ -103,11 +104,17 @@ function runTurn(o: RunOptions): RunningTurn {
   if (o.effort) args.push('--effort', o.effort);
   if (o.resumeSessionId) args.push('--resume', o.resumeSessionId);
 
-  const child = launch(o, config.claudeBin, args, claudeEnv(o.runtimeToken, Boolean(o.containerName)), [
+  // Without this Claude Code derives its memory directory from the working directory,
+  // which here is one per conversation — so every conversation would start blank. See memory.ts.
+  const env = { ...claudeEnv(o.runtimeToken, Boolean(o.containerName)) };
+  if (o.memoryDir) env[memory.MEMORY_ENV] = o.memoryDir;
+
+  const child = launch(o, config.claudeBin, args, env, [
     'ANTHROPIC_BASE_URL',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_API_KEY',
     'ANTHROPIC_MODEL',
+    memory.MEMORY_ENV,
   ]);
 
   /* ---- Parser state ---- */

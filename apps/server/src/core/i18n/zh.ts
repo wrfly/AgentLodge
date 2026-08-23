@@ -80,4 +80,7 @@ export const zh: Record<string, string> = {
   'This script takes your key as an argument: … | sh -s -- al_xxxxx': '这个脚本要把 key 作为参数传进来：… | sh -s -- al_xxxxx',
   'AgentLodge: the key file is missing. Put the key back, or install again.': 'AgentLodge：key 文件不见了。把 key 写回去，或者重新装一次。',
   'This user is billed the other way; change the quota first': '这个用户的计费方式不同，请先改配额',
+  'Nothing to undo': '没有可撤销的修改',
+  'A memory cannot exceed {kb} KB': '单条记忆不能超过 {kb} KB',
+  'At most {n} memories': '最多 {n} 条记忆',
 };

@@ -204,6 +204,8 @@ export const paths = {
   workspaces: path.join(config.dataDir, 'workspaces'),
   /** Per-user request traces, one directory per userId */
   traces: path.join(config.dataDir, 'traces'),
+  /** Memory snapshots, kept out of the workspace an agent can write to */
+  memory: path.join(config.dataDir, 'memory'),
 };
 
 /**

@@ -34,7 +34,9 @@
 - [x] 工作区文件读写经真实路径校验，符号链接逃逸有测试覆盖
 
 **接入**
-- [x] 网页对话（高仿 Claude 界面）、记忆、附件、Markdown + 代码高亮
+- [x] 网页对话（高仿 Claude 界面）、附件、Markdown + 代码高亮
+- [x] 长期记忆：**助手在对话里自己写下来**，下次对话自动读回；`/memory` 页面可查看、
+      修改、删除、手动补充，改坏了可一键撤销
 - [x] 自带 CLI 接入：一条命令装好，之后照常敲 `claude`
 - [x] 同时支持 Anthropic Messages 与 OpenAI Responses 两套协议
 - [x] 上游 provider 可增删改切，含内置假 provider（零成本试）

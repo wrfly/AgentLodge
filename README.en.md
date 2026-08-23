@@ -43,8 +43,11 @@ their own sandboxed agent; you hold one upstream key and hand out none.
 - [x] Workspace paths are resolved for real, with symlink escapes covered by tests
 
 **Ways in**
-- [x] The web app: a close copy of the Claude interface, with memory, attachments, Markdown
-      and syntax highlighting
+- [x] The web app: a close copy of the Claude interface, with attachments, Markdown and
+      syntax highlighting
+- [x] Long-term memory the assistant **writes for itself as you talk** and reads back in
+      every later conversation. Read it, correct it, delete it or add to it on the
+      Memory page, and a bad change can be taken back
 - [x] Your own CLI: one command to install, then run `claude` as usual
 - [x] Both wire protocols — Anthropic Messages and OpenAI Responses
 - [x] Upstream providers can be added, edited and switched live, including a built-in mock

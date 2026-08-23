@@ -15,6 +15,8 @@ export interface RunOptions {
   containerName?: string;
   /** The working directory inside the container */
   containerCwd?: string;
+  /** The user's memory directory, as the CLI will see it (container path in container mode) */
+  memoryDir?: string;
   onEvent: (e: ServerEvent) => void;
   onSessionId: (sessionId: string) => void;
 }

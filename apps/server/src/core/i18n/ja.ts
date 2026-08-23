@@ -80,4 +80,7 @@ export const ja: Record<string, string> = {
   'This script takes your key as an argument: … | sh -s -- al_xxxxx': 'このスクリプトはキーを引数として受け取ります: … | sh -s -- al_xxxxx',
   'AgentLodge: the key file is missing. Put the key back, or install again.': 'AgentLodge: キーファイルが見つかりません。キーを戻すか、再インストールしてください。',
   'This user is billed the other way; change the quota first': 'この利用者は別の課金方式です。先にクォータを変更してください',
+  'Nothing to undo': '取り消せる変更がありません',
+  'A memory cannot exceed {kb} KB': '記憶 1 件は {kb} KB を超えられません',
+  'At most {n} memories': '記憶は最大 {n} 件です',
 };

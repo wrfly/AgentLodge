@@ -1,5 +1,4 @@
 import path from 'node:path';
-import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { config, paths } from '../core/config.js';
 import { publish } from '../core/events.js';
@@ -87,12 +86,6 @@ export function abortTurn(turnId: string): boolean {
 }
 
 /**
- * A conversation's working directory: workspaces/<userId>/<convId>/
- *
- * Its parent, workspaces/<userId>/, holds MEMORY.md and its mirrors (CLAUDE.md,
- * AGENTS.md). Both CLIs walk upward and find them by themselves; see memory.ts.
- */
-/**
  * What each CLI says when the session it was asked to resume no longer exists.
  *
  * The state does not heal itself: the session id is in the database and every turn tries to
@@ -123,6 +116,11 @@ function withResumeLostNotice(blocks: MessageBlock[]): MessageBlock[] {
   return [notice, ...blocks.map((b) => ({ ...b, blockId: b.blockId + 1 }))];
 }
 
+/**
+ * A conversation's working directory: workspaces/<userId>/<convId>/
+ *
+ * Its sibling, workspaces/<userId>/memory/, is the memory both CLIs read; see memory.ts.
+ */
 export function workspaceDir(userId: string, conversationId: string): string {
   return path.join(paths.workspaces, userId, conversationId);
 }
@@ -158,10 +156,11 @@ export async function startTurn(
 
   const turnId = crypto.randomUUID();
   const cwd = workspaceDir(userId, conversationId);
-  await fs.mkdir(cwd, { recursive: true });
-  // Make sure the memory files are in place every turn — they may have just been edited,
-  // or the directory may be new
-  await memory.ensureInitialized(userId);
+  // Every turn: the agent may have written memory during the last one, the codex rendering
+  // may be stale, and a new conversation has no link in it yet
+  await memory.tidy(userId);
+  await memory.snapshot(userId, 'agent');
+  await memory.linkInto(cwd, userId);
 
   const isFirst = conv.messageCount === 0;
   const userMessage = convRepo.appendMessage(conversationId, userId, {
@@ -204,6 +203,7 @@ export async function startTurn(
       cwd,
       containerName,
       containerCwd,
+      memoryDir: containers.enabled() ? memory.containerDir() : memory.dir(userId),
       resumeSessionId,
       // No model on the conversation, then the active provider's default, then the
       // environment, then whatever the CLI decides

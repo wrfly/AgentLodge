@@ -678,6 +678,39 @@ env = {
 - 后续每轮从 `init` / `result` 事件**重新读取并更新** session_id（某些版本 `--resume` 会 fork 出新 id）
 - 若 `--resume` 失败（jsonl 丢失/损坏）→ 降级为新会话，并把历史消息拼进 prompt 前缀，同时给前端一个 `session.reset` 提示
 
+### 6.7 长期记忆：接管 Claude Code 自己的记忆存储
+
+```
+workspaces/<userId>/memory/MEMORY.md      索引
+workspaces/<userId>/memory/<slug>.md      一条事实：frontmatter(name/description/type) + 正文
+workspaces/<userId>/<convId>/memory   ─→  符号链接
+workspaces/<userId>/<convId>/AGENTS.md    渲染出的全文，给 codex
+```
+
+**为什么不自己造。** Claude Code 2.x 自带记忆，模型会在对话中途主动写、并在后续会话召回
+（两条都实测，见 §16）。自己再写一套抽取逻辑，是在花一次计费调用做同一件事，上下文还更少。
+
+**为什么必须覆盖路径。** 记忆目录的解析是：
+
+```js
+let e = env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE ?? settings.autoMemoryDirectory;
+if (e) return e;                                              // 命中即整个目录
+return path.join(configDir, "projects", slug(cwd), "memory");  // 否则从 cwd 推导
+```
+
+我们的 cwd 是 `/workspace/<convId>`，**每个会话一个**——不覆盖的话每个会话都会有一份自己
+的记忆，一条都带不到下一个会话。所以 `claude.ts` 在启动时注入
+`CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`，容器模式给 `/workspace/memory`，直跑模式给宿主机
+真实路径（`RunOptions.memoryDir`，由 turns.ts 按模式选好）。
+
+**codex 怎么办。** 它没有对应机制，所以给两样：`./memory/` 目录链接（可写，AGENTS.md 里
+说明了怎么增删），和把所有事实内联展开的 `AGENTS.md`（可读，每轮重新渲染）。链接是相对的，
+两边挂载布局不同，绝对路径只能在一边成立。
+
+**撤销。** agent 直接写这些文件、不经过我们的代码，所以：每轮开始、以及页面每次读取时都
+补一次目录快照；我们自己的写入前后各一次。快照只在内容变化时追加，所以 20 层是很深的窗口。
+撤销是还原整个目录而不是回放。界面上是一个撤销按钮加"上次由谁改的"一行。
+
 ---
 
 ## 7. 计量网关（`ROLE=gateway`）★核心
@@ -1217,6 +1250,12 @@ GET    /api/me/api-keys                 列表 + 每把的累计用量 + 该填�
 POST   /api/me/api-keys                 创建，明文只在这一次返回
 DELETE /api/me/api-keys/:id             撤销（软删，历史用量还指得到）
 
+GET    /api/me/memory                   记忆条目 + 统计 + 改动历史
+PUT    /api/me/memory                   新增或修改一条（无 file 即新增）
+DELETE /api/me/memory/:file             删掉一条
+DELETE /api/me/memory                   全部清空
+POST   /api/me/memory/undo              撤销最近一次改动
+
 # 用量
 GET    /api/usage/summary            # 本周期 已用/配额/剩余/折合金额
 GET    /api/usage/daily              ?from&to
@@ -1360,6 +1399,10 @@ agent-net  agent 容器 ↔ gateway
 | `--resume` 跨容器重启可不可靠 | 可靠，前提是 `~/.claude` 落在持久卷上。所以整个 HOME 都挂出来了（§6.2），写入层随 `rm` 消失而会话记录不能 |
 | 上游真实限流阈值 | 3 是保守初值；AIMD 熔断器会自动适应，后台也能改。见 §7.4 |
 | 当前模型价格 | 价格表里是占位值，**部署后必须按上游官网单价核对一遍**（后台 → 系统设置 → 价格表） |
+| Claude Code 会不会主动写记忆 | **会**。没说「记住」，只在对话里提了偏好，它就写了两个 `type: feedback` 文件 + 索引，还把相对日期转成了绝对日期，并交叉引用 `[[...]]` |
+| 记忆能不能跨会话召回 | 能。换会话、换工作目录，照样读得到并照着执行 |
+| 记忆目录能不能改 | 能。`CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`（或 settings 的 `autoMemoryDirectory`）**整个替换**掉从 cwd 推导的路径；`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` 则功能整个消失 |
+| codex 会不会往上找 `AGENTS.md` | **不会越过非 git 目录**。`codex debug prompt-input` 实测：cwd 下的普通文件和符号链接都读得到，父目录里的普通文件在非 git 树下读不到、在 git 根下才读得到。所以记忆的链接放在会话目录里（§6.7） |
 | 容器引擎兼容性 | podman 和 docker 都验过。不走 dockerode，直接调 CLI —— `exec` 的 stdout 就是 CLI 的 stdout，少一层 API 抽象也就少一批引擎差异 |
 
 唯一仍需按部署环境确认的是价格表：它是唯一一个填错了不会报错、只会让账单静悄悄算错的东西。
