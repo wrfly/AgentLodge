@@ -1,6 +1,11 @@
 import { zh } from './zh.js';
+import { zhHant } from './zh-Hant.js';
 import { ja } from './ja.js';
 import { ru } from './ru.js';
+import { de } from './de.js';
+import { fr } from './fr.js';
+import { es } from './es.js';
+import { pt } from './pt.js';
 
 /**
  * Server-side translation, for text that reaches a person.
@@ -20,11 +25,20 @@ import { ru } from './ru.js';
  * Only messages that reach a person go through here. An Error thrown for a log stays in
  * English: nobody reads a stack trace in four languages.
  */
-export const LOCALES = ['en', 'zh', 'ja', 'ru'] as const;
+export const LOCALES = ['en', 'zh', 'zh-Hant', 'ja', 'ru', 'de', 'fr', 'es', 'pt'] as const;
 export type Locale = (typeof LOCALES)[number];
 
 /** English is the source, so it needs no table */
-const TABLES: Record<Exclude<Locale, 'en'>, Record<string, string>> = { zh, ja, ru };
+const TABLES: Record<Exclude<Locale, 'en'>, Record<string, string>> = {
+  zh,
+  'zh-Hant': zhHant,
+  ja,
+  ru,
+  de,
+  fr,
+  es,
+  pt,
+};
 
 function isLocale(v: string): v is Locale {
   return (LOCALES as readonly string[]).includes(v);
@@ -33,9 +47,10 @@ function isLocale(v: string): v is Locale {
 /**
  * Choose a locale from an Accept-Language header.
  *
- * Quality values are honoured, and matching is on the primary subtag: `zh-TW`,
- * `zh-Hans-CN` and `zh` all want the same table, and there are no regional variants to
- * tell apart. Anything unrecognised, absent or malformed gives English.
+ * Quality values are honoured, and matching is on the primary subtag, with one exception:
+ * Chinese is split by script, so `zh-TW`, `zh-HK` and anything marked `Hant` get the
+ * traditional table and the rest get the simplified one. Anything unrecognised, absent or
+ * malformed gives English.
  */
 export function pickLocale(header?: string | string[]): Locale {
   const raw = Array.isArray(header) ? header[0] : header;
@@ -50,7 +65,7 @@ export function pickLocale(header?: string | string[]): Locale {
       // The tag needs its own trim: splitting `ja ; q=0.3` on ';' leaves the space on the
       // tag, and trimming only the whole part does not reach it
       return {
-        base: (tag ?? '').trim().toLowerCase().split('-')[0] ?? '',
+        base: normalise((tag ?? '').trim()),
         q: Number.isFinite(weight) ? weight : 0,
       };
     })
@@ -60,6 +75,13 @@ export function pickLocale(header?: string | string[]): Locale {
 
   for (const { base } of ranked) if (isLocale(base)) return base;
   return 'en';
+}
+
+/** The one tag that does not reduce to its primary subtag; see pickLocale */
+function normalise(tag: string): string {
+  const lower = tag.toLowerCase();
+  if (lower.startsWith('zh')) return /hant|-tw|-hk|-mo/.test(lower) ? 'zh-Hant' : 'zh';
+  return lower.split('-')[0] ?? '';
 }
 
 /** Interpolates `{name}` placeholders. Unknown names are left alone, not blanked. */

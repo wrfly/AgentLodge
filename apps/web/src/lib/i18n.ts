@@ -1,8 +1,13 @@
 import { useMemo } from 'react';
 import { create } from 'zustand';
 import { zh } from '../locales/zh';
+import { zhHant } from '../locales/zh-Hant';
 import { ja } from '../locales/ja';
 import { ru } from '../locales/ru';
+import { de } from '../locales/de';
+import { fr } from '../locales/fr';
+import { es } from '../locales/es';
+import { pt } from '../locales/pt';
 
 /**
  * Translation.
@@ -17,19 +22,33 @@ import { ru } from '../locales/ru';
  * the right trade here: the strings are short, and a stale translation is worse
  * than an English one.
  */
-export const LOCALES = ['en', 'zh', 'ja', 'ru'] as const;
+export const LOCALES = ['en', 'zh', 'zh-Hant', 'ja', 'ru', 'de', 'fr', 'es', 'pt'] as const;
 export type Locale = (typeof LOCALES)[number];
 
 /** Written in the language itself — a list of endonyms needs no translation */
 export const LOCALE_LABEL: Record<Locale, string> = {
   en: 'English',
-  zh: '中文',
+  zh: '简体中文',
+  'zh-Hant': '繁體中文',
   ja: '日本語',
   ru: 'Русский',
+  de: 'Deutsch',
+  fr: 'Français',
+  es: 'Español',
+  pt: 'Português',
 };
 
 /** English is the source, so it needs no table of its own */
-const TABLES: Record<Exclude<Locale, 'en'>, Record<string, string>> = { zh, ja, ru };
+const TABLES: Record<Exclude<Locale, 'en'>, Record<string, string>> = {
+  zh,
+  'zh-Hant': zhHant,
+  ja,
+  ru,
+  de,
+  fr,
+  es,
+  pt,
+};
 
 const KEY = 'agentlodge-locale';
 
@@ -40,13 +59,23 @@ function isLocale(v: string | null): v is Locale {
 /**
  * First run: follow the browser, then fall back to English.
  *
- * Matched on the primary subtag only — `zh-Hans-CN`, `zh-TW` and `zh` all want
- * the Chinese table, and we do not ship regional variants to tell apart.
+ * Matched on the primary subtag, with one exception. Chinese is the only pair
+ * here where the script matters more than the region — `zh-TW`, `zh-HK` and
+ * anything marked `Hant` want the traditional table, and everything else
+ * Chinese wants the simplified one. `pt-BR` and `pt-PT` differ too, but not
+ * enough to carry two tables for.
  */
+export function localeOf(tag: string): Locale | null {
+  const lower = tag.toLowerCase();
+  if (lower.startsWith('zh')) return /hant|_tw|-tw|-hk|-mo/.test(lower) ? 'zh-Hant' : 'zh';
+  const base = lower.split('-')[0] ?? '';
+  return isLocale(base) ? base : null;
+}
+
 function detect(): Locale {
   for (const tag of navigator.languages ?? [navigator.language]) {
-    const base = tag.toLowerCase().split('-')[0];
-    if (isLocale(base ?? null)) return base as Locale;
+    const hit = localeOf(tag);
+    if (hit) return hit;
   }
   return 'en';
 }
@@ -103,5 +132,16 @@ export function t(source: string, vars?: Record<string, string | number>): strin
 
 /** Locale tag for Intl APIs — dates and numbers should follow the UI language */
 export function intlLocale(locale: Locale = useI18n.getState().locale): string {
-  return { en: 'en-US', zh: 'zh-CN', ja: 'ja-JP', ru: 'ru-RU' }[locale];
+  const REGION: Record<Locale, string> = {
+    en: 'en-US',
+    zh: 'zh-CN',
+    'zh-Hant': 'zh-TW',
+    ja: 'ja-JP',
+    ru: 'ru-RU',
+    de: 'de-DE',
+    fr: 'fr-FR',
+    es: 'es-ES',
+    pt: 'pt-PT',
+  };
+  return REGION[locale];
 }

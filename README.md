@@ -49,7 +49,8 @@
 - [x] 出网审计代理，完整 prompt 落盘，后台可开关、可清空
 - [x] 后台改配置无需重启：额度、价格、并发、provider、站点信息
 - [x] 忘记密码又没配邮件时，可以在部署机器上重置——不经过 HTTP，撤销该用户全部会话
-- [x] 界面、后台设置项与 API 错误文案支持中 / 英 / 日 / 俄，覆盖率由 `npm run typecheck` 机器校验
+- [x] 界面、后台设置项与 API 错误文案支持 9 种语言：简体中文 / 繁體中文 / English / 日本語 /
+      Русский / Deutsch / Français / Español / Português，覆盖率由 `npm run typecheck` 机器校验
 - [x] 镜像按组件拆开发布，`docker compose` 两个文件拉起
 
 **还没做**

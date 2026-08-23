@@ -64,7 +64,8 @@ their own sandboxed agent; you hold one upstream key and hand out none.
 - [x] Quotas, prices, concurrency, providers and site settings all change without a restart
 - [x] A locked-out administrator can be given a new password from the machine it runs on,
       without going through HTTP — no mail configuration needed
-- [x] Interface, console settings and API messages in English, Chinese, Japanese and Russian,
+- [x] Interface, console settings and API messages in nine languages — English, Simplified
+      and Traditional Chinese, Japanese, Russian, German, French, Spanish and Portuguese —
       with coverage checked by `npm run typecheck` rather than by eye
 - [x] Images split by component; two files and `docker compose` bring the stack up
 

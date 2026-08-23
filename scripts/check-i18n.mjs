@@ -26,7 +26,7 @@ import path from 'node:path';
 
 const WEB = 'apps/web/src';
 const SERVER = 'apps/server/src';
-const LOCALES = ['zh', 'ja', 'ru'];
+const LOCALES = ['zh', 'zh-Hant', 'ja', 'ru', 'de', 'fr', 'es', 'pt'];
 
 function walk(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {

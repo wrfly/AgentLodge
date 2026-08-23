@@ -30,21 +30,29 @@ console.log('\n=== Straightforward headers ===');
 eq('a bare tag', 'ja', 'ja');
 eq('tag with a region', 'zh-CN', 'zh');
 eq('script and region', 'zh-Hans-CN', 'zh');
-eq('Traditional Chinese uses the same table', 'zh-TW', 'zh');
+// Chinese is the one language split by script rather than reduced to its primary subtag
+eq('Traditional Chinese has its own table', 'zh-TW', 'zh-Hant');
+eq('so does Hong Kong', 'zh-HK', 'zh-Hant');
+eq('and anything marked Hant', 'zh-Hant', 'zh-Hant');
+eq('while Hans is the simplified one', 'zh-Hans-CN', 'zh');
 eq('case is ignored', 'RU-ru', 'ru');
+eq('German', 'de-AT', 'de');
+eq('French', 'fr-CA', 'fr');
+eq('Spanish', 'es-419', 'es');
+eq('Portuguese', 'pt-BR', 'pt');
 eq('English stays English', 'en-GB', 'en');
 
 console.log('\n=== Nothing to go on means English ===');
 eq('absent', undefined, 'en');
 eq('empty', '', 'en');
-eq('a language we do not have', 'de-DE', 'en');
+eq('a language we do not have', 'ko-KR', 'en');
 eq('junk', ';;;,,,', 'en');
 eq('*', '*', 'en');
 
 console.log('\n=== Quality values ===');
 eq('the first is taken when unweighted', 'ja,zh', 'ja');
 eq('a higher q wins regardless of order', 'ja;q=0.2,zh;q=0.9', 'zh');
-eq('unknown tags are skipped, not fatal', 'de;q=1.0,ru;q=0.4', 'ru');
+eq('unknown tags are skipped, not fatal', 'ko;q=1.0,ru;q=0.4', 'ru');
 eq('a missing q counts as 1', 'ru,ja;q=0.9', 'ru');
 eq('q=0 means not this one, so the next wins', 'ja;q=0,zh;q=0.1', 'zh');
 eq('q=0 on the only match falls back to English', 'ja;q=0', 'en');
