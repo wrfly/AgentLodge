@@ -46,10 +46,6 @@ nav .wrap{display:flex;align-items:center;gap:12px;height:56px}
 .btn.primary:hover{filter:brightness(1.06)}
 .btn.ghost{background:none;border-color:transparent;color:var(--muted)}
 .btn.ghost:hover{color:var(--text);background:var(--bubble)}
-select.btn{appearance:none;padding-right:26px;
-  background-image:linear-gradient(45deg,transparent 50%,var(--faint) 50%),linear-gradient(135deg,var(--faint) 50%,transparent 50%);
-  background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;
-  background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 .app-only{display:none}
 
 header{padding:76px 0 60px;text-align:center}
@@ -67,10 +63,17 @@ h2{font-size:21px;letter-spacing:-.015em;font-weight:620;margin-bottom:6px}
 .claim h3{font-size:14.5px;font-weight:620;margin-bottom:7px}
 .claim p{font-size:13.5px;color:var(--muted);line-height:1.65}
 
-.flow{background:var(--surface);border:1px solid var(--border);border-radius:13px;
-  padding:20px;overflow-x:auto}
-.flow pre{font-size:12.5px;line-height:1.75;color:var(--muted);white-space:pre}
-.flow b{color:var(--accent);font-weight:600}
+/* Boxes and arrows rather than spaces: the same block holds both languages, and CJK is
+   double-width, so no single run of padding lines up in both. */
+.flow{display:flex;align-items:flex-start;gap:10px;overflow-x:auto;padding:4px 0 2px}
+.node{flex:0 0 auto;min-width:112px;background:var(--surface);border:1px solid var(--border);
+  border-radius:11px;padding:11px 13px}
+.node b{display:block;font-size:13px;font-weight:620;white-space:nowrap}
+.node i{display:block;margin-top:5px;font-style:normal;font-size:11.5px;line-height:1.55;
+  color:var(--faint);white-space:nowrap}
+.node.key{border-color:var(--accent);background:var(--soft)}
+.node.key b{color:var(--accent)}
+.arrow{flex:0 0 auto;padding-top:12px;color:var(--faint);font-size:13px}
 
 .shots{display:grid;gap:18px}
 figure{background:var(--surface);border:1px solid var(--border);border-radius:13px;overflow:hidden}
@@ -102,10 +105,7 @@ footer a:hover{color:var(--text)}
 
 <nav><div class="wrap">
   <div class="brand"><span>🏕️</span> AgentLodge</div>
-  <select class="btn" id="lang" aria-label="Language">
-    <option value="zh">简体中文</option>
-    <option value="en">English</option>
-  </select>
+  <button class="btn ghost" id="lang" aria-label="Language"></button>
   <a class="btn" href="https://github.com/wrfly/AgentLodge" rel="noopener">GitHub</a>
   <a class="btn primary app-only" href="/claude"><span class="zh">登录</span><span class="en">Sign in</span></a>
 </div></nav>
@@ -154,12 +154,25 @@ footer a:hover{color:var(--text)}
   <h2><span class="zh">请求怎么走</span><span class="en">Where a request goes</span></h2>
   <p class="sub"><span class="zh">容器里没有 key，只有一张票据；换 key 的那一步只发生在网关进程里。</span>
      <span class="en">There is no key in the container, only a ticket. The swap happens inside the gateway process.</span></p>
-  <div class="flow"><pre>
- <span class="zh">浏览器</span><span class="en">browser</span>  ─→  app  ─→  <b>agent <span class="zh">容器</span><span class="en">container</span></b>  ─→  <b>gateway</b>  ─→  <span class="zh">上游</span><span class="en">upstream</span>
-                       claude / codex        │
-                       <span class="zh">只有 20 分钟票据</span><span class="en">holds a ticket only</span>    │  <span class="zh">在这里换成真 key</span><span class="en">the real key goes on here</span>
-                                             │  <span class="zh">计量 · 配额 · 审计</span><span class="en">metering · quota · audit</span>
-</pre></div>
+  <div class="flow">
+    <div class="node"><b><span class="zh">浏览器</span><span class="en">browser</span></b></div>
+    <span class="arrow">→</span>
+    <div class="node"><b>app</b></div>
+    <span class="arrow">→</span>
+    <div class="node">
+      <b><span class="zh">agent 容器</span><span class="en">agent container</span></b>
+      <i>claude / codex</i>
+      <i><span class="zh">只有 20 分钟票据</span><span class="en">holds a ticket only</span></i>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node key">
+      <b>gateway</b>
+      <i><span class="zh">在这里换成真 key</span><span class="en">the real key goes on here</span></i>
+      <i><span class="zh">计量 · 配额 · 审计</span><span class="en">metering · quota · audit</span></i>
+    </div>
+    <span class="arrow">→</span>
+    <div class="node"><b><span class="zh">上游</span><span class="en">upstream</span></b></div>
+  </div>
 </div></section>
 
 <section id="gallery"><div class="wrap">
@@ -250,8 +263,8 @@ docker pull docker.io/wrfly/agentlodge-agent:latest</pre>
 // in the document for anything that reads it without running scripts.
 (function () {
   var picker = document.getElementById('lang');
-  picker.onchange = function () {
-    set(picker.value);
+  picker.onclick = function () {
+    set(document.documentElement.dataset.lang === 'zh' ? 'en' : 'zh');
   };
 
   var saved = localStorage.getItem('agentlodge-landing-lang');
@@ -262,13 +275,14 @@ docker pull docker.io/wrfly/agentlodge-agent:latest</pre>
     document.documentElement.dataset.lang = l;
     document.documentElement.lang = l;
     localStorage.setItem('agentlodge-landing-lang', l);
-    picker.value = l;
+    // Labelled with the language you are not reading, which is the one the button gets you
+    picker.textContent = l === 'zh' ? 'English' : '简体中文';
   }
   // The same file is served from a deployment and from GitHub Pages. Only one of those has
-  // an application behind it, so the sign-in button waits to be told: /api/hello is the
-  // liveness endpoint both halves of the server answer. Asking is exact where guessing at
-  // the hostname is not.
-  fetch('/api/hello', { method: 'HEAD' })
+  // an application behind it, so the sign-in button waits to be told: this path is answered
+  // by the deployment's own routing and does not exist on Pages. Relative, so it asks
+  // whoever served this page rather than whatever is at the root of the host.
+  fetch('app.json', { method: 'HEAD' })
     .then(function (r) {
       if (!r.ok) return;
       Array.prototype.forEach.call(document.querySelectorAll('.app-only'), function (el) {

@@ -69,6 +69,15 @@
 	# work in both. LANDING_PATH=/claude turns it off for a deployment with no public face.
 	redir / {$LANDING_PATH:/landing/} 302
 
+	# What tells the page there is an application behind it. The same file is published to
+	# GitHub Pages, where this path does not exist, so the sign-in button appears here and
+	# not there. A path of its own rather than /api/hello: that one is Claude Code's
+	# liveness probe, and borrowing it would make every visit to this page look like a CLI
+	# checking in.
+	handle /landing/app.json {
+		respond `{"app":true}` 200
+	}
+
 	# Its own files, before the SPA fallback below — that fallback rewrites anything it
 	# cannot find to index.html, which would answer a missing screenshot with the
 	# application's HTML and a 200.
