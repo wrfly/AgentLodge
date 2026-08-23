@@ -67,8 +67,9 @@ h2{font-size:21px;letter-spacing:-.015em;font-weight:620;margin-bottom:6px}
 .flow pre{font-size:12.5px;line-height:1.75;color:var(--muted);white-space:pre}
 .flow b{color:var(--accent);font-weight:600}
 
-.shots{display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.shots{display:grid;gap:18px}
 figure{background:var(--surface);border:1px solid var(--border);border-radius:13px;overflow:hidden}
+figure a{display:block}
 figure img{display:block;width:100%;height:auto;border-bottom:1px solid var(--border)}
 figcaption{padding:11px 15px;font-size:13px;color:var(--muted)}
 
@@ -154,13 +155,13 @@ footer a:hover{color:var(--text)}
 
 <section id="gallery"><div class="wrap">
   <h2><span class="zh">界面</span><span class="en">What it looks like</span></h2>
-  <p class="sub"><span class="zh">高仿 Claude 的对话界面，加上用量、记忆和后台。</span>
-     <span class="en">A close copy of the Claude interface, plus usage, memory and a console.</span></p>
+  <p class="sub"><span class="zh">高仿 Claude 的对话界面，加上用量、记忆和后台。点开看原图。</span>
+     <span class="en">A close copy of the Claude interface, plus usage, memory and a console. Click one to open it full size.</span></p>
   <div class="shots" id="shots">
-    <figure><img src="shot-chat.png" alt=""><figcaption><span class="zh">对话</span><span class="en">Chat</span></figcaption></figure>
-    <figure><img src="shot-usage.png" alt=""><figcaption><span class="zh">用量与配额</span><span class="en">Usage and quota</span></figcaption></figure>
-    <figure><img src="shot-memory.png" alt=""><figcaption><span class="zh">长期记忆</span><span class="en">Long-term memory</span></figcaption></figure>
-    <figure><img src="shot-admin.png" alt=""><figcaption><span class="zh">管理后台</span><span class="en">Admin console</span></figcaption></figure>
+    <figure><a href="shot-chat.png" target="_blank" rel="noopener"><img src="shot-chat.png" alt="" loading="lazy"></a><figcaption><span class="zh">对话</span><span class="en">Chat</span></figcaption></figure>
+    <figure><a href="shot-usage.png" target="_blank" rel="noopener"><img src="shot-usage.png" alt="" loading="lazy"></a><figcaption><span class="zh">用量与配额</span><span class="en">Usage and quota</span></figcaption></figure>
+    <figure><a href="shot-memory.png" target="_blank" rel="noopener"><img src="shot-memory.png" alt="" loading="lazy"></a><figcaption><span class="zh">长期记忆</span><span class="en">Long-term memory</span></figcaption></figure>
+    <figure><a href="shot-admin.png" target="_blank" rel="noopener"><img src="shot-admin.png" alt="" loading="lazy"></a><figcaption><span class="zh">管理后台</span><span class="en">Admin console</span></figcaption></figure>
   </div>
 </div></section>
 
