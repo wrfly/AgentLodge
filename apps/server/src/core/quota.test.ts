@@ -12,6 +12,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+/*
+ * Pinned, because the windows this file is about are cut on local time: a week begins at
+ * midnight wherever the machine thinks it is. The fixtures below are written as UTC
+ * instants, so anywhere but UTC they land in a different week and the suite passes or
+ * fails by where it is run — which is how this went green here and red in CI.
+ */
+process.env.TZ = 'UTC';
+
 const box = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-quota-')));
 process.env.DATA_DIR = box;
 process.env.JWT_SECRET = 'test-only-not-a-real-secret';
@@ -136,21 +144,27 @@ console.log('\n=== Any window over its ceiling refuses, and says which ===');
 
 console.log('\n=== A top-up lifts one window and expires with it ===');
 {
-  users.setQuota(alice, { window: 1000, week: 50, month: null });
-  const ends = quota.boundsOf('week', new Date('2026-08-23T18:00:00.000Z')).end.toISOString();
+  const at = new Date('2026-08-23T18:00:00.000Z');
+  users.setQuota(alice, { window: 1000, week: 500, month: null });
+
+  // Refused first, or "the refusal is lifted" would pass on someone who was never refused
+  ok('over the ceiling to begin with', quota.status(alice, at).exceeded);
+
+  const ends = quota.boundsOf('week', at).end.toISOString();
   users.grantBoost(alice, 'week', 500, ends);
 
-  const s = quota.status(alice, new Date('2026-08-23T18:00:00.000Z'));
-  ok('the ceiling it applies to goes up', s.windows.week.limit === 550, String(s.windows.week.limit));
+  const s = quota.status(alice, at);
+  ok('the ceiling it applies to goes up', s.windows.week.limit === 1000, String(s.windows.week.limit));
   ok('and says how much of it is a top-up', s.windows.week.boost === 500);
   ok('the other windows are untouched', s.windows.window.limit === 1000 && s.windows.window.boost === 0);
-  ok('so the refusal is lifted', !s.exceeded);
+  ok('so the refusal is lifted', !s.exceeded,
+    `week ${s.windows.week.used}/${s.windows.week.limit} · tightest ${s.tightest}`);
 }
 {
   // Expiry is the window's own boundary, not a clock of the user's own
   users.grantBoost(alice, 'week', 500, '2026-08-20T00:00:00.000Z');
   const s = quota.status(alice, new Date('2026-08-23T18:00:00.000Z'));
-  ok('an expired top-up counts for nothing', s.windows.week.limit === 50 && s.windows.week.boost === 0);
+  ok('an expired top-up counts for nothing', s.windows.week.limit === 500 && s.windows.week.boost === 0);
   users.clearBoost(alice);
 }
 
