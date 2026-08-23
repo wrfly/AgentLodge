@@ -958,14 +958,12 @@ function AuditProxyCard() {
       </div>
 
       <Field label={t('Retention')} hint={t('Whichever limit trips first removes the oldest. Set 0 to disable that one.')}>
-        <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-          <Input value={days} onChange={(e) => setDays(e.target.value)} className="w-20" />
-          <span className="text-muted">{t('days')}</span>
-          <Input value={count} onChange={(e) => setCount(e.target.value)} className="w-28" />
-          <span className="text-muted">{t('records')}</span>
-          <Input value={gb} onChange={(e) => setGb(e.target.value)} className="w-20" />
-          <span className="text-muted">GB</span>
+        <div className="flex items-center gap-2">
+          <WithUnit value={days} onChange={setDays} unit={t('days')} />
+          <WithUnit value={count} onChange={setCount} unit={t('records')} />
+          <WithUnit value={gb} onChange={setGb} unit="GB" />
           <Button
+            className="shrink-0"
             disabled={busy}
             onClick={() =>
               void save({
@@ -979,17 +977,42 @@ function AuditProxyCard() {
           </Button>
         </div>
       </Field>
-
-      <div className="rounded-lg border border-line bg-bubble/40 p-2.5 text-[12px] leading-relaxed text-muted">
-        <span className="font-medium text-ink">{t('Locked')}</span>
-        <span className="ml-2 font-mono">
-          retry={c.locked.retry} · maxConcurrent={c.locked.maxConcurrent}
-        </span>
-        <p className="mt-1">
-          {t('These two have to be 0 and cannot be changed from the UI or the API. The proxy\'s own retries would swallow the upstream\'s 429s, so the gateway\'s AIMD gate would never see the signal to back off and would instead add pressure on a run of successes. Two queues in series also make the concurrency slots stop adding up. In this chain the proxy is an observer only.')}
-        </p>
-      </div>
     </Card>
+  );
+}
+
+/**
+ * A number with its unit inside the box.
+ *
+ * Three of these plus a button used to be three fixed-width fields, three separate unit
+ * labels and a wrapping row — which came out as three lines, and as more lines still in a
+ * language whose word for "records" is longer. Sharing the width equally keeps it on one
+ * line whatever the unit says, and the unit is only ever read next to its own field.
+ */
+function WithUnit({
+  value,
+  onChange,
+  unit,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  unit: string;
+}) {
+  return (
+    <span className="relative min-w-0 flex-1">
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        inputMode="numeric"
+        // Room for the unit, which sits on top of the input's right end
+        className="pr-[4.5rem] text-[13px]"
+      />
+      {/* Capped and truncating: a longer word in some other language would otherwise sit on
+          top of the number rather than beside it */}
+      <span className="pointer-events-none absolute inset-y-0 right-2.5 flex max-w-[3.5rem] items-center truncate text-[11px] text-faint">
+        {unit}
+      </span>
+    </span>
   );
 }
 

@@ -325,7 +325,6 @@ export const ru: Record<string, string> = {
   days: 'дн.',
   records: 'записей',
   Locked: 'Зафиксировано',
-  'These two have to be 0 and cannot be changed from the UI or the API. The proxy\'s own retries would swallow the upstream\'s 429s, so the gateway\'s AIMD gate would never see the signal to back off and would instead add pressure on a run of successes. Two queues in series also make the concurrency slots stop adding up. In this chain the proxy is an observer only.': 'Эти два параметра должны быть равны 0 и не меняются ни из интерфейса, ни через API. Собственные повторы прокси поглотили бы 429 от провайдера, и AIMD-шлюз никогда не увидел бы сигнал снизить нагрузку, а наоборот повысил бы её на серии успехов. Две очереди подряд также нарушают учёт слотов параллелизма. В этой цепочке прокси — только наблюдатель.',
   'Concurrency gate': 'Шлюз параллелизма',
   'This is what it looks like when the gateway container is not up. Rate limiting still applies on that side; only the status is unreadable here.': 'Так это выглядит, когда контейнер шлюза не запущен. Ограничение частоты на той стороне продолжает работать; здесь просто не читается состояние.',
   'Metering gateway': 'Шлюз учёта',

@@ -325,7 +325,6 @@ export const zh: Record<string, string> = {
   days: '天',
   records: '条',
   Locked: '锁定项',
-  'These two have to be 0 and cannot be changed from the UI or the API. The proxy\'s own retries would swallow the upstream\'s 429s, so the gateway\'s AIMD gate would never see the signal to back off and would instead add pressure on a run of successes. Two queues in series also make the concurrency slots stop adding up. In this chain the proxy is an observer only.': '这两项必须是 0，界面和接口都改不了。代理自带重试会吃掉上游的 429，网关的 AIMD 闸门就收不到降并发信号，反而因为「连续成功」加压；两级队列串联还会让并发槽位对不上账。代理在链路里只做观察者。',
   'Concurrency gate': '并发闸门',
   'This is what it looks like when the gateway container is not up. Rate limiting still applies on that side; only the status is unreadable here.': '网关容器没起来时会这样。限流仍然在网关那侧生效，这里只是读不到状态。',
   'Metering gateway': '计量网关',

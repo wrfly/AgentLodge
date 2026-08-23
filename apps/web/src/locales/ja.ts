@@ -325,7 +325,6 @@ export const ja: Record<string, string> = {
   days: '日',
   records: '件',
   Locked: '固定項目',
-  'These two have to be 0 and cannot be changed from the UI or the API. The proxy\'s own retries would swallow the upstream\'s 429s, so the gateway\'s AIMD gate would never see the signal to back off and would instead add pressure on a run of successes. Two queues in series also make the concurrency slots stop adding up. In this chain the proxy is an observer only.': 'この 2 つは 0 でなければならず、画面からも API からも変更できません。プロキシ側のリトライが上流の 429 を吸収してしまうと、ゲートウェイの AIMD ゲートは並列度を下げる信号を受け取れず、逆に「連続成功」として負荷を上げてしまいます。キューを二段に重ねると同時実行枠の計算も合わなくなります。この経路においてプロキシは観測者に徹します。',
   'Concurrency gate': '同時実行ゲート',
   'This is what it looks like when the gateway container is not up. Rate limiting still applies on that side; only the status is unreadable here.': 'ゲートウェイのコンテナが起動していないときの表示です。レート制限はゲートウェイ側で有効なままで、ここから状態が読めないだけです。',
   'Metering gateway': '計測ゲートウェイ',
