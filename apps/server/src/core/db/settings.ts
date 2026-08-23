@@ -70,6 +70,18 @@ export interface SettingSpec {
    */
   hidden?: boolean;
   /**
+   * What the console shows and takes, as a multiple of what is stored.
+   *
+   * A token allowance is stored in tokens because that is what usage is counted in, and
+   * typed in millions because nobody sizes an allowance in single tokens — and a misplaced
+   * zero in `5000000` is invisible in a way that one in `5` is not. The conversion is the
+   * console's; the stored value, the environment fallback and validate() all stay in the
+   * unit the rest of the server uses.
+   */
+  scale?: number;
+  /** Shown inside the field, in the entered scale */
+  unit?: string;
+  /**
    * Validation before writing. Return a message to refuse the write; undefined passes.
    *
    * Why it exists: some settings fail without an error, by making a feature quietly
@@ -142,7 +154,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Default quota for new users',
     group: 'quota',
     type: 'number',
-    hint: 'Billable tokens per period. Empty means unlimited.',
+    scale: 1_000_000,
+    unit: 'M',
+    hint: 'Millions of billable tokens per period. Empty means unlimited.',
   },
   {
     key: 'quota.anchorDayOfMonth',

@@ -452,7 +452,6 @@ export const zh: Record<string, string> = {
   'Links in emails are built from it': '邮件里的链接用它拼接',
   'On: everything outbound goes through the proxy, and an upstream with no AUDIT_PROXY_URL gets a 503 (fail closed). Off: direct to the upstream, no proxy and no x-forwarded-* routing headers, and no record of that traffic.': '开：出网必经代理，没配 AUDIT_PROXY_URL 就 503（fail closed）。关：直连上游，不经过代理、也不发 x-forwarded-* 路由头，这段流量不留记录。',
   'Default quota for new users': '新用户默认额度',
-  'Billable tokens per period. Empty means unlimited.': '计费 token / 周期。留空表示不限。',
   'Monthly reset day': '月度重置日',
   '1–31. A billing period need not start on the 1st; a month without that day falls back to its last (e.g. the 31st in February).': '1–31。账期不一定从 1 号开始；当月没有这一天时自动取当月最后一天（如 31 号遇 2 月）。',
   'Weekly reset day': '周重置日',
@@ -499,4 +498,5 @@ export const zh: Record<string, string> = {
   'SendGrid API Key': 'SendGrid API Key',
   'Refresh the model list hourly': '每小时刷新模型列表',
   'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': '每小时问一次当前启用的上游有哪些模型，并覆盖该 provider 的列表。关闭则完全保持你填的内容。无论开关如何，「从上游拉取」按钮都可用。',
+  'Millions of billable tokens per period. Empty means unlimited.': '每个周期的计费 token，单位百万。留空表示不限。',
 };

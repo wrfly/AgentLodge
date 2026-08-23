@@ -452,7 +452,6 @@ export const ja: Record<string, string> = {
   'Links in emails are built from it': 'メール内のリンクはこれを元に組み立てます',
   'On: everything outbound goes through the proxy, and an upstream with no AUDIT_PROXY_URL gets a 503 (fail closed). Off: direct to the upstream, no proxy and no x-forwarded-* routing headers, and no record of that traffic.': 'オン：外向き通信は必ずプロキシを経由し、AUDIT_PROXY_URL 未設定の上流は 503（fail closed）になります。オフ：上流に直接接続し、プロキシも x-forwarded-* ルーティングヘッダーも使わず、その通信は記録に残りません。',
   'Default quota for new users': '新規ユーザーの既定枠',
-  'Billable tokens per period. Empty means unlimited.': '期間あたりの課金対象 token。空欄は無制限です。',
   'Monthly reset day': '月次リセット日',
   '1–31. A billing period need not start on the 1st; a month without that day falls back to its last (e.g. the 31st in February).': '1〜31。請求期間が 1 日から始まるとは限りません。その日が存在しない月は月末に繰り下がります（2 月の 31 日など）。',
   'Weekly reset day': '週次リセット日',
@@ -499,4 +498,5 @@ export const ja: Record<string, string> = {
   'SendGrid API Key': 'SendGrid API キー',
   'Refresh the model list hourly': 'モデル一覧を 1 時間ごとに更新',
   'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': '有効な上流に 1 時間ごとにモデル一覧を問い合わせ、その provider の一覧を上書きします。オフなら入力したままです。どちらの場合でも「上流から取得」ボタンは使えます。',
+  'Millions of billable tokens per period. Empty means unlimited.': '1 周期あたりの課金対象トークン（百万単位）。空欄は無制限。',
 };

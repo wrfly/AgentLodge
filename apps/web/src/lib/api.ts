@@ -437,6 +437,10 @@ export interface SettingView {
   group: 'mail' | 'quota' | 'agents';
   type: 'string' | 'secret' | 'number' | 'boolean' | 'list';
   hint?: string;
+  /** Shown and entered as a multiple of the stored value — a token limit is typed in millions */
+  scale?: number;
+  /** Shown inside the field, in the entered scale */
+  unit?: string;
   value: string;
   isSet: boolean;
   source: 'db' | 'env' | 'default' | 'unset';

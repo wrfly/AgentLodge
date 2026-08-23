@@ -452,7 +452,6 @@ export const ru: Record<string, string> = {
   'Links in emails are built from it': 'Из него собираются ссылки в письмах',
   'On: everything outbound goes through the proxy, and an upstream with no AUDIT_PROXY_URL gets a 503 (fail closed). Off: direct to the upstream, no proxy and no x-forwarded-* routing headers, and no record of that traffic.': 'Включено: весь исходящий трафик идёт через прокси, а провайдер без AUDIT_PROXY_URL получает 503 (fail closed). Выключено: прямое соединение с провайдером, без прокси и заголовков x-forwarded-*, и без записи этого трафика.',
   'Default quota for new users': 'Квота по умолчанию для новых пользователей',
-  'Billable tokens per period. Empty means unlimited.': 'Оплачиваемых токенов за период. Пусто — без ограничения.',
   'Monthly reset day': 'День месячного сброса',
   '1–31. A billing period need not start on the 1st; a month without that day falls back to its last (e.g. the 31st in February).': '1–31. Расчётный период не обязан начинаться 1-го числа; если такого дня в месяце нет, берётся последний (например, 31-е в феврале).',
   'Weekly reset day': 'День недельного сброса',
@@ -499,4 +498,5 @@ export const ru: Record<string, string> = {
   'SendGrid API Key': 'Ключ API SendGrid',
   'Refresh the model list hourly': 'Обновлять список моделей каждый час',
   'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': 'Раз в час спрашивает активный апстрим, какие у него модели, и перезаписывает список этого провайдера. Выключено — список остаётся таким, как введён. В любом случае кнопка «Получить с апстрима» продолжает работать.',
+  'Millions of billable tokens per period. Empty means unlimited.': 'Миллионы тарифицируемых токенов за период. Пусто — без ограничений.',
 };

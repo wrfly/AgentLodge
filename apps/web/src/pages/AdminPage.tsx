@@ -55,6 +55,8 @@ import {
   fillDays,
   fmtDate,
   fmtTokens,
+  mToTokens,
+  tokensToM,
 } from '../components/ui';
 import { useT } from '../lib/i18n';
 
@@ -993,13 +995,16 @@ function WithUnit({
   value,
   onChange,
   unit,
+  className = 'min-w-0 flex-1',
 }: {
   value: string;
   onChange: (v: string) => void;
   unit: string;
+  /** The wrapper's width. A row of them shares the space; one on its own fills it. */
+  className?: string;
 }) {
   return (
-    <span className="relative min-w-0 flex-1">
+    <span className={clsx('relative', className)}>
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -1140,7 +1145,8 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
       await admin.topup(user.id, {
         ...(mode === 'cost'
           ? { amount: Number(amount) }
-          : { tokenLimit: Number(amount) }),
+          // Typed in millions, like every other allowance field
+          : { tokenLimit: mToTokens(amount) }),
         hours: h,
         autoRenew,
       });
@@ -1164,7 +1170,11 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
         </div>
         <div className="w-28">
           <Field label={t(mode === 'cost' ? 'Amount' : 'Token limit')}>
-            <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+            {mode === 'cost' ? (
+              <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+            ) : (
+              <WithUnit className="block" unit="M" value={amount} onChange={setAmount} />
+            )}
           </Field>
         </div>
         <div className="w-24">
@@ -1193,7 +1203,8 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
   const t = useT();
   const [editing, setEditing] = useState(false);
   const [topup, setTopup] = useState(false);
-  const [limit, setLimit] = useState(user.quota.tokenLimit?.toString() ?? '');
+  // Typed in millions; the API takes tokens
+  const [limit, setLimit] = useState(user.quota.tokenLimit === null ? '' : tokensToM(user.quota.tokenLimit));
   const [period, setPeriod] = useState(user.quota.period);
   const [hardStop, setHardStop] = useState(user.quota.hardStop);
   const [busy, setBusy] = useState(false);
@@ -1209,7 +1220,7 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
     try {
       const trimmed = limit.trim();
       await admin.updateUser(user.id, {
-        tokenLimit: trimmed === '' ? null : Number(trimmed),
+        tokenLimit: trimmed === '' ? null : mToTokens(trimmed),
         period,
         hardStop,
       });
@@ -1337,11 +1348,11 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
         <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-line bg-elevated p-3">
           <div className="w-40">
             <Field label={t('Quota limit')}>
-              <Input
+              <WithUnit
+                className="block"
+                unit="M"
                 value={limit}
-                onChange={(e) => setLimit(e.target.value.replace(/[^\d]/g, ''))}
-                placeholder={t("unlimited")}
-                inputMode="numeric"
+                onChange={(v) => setLimit(v.replace(/[^\d.]/g, ''))}
               />
             </Field>
           </div>
@@ -1458,7 +1469,7 @@ function Invites() {
     try {
       const res = await admin.emailInvite({
         email: email.trim(),
-        presetTokenLimit: limit ? Number(limit) : null,
+        presetTokenLimit: limit ? mToTokens(limit) : null,
         expiresInDays: Number(days) || 7,
         presetRole: role,
       });
@@ -1488,7 +1499,7 @@ function Invites() {
     try {
       await admin.createInvites({
         count: 1,
-        presetTokenLimit: limit ? Number(limit) : null,
+        presetTokenLimit: limit ? mToTokens(limit) : null,
         expiresInDays: Number(days) || undefined,
         presetRole: role,
       });
@@ -1516,11 +1527,11 @@ function Invites() {
           </div>
           <div className="w-32">
             <Field label={t('Quota')}>
-              <Input
+              <WithUnit
+                className="block"
+                unit="M"
                 value={limit}
-                onChange={(e) => setLimit(e.target.value.replace(/[^\d]/g, ''))}
-                placeholder={t("unlimited")}
-                inputMode="numeric"
+                onChange={(v) => setLimit(v.replace(/[^\d.]/g, ''))}
               />
             </Field>
           </div>
@@ -1974,7 +1985,19 @@ function SettingsTab() {
     setBusy(true);
     setMsg(null);
     try {
-      setSettings(await admin.saveSettings(draft));
+      /*
+       * A scaled field is typed in its own unit; the server stores and validates the other
+       * one. Converting here rather than in the field keeps the draft as what was typed, so
+       * a half-finished "1." does not become 1000000 while it is still being typed.
+       */
+      const patch = Object.fromEntries(
+        Object.entries(draft).map(([key, value]) => {
+          const scale = settings.find((s) => s.key === key)?.scale;
+          if (!scale || value.trim() === '') return [key, value];
+          return [key, String(Math.round(Number(value) * scale))];
+        }),
+      );
+      setSettings(await admin.saveSettings(patch));
       setDraft({});
       setMsg({ tone: 'success', text: t('Saved') });
     } catch (err) {
@@ -2056,6 +2079,14 @@ function SettingsTab() {
                     <Toggle
                       checked={value === 'true'}
                       onChange={(v) => setDraft((d) => ({ ...d, [s.key]: String(v) }))}
+                    />
+                  ) : s.scale ? (
+                    /* Typed in its own unit; what leaves here is still the stored one */
+                    <WithUnit
+                      className="block"
+                      unit={s.unit ?? ''}
+                      value={draft[s.key] ?? (s.value ? tokensToM(Number(s.value)) : '')}
+                      onChange={(v) => setDraft((d) => ({ ...d, [s.key]: v }))}
                     />
                   ) : (
                     <Input
