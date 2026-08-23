@@ -61,9 +61,21 @@ function epochSeconds(iso: string | null): number | null {
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
+/** The ceiling in whichever unit this quota is counted in */
+function limitOf(q: QuotaStatus): number | null {
+  return q.limitKind === 'cost' ? q.costLimitMicro : q.limit;
+}
+
 /** No ceiling of the relevant kind means there is nothing to report */
 function unlimited(q: QuotaStatus): boolean {
-  return q.limitKind === 'cost' ? q.costLimitMicro === null : q.limit === null;
+  return limitOf(q) === null;
+}
+
+/** How long this quota's period runs, or null when it has no end */
+function periodMs(q: QuotaStatus): number | null {
+  if (!q.periodEnd) return null;
+  const length = new Date(q.periodEnd).getTime() - new Date(q.periodStart).getTime();
+  return Number.isFinite(length) && length > 0 ? length : null;
 }
 
 /**
@@ -95,18 +107,46 @@ function statusOf(q: QuotaStatus): 'allowed' | 'allowed_warning' | 'rejected' {
  * exact string match (`=== 'available'`, `=== 'true'`), so leaving them out is read as
  * "not applicable" rather than as a missing value.
  */
-export function unifiedHeaders(q: QuotaStatus): Record<string, string> {
+export function unifiedHeaders(q: QuotaStatus, windows: Windows = {}): Record<string, string> {
   if (unlimited(q)) return {};
 
-  // A window needs both figures: the client skips one that has a utilization and no reset,
-  // so a period that never ends (total) reports nothing here. It still shows up in the
-  // /usage panel, where a null resets_at is allowed.
+  const status = statusOf(q);
+  const out: Record<string, string> = {};
+
+  // The upstream's windows when they are known, so the warnings the client raises are about
+  // the window that will actually run out, at the instant it actually runs out
+  for (const claim of ['five_hour', 'seven_day'] as const) {
+    const observed = windows[claim];
+    if (!observed) continue;
+    const reset = epochSeconds(observed.resetsAt);
+    const pace = paceOf(q, observed.used, WINDOW_MS[claim]);
+    if (reset === null || pace === null) continue;
+    const n = ABBREV[claim];
+    out[`anthropic-ratelimit-unified-${n}-status`] = status;
+    // The header scale is a fraction; the panel's is a percentage
+    out[`anthropic-ratelimit-unified-${n}-utilization`] = (pace / 100).toFixed(4);
+    out[`anthropic-ratelimit-unified-${n}-reset`] = String(reset);
+  }
+
+  if (Object.keys(out).length > 0) {
+    const representative = windows.five_hour ? 'five_hour' : 'seven_day';
+    const reset = epochSeconds(windows[representative]?.resetsAt ?? null);
+    return {
+      'anthropic-ratelimit-unified-status': status,
+      ...(reset === null ? {} : { 'anthropic-ratelimit-unified-reset': String(reset) }),
+      'anthropic-ratelimit-unified-representative-claim': representative,
+      ...out,
+    };
+  }
+
+  // Nothing observed from the upstream yet: fall back to the quota's own period. A window
+  // needs both figures — the client skips one that has a utilization and no reset — so a
+  // period that never ends reports nothing here and shows up only in the panel.
   const reset = epochSeconds(q.periodEnd);
   if (reset === null) return {};
 
   const claim = claimFor(q);
   const n = ABBREV[claim];
-  const status = statusOf(q);
   const resetStr = String(reset);
   return {
     'anthropic-ratelimit-unified-status': status,
@@ -145,7 +185,69 @@ export interface OAuthUsage {
   limits: [];
 }
 
-export function oauthUsage(q: QuotaStatus): OAuthUsage {
+const HOUR_MS = 60 * 60_000;
+
+/** The platform's two windows, as the upstream defines them */
+export const WINDOW_MS: Record<Claim, number> = {
+  five_hour: 5 * HOUR_MS,
+  seven_day: 7 * 24 * HOUR_MS,
+};
+
+/**
+ * One of the platform's windows, as it applies to one user.
+ *
+ * **The boundary belongs to the upstream, the amount belongs to the user.** These two lines
+ * are the platform's windows — one subscription, one 5-hour window, one weekly window, the
+ * same instants for everybody — and the upstream states when each resets on every response.
+ * A window measured from a user's own first message instead would tell them their allowance
+ * runs until nine when the pool empties at seven.
+ *
+ * The amount is that user's own consumption inside those boundaries, so nobody learns what
+ * anybody else spent.
+ */
+export interface ObservedWindow {
+  /** What this user spent inside the window, in whichever unit the quota counts */
+  used: number;
+  /** When the upstream says the window resets, ISO 8601 */
+  resetsAt: string;
+}
+
+export type Windows = Partial<Record<Claim, ObservedWindow>>;
+
+/**
+ * A user's share of a window, as a percentage.
+ *
+ * The denominator is their own quota stretched to the window's length: a daily ceiling of
+ * 10M is about 2.08M over five hours. That makes it a **pace** — am I burning faster than my
+ * allowance allows — rather than a second limit. Nothing here blocks; the quota does, and
+ * says so in its own words when it refuses a request.
+ */
+function paceOf(q: QuotaStatus, used: number, windowMs: number): number | null {
+  const limit = limitOf(q);
+  const length = periodMs(q);
+  if (limit === null || limit <= 0 || length === null) return null;
+  const allowance = (limit * windowMs) / length;
+  return allowance > 0 ? Math.min(Math.round((used / allowance) * 100), 100) : null;
+}
+
+/** The panel's shape for one window, or null when there is nothing to say about it */
+function panelWindow(q: QuotaStatus, claim: Claim, windows: Windows): UsageWindow | null {
+  const observed = windows[claim];
+  if (!observed) return null;
+  const utilization = paceOf(q, observed.used, WINDOW_MS[claim]);
+  return utilization === null ? null : { utilization, resets_at: observed.resetsAt };
+}
+
+/**
+ * What the upstream's windows are worth to this user.
+ *
+ * With no observation yet — a gateway that has just started, or an upstream that reports no
+ * allowance at all, such as the built-in mock — this falls back to the quota's own period in
+ * whichever of the two windows it resembles. That is a worse answer, and it is the honest
+ * one: better the user's real ceiling under a roughly-fitting label than a window whose
+ * boundaries we would have to invent.
+ */
+export function oauthUsage(q: QuotaStatus, windows: Windows = {}): OAuthUsage {
   const empty: OAuthUsage = {
     five_hour: null,
     seven_day: null,
@@ -157,6 +259,14 @@ export function oauthUsage(q: QuotaStatus): OAuthUsage {
     limits: [],
   };
   if (unlimited(q)) return empty;
+
+  if (windows.five_hour || windows.seven_day) {
+    return {
+      ...empty,
+      five_hour: panelWindow(q, 'five_hour', windows),
+      seven_day: panelWindow(q, 'seven_day', windows),
+    };
+  }
 
   const window: UsageWindow = {
     utilization: Math.round(q.ratio * 100),

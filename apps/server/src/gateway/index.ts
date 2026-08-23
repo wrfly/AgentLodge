@@ -34,9 +34,11 @@ import {
 import { SseSniffer, absorbBody, absorbStream, newUsageAcc, type Wire } from './usage-parser.js';
 import {
   RateLimitScrubber,
+  WINDOW_MS,
   oauthUsage,
   stripRateLimits,
   unifiedHeaders,
+  type Windows,
 } from './quota-report.js';
 import * as allowance from './upstream-allowance.js';
 import { fetchModels } from './models.js';
@@ -167,6 +169,42 @@ export function startModelAutoRefresh(log: (message: string) => void): void {
       }),
     log,
   );
+}
+
+/** Usage in whichever unit the quota counts — tokens, or money in micro-units */
+function pick(totals: { billableTokens: number; costMicro: number }, cost: boolean): number {
+  return cost ? totals.costMicro : totals.billableTokens;
+}
+
+/**
+ * The platform's windows as they apply to one user.
+ *
+ * **Boundaries from the upstream, amounts from this user.** One subscription means one
+ * 5-hour window and one weekly window, resetting at the same instants for everybody, and
+ * the upstream states those instants on every response. Measuring from a user's own first
+ * message instead would tell them their allowance runs until nine when the pool empties at
+ * seven — and at seven they would be refused with plenty of their own quota left.
+ *
+ * A window whose reset has already passed is left out: the snapshot is from the last
+ * response through this gateway, and after a long quiet spell it describes a window that is
+ * over. Reporting it would date the panel without saying so.
+ */
+function windowsFor(userId: string, q: quota.QuotaStatus): Windows {
+  const snapshot = allowance.snapshot();
+  if (!snapshot) return {};
+
+  const cost = q.limitKind === 'cost';
+  const now = Date.now();
+  const out: Windows = {};
+  for (const [claim, abbrev] of [['five_hour', '5h'], ['seven_day', '7d']] as const) {
+    const resetsAt = snapshot.windows[abbrev]?.resetsAt;
+    if (!resetsAt) continue;
+    const end = new Date(resetsAt).getTime();
+    if (!Number.isFinite(end) || end <= now) continue;
+    const from = new Date(end - WINDOW_MS[claim]).toISOString();
+    out[claim] = { used: pick(usageRepo.totalsForUser(userId, { from }), cost), resetsAt };
+  }
+  return out;
 }
 
 /** The model list for one provider, sent out under the same audit rules as everything else */
@@ -342,7 +380,7 @@ async function handleProxy(
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache, no-transform',
         connection: 'keep-alive',
-        ...(wire === 'anthropic' ? unifiedHeaders(verdict.status) : {}),
+        ...(wire === 'anthropic' ? unifiedHeaders(verdict.status, windowsFor(claims.sub, verdict.status)) : {}),
       });
       reply.raw.write(stream);
       reply.raw.end();
@@ -391,7 +429,7 @@ async function handleProxy(
       'content-type': ct,
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
-      ...(wire === 'anthropic' ? unifiedHeaders(verdict.status) : {}),
+      ...(wire === 'anthropic' ? unifiedHeaders(verdict.status, windowsFor(claims.sub, verdict.status)) : {}),
     });
 
     if (!upstream.body) {
@@ -655,7 +693,8 @@ export function buildGateway(): FastifyInstance {
         .code(401)
         .send(anthropicError('authentication_error', tr(req, 'The credential is invalid or has expired')));
     }
-    return reply.code(200).send(oauthUsage(quota.status(who.sub)));
+    const q = quota.status(who.sub);
+    return reply.code(200).send(oauthUsage(q, windowsFor(who.sub, q)));
   });
 
   /**

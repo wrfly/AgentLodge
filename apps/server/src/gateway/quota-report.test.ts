@@ -135,6 +135,67 @@ console.log('\n=== /api/oauth/usage: a percentage, and ISO 8601 ===');
   ok('unlimited reports every window null', u.five_hour === null && u.seven_day === null);
 }
 
+console.log('\n=== The platform\'s windows, once the upstream has stated them ===');
+{
+  // One subscription, one 5-hour window: the upstream says it resets at 19:00, so that is
+  // the boundary for everybody, whatever time each of them started
+  const resets5h = '2026-08-23T19:00:00.000Z';
+  const resets7d = '2026-08-27T05:00:00.000Z';
+  // A daily ceiling of 10M is 10M/24h*5h ≈ 2.083M over five hours
+  const daily = q({ limit: 10_000_000, ratio: 0.3 });
+  const u = oauthUsage(daily, {
+    five_hour: { used: 1_041_666, resetsAt: resets5h },
+    seven_day: { used: 35_000_000, resetsAt: resets7d },
+  });
+  ok('both lines are filled', u.five_hour !== null && u.seven_day !== null, JSON.stringify(u.five_hour));
+  ok('the reset is the upstream’s, not the quota’s', u.five_hour?.resets_at === resets5h, String(u.five_hour?.resets_at));
+  ok('and the weekly one likewise', u.seven_day?.resets_at === resets7d);
+  ok('half of a five-hour share reads as 50%', u.five_hour?.utilization === 50, String(u.five_hour?.utilization));
+  ok('half of a weekly share too — 70M is a day’s ceiling times seven', u.seven_day?.utilization === 50, String(u.seven_day?.utilization));
+}
+{
+  const daily = q({ limit: 10_000_000 });
+  const u = oauthUsage(daily, { five_hour: { used: 99_000_000, resetsAt: '2026-08-23T19:00:00.000Z' } });
+  ok('a window spent far past its share stops at 100', u.five_hour?.utilization === 100, String(u.five_hour?.utilization));
+  ok('a window the upstream said nothing about stays empty', u.seven_day === null);
+}
+{
+  const u = oauthUsage(q({ limit: null }), { five_hour: { used: 5, resetsAt: '2026-08-23T19:00:00.000Z' } });
+  ok('no ceiling means no percentage to report', u.five_hour === null && u.seven_day === null);
+}
+{
+  // Cost quotas count micro-units; the window has to be measured in the same unit
+  const byCost = q({ limitKind: 'cost', limit: null, costLimitMicro: 24_000_000 });
+  const u = oauthUsage(byCost, { five_hour: { used: 2_500_000, resetsAt: '2026-08-23T19:00:00.000Z' } });
+  ok('a cost quota is paced in its own unit', u.five_hour?.utilization === 50, String(u.five_hour?.utilization));
+}
+
+console.log('\n=== Headers follow the same windows ===');
+{
+  const resets = '2026-08-23T19:00:00.000Z';
+  const h = unifiedHeaders(q({ limit: 10_000_000 }), {
+    five_hour: { used: 1_041_666, resetsAt: resets },
+    seven_day: { used: 7_000_000, resetsAt: '2026-08-27T05:00:00.000Z' },
+  });
+  ok(
+    'the 5h reset is the upstream’s instant, in unix seconds',
+    h['anthropic-ratelimit-unified-5h-reset'] === String(Date.parse(resets) / 1000),
+    String(h['anthropic-ratelimit-unified-5h-reset']),
+  );
+  ok('on the header scale, which is a fraction', h['anthropic-ratelimit-unified-5h-utilization'] === '0.5000', String(h['anthropic-ratelimit-unified-5h-utilization']));
+  ok('both windows are reported', h['anthropic-ratelimit-unified-7d-utilization'] === '0.1000', String(h['anthropic-ratelimit-unified-7d-utilization']));
+  ok('the representative is the short window when there is one', h['anthropic-ratelimit-unified-representative-claim'] === 'five_hour');
+  ok('the top-level reset matches it', h['anthropic-ratelimit-unified-reset'] === h['anthropic-ratelimit-unified-5h-reset']);
+}
+{
+  const h = unifiedHeaders(q({ limit: 10_000_000, warning: true }), {
+    seven_day: { used: 1, resetsAt: '2026-08-27T05:00:00.000Z' },
+  });
+  ok('with only the weekly window, that is the representative', h['anthropic-ratelimit-unified-representative-claim'] === 'seven_day');
+  ok('and the state still comes from the quota', h['anthropic-ratelimit-unified-status'] === 'allowed_warning');
+  ok('the short window is absent rather than zero', h['anthropic-ratelimit-unified-5h-utilization'] === undefined);
+}
+
 console.log('\n=== Codex: the shared account never reaches the client ===');
 {
   const body = JSON.stringify({

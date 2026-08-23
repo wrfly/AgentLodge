@@ -456,8 +456,15 @@ MCP、历史记录。
 - 每个 `/v1/messages` 响应上的 `anthropic-ratelimit-unified-*` 头，按该用户的配额重写
 - Codex 的额度跟着响应体走（`rate_limits`），在流里摘掉
 
-配额周期跟 Claude Code 写死的两个窗口对不上，所以按周期长度落位：**24 小时以内**落在
-「Current session」，其余落在「Current week」。数字是对的，标题是它的。
+CLI 那两条线是**平台的**窗口，不是每个人自己的：边界取上游响应头里的真实 reset
+（所有人一致），窗口里的数量是这个用户自己的消耗，分母是他的配额按窗口长度折算
+（日配额 10M → 5 小时约 2.08M，7 天 70M）。
+
+这一点很重要：上游 2 点重置、窗口到 7 点，某人 4 点才发第一条消息——按他自己算窗口到 9 点，
+可 7 点池子就空了，他会带着没用完的配额被拒。边界必须是平台的。
+
+上游还没回过响应时（网关刚重启、用的是假上游）回落到配额周期本身，按长度落位：24 小时
+以内进「Current session」，其余进「Current week」。
 
 `claude` 的 `/usage` 面板是个例外：它**不经过我们**。实测——挂 HTTPS_PROXY 抓 CONNECT，
 那个请求直连 `api.anthropic.com:443`，用的是本机的 claude.ai 登录，`ANTHROPIC_BASE_URL`
