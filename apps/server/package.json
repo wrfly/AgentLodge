@@ -24,7 +24,9 @@
     "test:protocol": "tsx src/core/protocol.test.ts",
     "test:model-refresh": "tsx src/gateway/model-refresh.test.ts",
     "test:quota": "tsx src/core/quota.test.ts",
-    "test:memory": "tsx src/app/memory.test.ts"
+    "test:memory": "tsx src/app/memory.test.ts",
+    "test:profile": "tsx src/core/db/profile.test.ts",
+    "test:recap": "tsx src/app/recap.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

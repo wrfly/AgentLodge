@@ -11,6 +11,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { RegisterPage, ResetPasswordPage } from './pages/PublicPages';
 import { UsagePage } from './pages/UsagePage';
 import { MemoryPage } from './pages/MemoryPage';
+import { ProfilePage } from './pages/ProfilePage';
 import { TracesPage } from './pages/TracesPage';
 import { ApiKeysPage } from './pages/ApiKeysPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -72,6 +73,8 @@ function Content({ route }: { route: Route }) {
       return <ChatPane agent={route.agent} />;
     case 'usage':
       return <UsagePage />;
+    case 'profile':
+      return <ProfilePage />;
     case 'memory':
       return <MemoryPage />;
     case 'traces':

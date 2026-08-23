@@ -48,6 +48,11 @@ their own sandboxed agent; you hold one upstream key and hand out none.
 - [x] Long-term memory the assistant **writes for itself as you talk** and reads back in
       every later conversation. Read it, correct it, delete it or add to it on the
       Memory page, and a bad change can be taken back
+- [x] A profile of how you actually work — when you are at it, how often the agent has
+      to reach for tools, how often you cut it off — counted, never inferred, and
+      shown to nobody but you
+- [x] Every conversation summarised in a line, and a portrait written from those
+      summaries — with the lines worth keeping offered, never taken
 - [x] Your own CLI: one command to install, then run `claude` as usual
 - [x] Both wire protocols — Anthropic Messages and OpenAI Responses
 - [x] Upstream providers can be added, edited and switched live, including a built-in mock

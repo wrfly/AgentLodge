@@ -99,7 +99,7 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -142,6 +142,21 @@ function migrate(d: DatabaseSync): void {
             then (case when limit_kind = 'cost' then cost_limit_micro else token_limit end) end
         where week_limit is null and month_limit is null
       `);
+    }
+  }
+
+  if (from < 2) {
+    // A recap of each conversation, so a portrait is built from a few lines each rather
+    // than from every message ever sent
+    const have = columns(d, 'conversations');
+    for (const [name, type] of [
+      ['summary', 'text'],
+      ['summary_at', 'text'],
+      // The message count the summary covers, so a conversation that has moved on is
+      // recognised without comparing text
+      ['summary_upto', 'integer'],
+    ] as const) {
+      if (!have.has(name)) d.exec(`alter table conversations add column ${name} ${type}`);
     }
   }
 

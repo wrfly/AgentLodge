@@ -143,7 +143,12 @@ create table if not exists conversations (
   status           text not null default 'active',
   created_at       text not null,
   updated_at       text not null,
-  last_message_at  text
+  last_message_at  text,
+  -- A few lines saying what this conversation was about; see app/recap.ts
+  summary          text,
+  summary_at       text,
+  -- How many messages the summary covers, so a conversation that has moved on is spotted
+  summary_upto     integer
 );
 create index if not exists idx_conv_user on conversations(user_id, updated_at desc);
 create index if not exists idx_conv_user_agent on conversations(user_id, agent, updated_at desc);
@@ -269,3 +274,15 @@ create table if not exists audit_logs (
 );
 create index if not exists idx_audit_created on audit_logs(created_at desc);
 create index if not exists idx_audit_actor on audit_logs(actor_id, created_at desc);
+
+-- One picture of how a person works, written from their conversation summaries.
+-- Kept because it costs a request to make; regenerated when they ask for it.
+create table if not exists user_portraits (
+  user_id       text primary key references users(id) on delete cascade,
+  text          text not null,
+  -- JSON: lines the model thinks are worth remembering, for the user to accept or ignore
+  candidates    text,
+  -- How many conversation summaries went into it
+  conversations integer not null default 0,
+  created_at    text not null
+);

@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import * as apiKeysRepo from '../../core/db/api-keys.js';
 import * as audit from '../../core/db/audit.js';
 import * as usageRepo from '../../core/db/usage.js';
+import * as profileRepo from '../../core/db/profile.js';
+import * as recap from '../recap.js';
 import * as memory from '../memory.js';
 import * as quota from '../../core/quota.js';
 import * as trace from '../../core/trace.js';
@@ -135,6 +137,45 @@ export function registerMeRoutes(app: FastifyInstance): void {
 
   /** All the sidebar's usage bar needs, on an endpoint of its own */
   app.get('/api/me/quota', guard, async (req) => quota.status(req.user!.id));
+
+  /* ---------------- How this person works ---------------- */
+
+  /**
+   * Their own, and nobody else's. The console already shows an administrator what everybody
+   * spends; how a particular person works is a different thing to put in front of someone.
+   */
+  app.get('/api/me/profile', guard, async (req) => {
+    const userId = req.user!.id;
+    return {
+      ...profileRepo.of(userId),
+      portrait: recap.portrait(userId),
+      // What the portrait was written from, so it can be checked rather than believed
+      summaries: recap.recent(userId),
+      pending: recap.pending(userId).length,
+    };
+  });
+
+  /**
+   * Write the portrait.
+   *
+   * Conversations are summarised by the sweep as they go quiet, so by the time anyone opens
+   * this page there is usually nothing to catch up on. Anything still outstanding is taken
+   * care of here rather than asked about — but bounded, because each one is a request; the
+   * rest stays with the sweep and the page says how many are left.
+   */
+  app.post('/api/me/profile/recap', guard, async (req, reply) => {
+    const userId = req.user!.id;
+    try {
+      const { remaining } = await recap.catchUp(userId, 25);
+      return {
+        portrait: await recap.writePortrait(userId),
+        summaries: recap.recent(userId),
+        pending: remaining,
+      };
+    } catch (e) {
+      return reply.code(502).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
 
   /* ---------------- Memory ---------------- */
 

@@ -23,6 +23,7 @@ import { MAX_UPLOAD_BYTES } from './app/workspace.js';
 import { buildGateway, gate, startModelAutoRefresh } from './gateway/index.js';
 import { gatewayEnabled } from './app/agents/provider.js';
 import * as containers from './app/containers.js';
+import * as recap from './app/recap.js';
 
 /**
  * How many reverse-proxy hops to trust. A number is a hop count; an IP or CIDR string
@@ -185,6 +186,8 @@ app.get('/api/agents', { preHandler: requireUser }, async () => listAgents());
 if (config.role !== 'gateway') {
   setInterval(() => void sessionsRepo.pruneExpired(), 3600_000).unref();
   setInterval(() => void containers.reapIdle(), 5 * 60_000).unref();
+  // Conversations that have gone quiet get summarised on their own; see app/recap.ts
+  recap.startSweeping();
 }
 
 // The gateway is a Fastify app of its own that happens to share this process by default,
@@ -204,6 +207,16 @@ if (runsApp) {
   await app.listen({ port: config.port, host: config.host });
 }
 
+/** The zone this process actually resolved, and what it is offset by right now */
+function clock(): string {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const minutes = -new Date().getTimezoneOffset();
+  const sign = minutes < 0 ? '-' : '+';
+  const abs = Math.abs(minutes);
+  const offset = `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
+  return `${zone} (UTC${offset})${process.env.TZ ? '' : ' — TZ is unset'}`;
+}
+
 console.log(
   `\n  AgentLodge server  ` +
     (runsApp ? `http://${config.host}:${config.port}` : '— (ROLE=gateway; the main service is elsewhere)'),
@@ -217,6 +230,10 @@ console.log(
       : '— (ROLE=app; the gateway is in another container)'),
 );
 console.log(`  data:            ${config.dataDir}`);
+// Printed because it is otherwise invisible and decides where a day ends: usage rows are
+// bucketed by it, and so are the quota windows. An unset TZ in a container is UTC, which is
+// nobody's working day.
+console.log(`  clock:           ${clock()}`);
 console.log(`  users ${usersRepo.count()} · invite codes ${invitesRepo.list().length}`);
 if (!config.jwtSecretFromEnv) {
   console.log(`  ⚠️  JWT_SECRET is unset; a random key is in use for this run`);

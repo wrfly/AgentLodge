@@ -12,6 +12,7 @@ const ADMIN_TABS: AdminTab[] = ['overview', 'users', 'invites', 'settings', 'tra
 export type Route =
   | { name: 'chat'; agent: AgentId }
   | { name: 'usage' }
+  | { name: 'profile' }
   | { name: 'memory' }
   | { name: 'traces' }
   | { name: 'api-keys' }
@@ -37,6 +38,8 @@ function parse(url: URL): Route {
       return { name: 'chat', agent: first };
     case 'usage':
       return { name: 'usage' };
+    case 'profile':
+      return { name: 'profile' };
     case 'memory':
       return { name: 'memory' };
     case 'traces':
@@ -102,6 +105,7 @@ const KNOWN = [
   'claude',
   'codex',
   'usage',
+  'profile',
   'memory',
   'traces',
   'settings',

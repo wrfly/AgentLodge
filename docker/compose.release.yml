@@ -42,6 +42,12 @@ services:
     environment:
       JWT_SECRET: ${JWT_SECRET:?must be set, e.g. openssl rand -base64 48}
       ROLE: app
+      # The deployment's clock. Everything time-bucketed is written in it: which day a
+      # usage row lands on, and where the quota windows fall. Set it to the machine's own
+      # zone — `cat /etc/timezone` — rather than leaving it at UTC, or a day boundary lands
+      # in the middle of the afternoon. Mounting /etc/localtime is not the same thing: the
+      # shell's `date` picks it up and Node does not (DESIGN.md §16).
+      TZ: ${TZ:-UTC}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
       DATA_DIR: /data
@@ -76,6 +82,12 @@ services:
     environment:
       JWT_SECRET: ${JWT_SECRET:?must be set, e.g. openssl rand -base64 48}
       ROLE: gateway
+      # The deployment's clock. Everything time-bucketed is written in it: which day a
+      # usage row lands on, and where the quota windows fall. Set it to the machine's own
+      # zone — `cat /etc/timezone` — rather than leaving it at UTC, or a day boundary lands
+      # in the middle of the afternoon. Mounting /etc/localtime is not the same thing: the
+      # shell's `date` picks it up and Node does not (DESIGN.md §16).
+      TZ: ${TZ:-UTC}
       DATA_DIR: /data
       SECRET_FILE_ROOTS: *secret-file-roots
       GATEWAY_HOST: 0.0.0.0

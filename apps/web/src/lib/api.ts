@@ -288,6 +288,37 @@ export interface MemoryDoc {
   lastChange?: { at: string; by: 'user' | 'agent' };
 }
 
+export interface Profile {
+  since?: string;
+  conversations: number;
+  messages: number;
+  activeDays: number;
+  /** 168 buckets, UTC, Sunday 00:00 first — rotated into local time here */
+  hourOfWeek: number[];
+  turns: number;
+  withTools: number;
+  aborted: number;
+  failed: number;
+  turnsPerConversation: number;
+  secondsPerTurn: number;
+  secondsPerTurnP90: number;
+  askLength: number;
+  askLengthP90: number;
+  cjkShare: number;
+  sampled: number;
+  agents: Array<{ key: string; n: number }>;
+  models: Array<{ key: string; n: number }>;
+  efforts: Array<{ key: string; n: number }>;
+  viaOwnCli: number;
+  billedTurns: number;
+
+  /** Written from the conversation summaries below, when it has been asked for */
+  portrait?: { text: string; candidates: string[]; conversations: number; createdAt: string };
+  summaries: Array<{ id: string; title: string; summary: string; at: string }>;
+  /** Conversations not summarised yet */
+  pending: number;
+}
+
 /* ---------------- Request traces ---------------- */
 
 export interface TraceBlock {
@@ -361,6 +392,13 @@ export const me = {
     return request<UsageReport>(`/api/me/usage?${q}`);
   },
   quota: () => request<QuotaStatus>('/api/me/quota'),
+  profile: () => request<Profile>('/api/me/profile'),
+  /** Write the portrait, catching up any conversation the sweep has not reached yet */
+  recap: () =>
+    request<{ portrait?: Profile['portrait']; summaries: Profile['summaries']; pending: number }>(
+      '/api/me/profile/recap',
+      { method: 'POST' },
+    ),
   memory: () => request<MemoryDoc>('/api/me/memory'),
   saveMemory: (rec: { file?: string; title: string; body: string; hook?: string }) =>
     request<{ ok: boolean; record: MemoryRecord; stats: MemoryDoc['stats'] }>('/api/me/memory', {

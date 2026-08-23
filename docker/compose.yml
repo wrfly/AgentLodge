@@ -67,6 +67,12 @@ services:
       # console can never be decrypted again and have to be entered afresh.
       JWT_SECRET: ${JWT_SECRET:?must be set, see "Deployment" in MANUAL.md}
       ROLE: app
+      # The deployment's clock. Everything time-bucketed is written in it: which day a
+      # usage row lands on, and where the quota windows fall. Set it to the machine's own
+      # zone — `cat /etc/timezone` — rather than leaving it at UTC, or a day boundary lands
+      # in the middle of the afternoon. Mounting /etc/localtime is not the same thing: the
+      # shell's `date` picks it up and Node does not (DESIGN.md §16).
+      TZ: ${TZ:-UTC}
       # Must be off when running locally over http: browsers reject a Secure cookie from an
       # http origin, and what that looks like is a 200 from the login endpoint followed by a
       # request that is somehow signed out again. Production runs on https and leaves it true.
@@ -144,6 +150,12 @@ services:
       # and derives from it the key that decrypts the DeepSeek key stored in the database
       JWT_SECRET: ${JWT_SECRET:?must be set, see "Deployment" in MANUAL.md}
       ROLE: gateway
+      # The deployment's clock. Everything time-bucketed is written in it: which day a
+      # usage row lands on, and where the quota windows fall. Set it to the machine's own
+      # zone — `cat /etc/timezone` — rather than leaving it at UTC, or a day boundary lands
+      # in the middle of the afternoon. Mounting /etc/localtime is not the same thing: the
+      # shell's `date` picks it up and Node does not (DESIGN.md §16).
+      TZ: ${TZ:-UTC}
       DATA_DIR: /data
       # This is the side that actually reads a key file; see the top of the file
       SECRET_FILE_ROOTS: *secret-file-roots
