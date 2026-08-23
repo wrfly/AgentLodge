@@ -137,6 +137,7 @@ jobs:
           build-args: |
             ${{ matrix.name == 'agent' && format('CLAUDE_VERSION={0}', steps.cli.outputs.claude) || '' }}
             ${{ matrix.name == 'agent' && format('CODEX_VERSION={0}', steps.cli.outputs.codex) || '' }}
+            ${{ matrix.name == 'server' && 'CONTAINER_CLIENT=docker' || '' }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 

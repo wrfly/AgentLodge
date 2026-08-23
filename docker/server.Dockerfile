@@ -41,6 +41,10 @@ FROM node:22-bookworm-slim
 #   docker            Just the CLI binary out of the official static bundle; no daemon. Also
 #                     needs PODMAN_BIN pointed at docker and DOCKER_HOST at the mounted
 #                     socket — see compose.docker.yml.
+# The default suits a source build against docker/compose.yml, which is written for podman.
+# The published images are built with `docker`, because compose.release.yml is written for
+# it — an image with the wrong client says `spawn docker ENOENT` and container isolation is
+# simply off. See .github/workflows/release.yml.
 ARG CONTAINER_CLIENT=podman
 ARG DOCKER_CLI_VERSION=29.7.2
 RUN set -eux; \
