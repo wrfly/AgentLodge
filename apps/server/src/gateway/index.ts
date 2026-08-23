@@ -39,6 +39,9 @@ import {
   unifiedHeaders,
 } from './quota-report.js';
 import * as allowance from './upstream-allowance.js';
+import { fetchModels } from './models.js';
+import { startModelRefresh } from './model-refresh.js';
+import * as providersRepo from '../core/db/providers.js';
 
 /**
  * The metering gateway.
@@ -144,6 +147,36 @@ function egressTarget(target: Resolved): Egress | null {
   };
 }
 
+
+/**
+ * Keep the active provider's model list current, once an hour, when the setting says so.
+ *
+ * Started from here rather than from the module itself because egressTarget lives in this
+ * file: the refresher must leave the same way every other request does, audit proxy
+ * included.
+ */
+export function startModelAutoRefresh(log: (message: string) => void): void {
+  startModelRefresh(
+    (provider) => (upstreamUrl) =>
+      egressTarget({
+        url: upstreamUrl,
+        wire: 'anthropic',
+        translate: false,
+        apiKey: providersRepo.secretOf(provider.id) ?? '',
+        provider,
+      }),
+    log,
+  );
+}
+
+/** The model list for one provider, sent out under the same audit rules as everything else */
+async function modelsFor(provider: providersRepo.Provider | undefined): Promise<{ models: string[]; error?: string }> {
+  if (!provider) return { models: [], error: 'No upstream provider is enabled' };
+  const apiKey = providersRepo.secretOf(provider.id) ?? '';
+  return fetchModels(provider, apiKey, (upstreamUrl) =>
+    egressTarget({ url: upstreamUrl, wire: 'anthropic', translate: false, apiKey, provider }),
+  );
+}
 
 /**
  * Where rewriteUrl leaves the credential it took out of the path.
@@ -625,6 +658,22 @@ export function buildGateway(): FastifyInstance {
     return reply.code(200).send(oauthUsage(quota.status(who.sub)));
   });
 
+  /**
+   * What models this upstream has.
+   *
+   * The real key never leaves this process, so the question can only be asked here — the
+   * console reaches it through the admin route below rather than calling the upstream
+   * itself. Authenticated like count_tokens and billed like it too: not at all, and no
+   * concurrency slot, because it is one small GET that answers a configuration question.
+   */
+  app.get('/v1/models', async (req, reply) => {
+    const who = await resolveCredential(credentialOf(req), 'anthropic');
+    if (!who) {
+      return reply.code(401).send(anthropicError('authentication_error', tr(req, 'The credential is invalid or has expired')));
+    }
+    return reply.code(200).send(await modelsFor(providersRepo.active()));
+  });
+
   app.post('/responses', (req, reply) => handleProxy(req, reply, 'responses'));
   // Where Codex lands in openai-chat mode, and any OpenAI client can use it directly
   app.post('/v1/chat/completions', (req, reply) => handleProxy(req, reply, 'chat'));
@@ -652,6 +701,17 @@ export function buildGateway(): FastifyInstance {
    * the console has to ask for them here, the same way it asks for gate status.
    */
   app.get('/upstream-allowance', adminOnly, async () => ({ allowance: allowance.snapshot() }));
+
+  /**
+   * The same question, for a named provider rather than the active one.
+   *
+   * An administrator configuring an upstream needs its model list before making it the
+   * active one, and that is the whole point of the button this serves.
+   */
+  app.get('/models', adminOnly, async (req) => {
+    const { provider } = (req.query ?? {}) as { provider?: string };
+    return modelsFor(provider ? providersRepo.findById(provider) : providersRepo.active());
+  });
 
   app.patch('/gate', adminOnly, async (req, reply) => {
     const body = (req.body ?? {}) as { maxConcurrency?: number };

@@ -564,6 +564,33 @@ MCP、历史记录。
 - 支持上传（拖拽 / 点击，最大 20MB），上传后 agent 可直接读写
 - 路径穿越防护：所有路径必须解析在会话目录之内
 
+**模型列表**
+- 三层回退：**provider 的 `models` 字段** → 环境变量 `CLAUDE_MODELS` / `CODEX_MODELS` →
+  各自内置默认（claude 是 `opus`/`sonnet`/`haiku` 三个别名，codex 读 `~/.codex/models.json`）
+- 模型名放在 provider 上而不是全局：型号是**端点的属性**，换上游就是换整套名字
+- 后台 provider 表单里有「从上游拉取」——网关拿这个 provider 的 key 去问它的
+  `/v1/models`（openai-chat 是 `/models`），把结果填进列表。DeepSeek 那种
+  `…/anthropic` 兼容层前缀会自动去掉，因为模型列表在根上
+- 上游答不上来时给的是**原因**而不是空列表（404 / 连不上 / 没配 key / 内置假上游），
+  否则「问不到」和「没有模型」在界面上长得一样、意思相反
+- **每小时自动拉一次**，开关在系统设置的「Refresh the model list hourly」，**默认关**：
+  打开等于把手工维护的列表交给上游。只拉**当前启用的那个 provider**（选择器用的就是它；
+  配置别的 provider 时管理员就在界面上，有手工按钮）。上游答不上来**什么都不改**，不会
+  把能用的列表清空；列表没变也不写库，免得 `updated_at` 每小时动一次、审计日志里全是
+  没改动的改动。真的变了会记一条 `provider.models.refresh` 审计（带改前改后），
+  没有 actor —— 不是人做的
+- 自带 CLI 也可以直接 `GET /v1/models`（同样的凭据鉴权，不计费、不占并发 slot）
+- 列表只是候选：对话框永远允许手输型号
+- **对话框里按前缀分组**：`claude-opus-5 / claude-opus-4-8 / claude-sonnet-5 …` 归成
+  opus / sonnet / fable / haiku，每族默认只露**最新的那个**，旧版本折在「N 个旧版本」后面，
+  点开随时可选。版本按数字段比较（`4-10` 新过 `4-8`），别名排在自己的日期快照前面
+  （`claude-opus-4-5` 在 `claude-opus-4-5-20251101` 之前）。族的顺序**保持管理员配置的顺序**，
+  不重排——那一栏的说明写着「模型选择器直接用这个列表」。分组规则在
+  `core/protocol.ts` 的 `groupModels`（17 条测试），没有任何一族多于一个版本时不分组，
+  界面跟以前一样
+- 「默认用哪个」是 provider 的 `defaultModel` 字段，不是分组决定的：会话没指定型号时用它
+  （`turns.ts:204` 的回退链是 会话 → provider.defaultModel → `MODEL` 环境变量 → 交给 CLI）
+
 **模型与推理强度**
 - 输入框内两个下拉，只影响后续消息；新会话继承当前选择
 - Claude 模型走别名（`opus`/`sonnet`/`haiku`），接第三方端点时由 `ANTHROPIC_DEFAULT_*_MODEL` 映射

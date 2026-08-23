@@ -493,4 +493,8 @@ export const zh: Record<string, string> = {
   'Then open a new terminal and run claude as usual. Your own claude.ai login lives elsewhere and is untouched; quota and billing are the same account as the web app. Undo it with ~/.agentlodge/uninstall.sh.': '然后新开一个终端，照常敲 claude。你自己的 claude.ai 登录在别处，不受影响；配额和计费与网页端同一个账号。卸载执行 ~/.agentlodge/uninstall.sh。',
   'Read the script first': '先看看脚本',
   'Hide the script': '收起脚本',
+  'Pull from the upstream': '从上游拉取',
+  'The upstream returned an empty list': '上游返回了空列表',
+  'Fewer': '收起',
+  '{n} older': '{n} 个旧版本',
 };

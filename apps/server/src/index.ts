@@ -20,7 +20,7 @@ import { registerMeRoutes } from './app/routes/me.js';
 import { registerCliRoutes } from './app/routes/cli.js';
 import { registerConversationRoutes } from './app/routes/conversations.js';
 import { MAX_UPLOAD_BYTES } from './app/workspace.js';
-import { buildGateway, gate } from './gateway/index.js';
+import { buildGateway, gate, startModelAutoRefresh } from './gateway/index.js';
 import { gatewayEnabled } from './app/agents/provider.js';
 import * as containers from './app/containers.js';
 
@@ -197,6 +197,8 @@ const runsGateway = config.role !== 'app';
 if (runsGateway) {
   const gateway = buildGateway();
   await gateway.listen({ port: config.gatewayPort, host: config.gatewayHost });
+  // Here rather than on the app side: the key that authorises the question is in this process
+  startModelAutoRefresh((message) => console.log(`  ${message}`));
 }
 if (runsApp) {
   await app.listen({ port: config.port, host: config.host });

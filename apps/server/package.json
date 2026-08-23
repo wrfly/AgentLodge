@@ -19,7 +19,10 @@
     "test:workspace": "tsx src/app/workspace.test.ts",
     "test:quota-report": "tsx src/gateway/quota-report.test.ts",
     "test:cli-install": "tsx src/app/cli-install.test.ts",
-    "test:upstream-allowance": "tsx src/gateway/upstream-allowance.test.ts"
+    "test:upstream-allowance": "tsx src/gateway/upstream-allowance.test.ts",
+    "test:models": "tsx src/gateway/models.test.ts",
+    "test:protocol": "tsx src/core/protocol.test.ts",
+    "test:model-refresh": "tsx src/gateway/model-refresh.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

@@ -4,7 +4,7 @@ import * as audit from '../../../core/db/audit.js';
 import * as providersRepo from '../../../core/db/providers.js';
 import { allowlistProblem, auditProxyProblem } from '../../../core/egress.js';
 import { inspect } from '../../../core/secret-file.js';
-import { guard, keyFileStatuses } from './shared.js';
+import { callGateway, guard, keyFileStatuses } from './shared.js';
 import { tr } from '../../../core/i18n/locale.js';
 
 /**
@@ -111,5 +111,16 @@ export function register(app: FastifyInstance): void {
     if (!providersRepo.remove(id)) return reply.code(404).send({ error: tr(req, 'No such provider') });
     audit.log({ actorId: req.user!.id, action: 'admin.provider.delete', targetType: 'provider', targetId: id, ip: req.ip });
     return { ok: true };
+  });
+
+  /**
+   * Ask this upstream what models it has.
+   *
+   * Forwarded rather than fetched here: the real key only exists in the gateway process, so
+   * app cannot make this call itself — the same reason gate status is forwarded.
+   */
+  app.get('/api/admin/providers/:id/models', guard, async (req) => {
+    const { id } = req.params as { id: string };
+    return callGateway('GET', `/models?provider=${encodeURIComponent(id)}`, req.headers.authorization);
   });
 }

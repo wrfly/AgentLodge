@@ -188,6 +188,23 @@ export const SETTING_SPECS: SettingSpec[] = [
   // agent
   {
     /*
+     * The model list itself stays on the provider — it is a property of an endpoint, and the
+     * note at the top of this file explains why none of those live here. This only decides
+     * **who writes it**: left off, whatever the administrator typed; turned on, the upstream
+     * every hour, so a newly released model appears without anyone editing anything.
+     *
+     * Off by default because turning it on hands a hand-curated list over to the upstream.
+     * An upstream that cannot answer changes nothing rather than emptying the list.
+     */
+    key: 'agents.autoRefreshModels',
+    label: 'Refresh the model list hourly',
+    group: 'agents',
+    type: 'boolean',
+    default: 'false',
+    hint: 'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.',
+  },
+  {
+    /*
      * Which agents this deployment actually offers.
      *
      * Not "is the CLI installed" — that is what probing answers, and listAgents spawns a

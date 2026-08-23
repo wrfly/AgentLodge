@@ -835,6 +835,9 @@ export const admin = {
 
   gate: () => request<GateStatus>('/api/admin/gate'),
   upstreamAllowance: () => request<UpstreamAllowanceView>('/api/admin/upstream-allowance'),
+  /** What the upstream itself says it has. Errors come back in the body — see gateway/models.ts */
+  providerModels: (id: string) =>
+    request<{ models: string[]; error?: string }>(`/api/admin/providers/${id}/models`),
   setGateConcurrency: (maxConcurrency: number) =>
     request<GateStatus>('/api/admin/gate', {
       method: 'PATCH',

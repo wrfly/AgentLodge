@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, type LucideIcon } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown, ChevronRight, type LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
+import type { ModelGroup } from '../lib/protocol';
 
 export interface PickerOption {
   id: string;
@@ -21,6 +22,41 @@ interface PickerProps {
   allowCustom?: boolean;
   customPlaceholder?: string;
   disabled?: boolean;
+  /**
+   * The same options, arranged by family. When given, each family shows its newest and
+   * folds the rest away — a dozen names, most of them older versions of four things, is not
+   * a list anybody reads. Ignored when nothing has more than one version, so a list that
+   * needs no folding is not given any.
+   */
+  groups?: Array<ModelGroup<PickerOption>>;
+}
+
+function Row({
+  option,
+  value,
+  onPick,
+}: {
+  option: PickerOption;
+  value: string;
+  onPick: (id: string) => void;
+}) {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      onClick={() => onPick(option.id)}
+      className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-elevated"
+    >
+      <Check
+        size={13}
+        className={clsx('mt-0.5 shrink-0', option.id === value ? 'text-accent' : 'opacity-0')}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-mono text-[13px]">{t(option.label)}</span>
+        {option.hint && <span className="block text-[11px] text-faint">{t(option.hint)}</span>}
+      </span>
+    </button>
+  );
 }
 
 export function Picker({
@@ -33,10 +69,12 @@ export function Picker({
   allowCustom = false,
   customPlaceholder = 'Custom — press Enter',
   disabled = false,
+  groups,
 }: PickerProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState('');
+  const [shown, setShown] = useState<string[]>([]);
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,6 +92,17 @@ export function Picker({
       document.removeEventListener('keydown', onEsc);
     };
   }, [open]);
+
+  // Folding only earns its place when something is folded
+  const folded = useMemo(() => (groups?.some((g) => g.models.length > 1) ? groups : null), [groups]);
+
+  /**
+   * A group is open when it was clicked open, or when the current value is one of the older
+   * versions inside it — otherwise the tick would be behind a fold and the picker would look
+   * as though nothing were selected.
+   */
+  const isOpen = (g: ModelGroup<PickerOption>): boolean =>
+    shown.includes(g.label) || g.models.slice(1).some((o) => o.id === value);
 
   const known = options.find((o) => o.id === value);
   const label = known?.label ?? (value || placeholder);
@@ -97,23 +146,43 @@ export function Picker({
       {open && (
         <div className="absolute bottom-full left-0 z-40 mb-1.5 w-56 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-lg">
           <div className="max-h-64 overflow-y-auto">
-            {options.map((o) => (
-              <button
-                key={o.id || '__default__'}
-                type="button"
-                onClick={() => pick(o.id)}
-                className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-elevated"
-              >
-                <Check
-                  size={13}
-                  className={clsx('mt-0.5 shrink-0', o.id === value ? 'text-accent' : 'opacity-0')}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-[13px]">{t(o.label)}</span>
-                  {o.hint && <span className="block text-[11px] text-faint">{t(o.hint)}</span>}
-                </span>
-              </button>
-            ))}
+            {folded
+              ? folded.map((g) => (
+                  <div key={g.label || '__plain__'}>
+                    {g.label && (
+                      <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-medium uppercase tracking-wider text-faint">
+                        {g.label}
+                      </div>
+                    )}
+                    {(isOpen(g) ? g.models : g.models.slice(0, 1)).map((o) => (
+                      <Row key={o.id || '__default__'} option={o} value={value} onPick={pick} />
+                    ))}
+                    {g.models.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShown((prev) =>
+                            prev.includes(g.label)
+                              ? prev.filter((l) => l !== g.label)
+                              : [...prev, g.label],
+                          )
+                        }
+                        className="flex w-full items-center gap-1 px-3 py-1 pl-[30px] text-left text-[11px] text-faint hover:bg-elevated hover:text-muted"
+                      >
+                        <ChevronRight
+                          size={11}
+                          className={clsx('transition-transform', isOpen(g) && 'rotate-90')}
+                        />
+                        {isOpen(g)
+                          ? t('Fewer')
+                          : t('{n} older', { n: g.models.length - 1 })}
+                      </button>
+                    )}
+                  </div>
+                ))
+              : options.map((o) => (
+                  <Row key={o.id || '__default__'} option={o} value={value} onPick={pick} />
+                ))}
 
             {value && !known && (
               <div className="flex items-start gap-2 px-3 py-1.5">

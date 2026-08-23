@@ -493,4 +493,8 @@ export const ja: Record<string, string> = {
   'Then open a new terminal and run claude as usual. Your own claude.ai login lives elsewhere and is untouched; quota and billing are the same account as the web app. Undo it with ~/.agentlodge/uninstall.sh.': '新しいターミナルを開き、いつもどおり claude を実行してください。ご自身の claude.ai ログインは別の場所にあり影響を受けません。クォータと課金は Web と同じアカウントです。取り消しは ~/.agentlodge/uninstall.sh。',
   'Read the script first': '先にスクリプトを確認',
   'Hide the script': 'スクリプトを隠す',
+  'Pull from the upstream': '上流から取得',
+  'The upstream returned an empty list': '上流は空のリストを返しました',
+  'Fewer': '折りたたむ',
+  '{n} older': '旧バージョン {n} 件',
 };

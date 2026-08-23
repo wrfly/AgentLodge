@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Gauge, Sparkle, Square } from 'lucide-react';
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
+import { groupModels } from '../lib/protocol';
 import { useChat } from '../store/chat';
 import { useAgents } from '../store/agents';
 import { useQuota } from '../store/quota';
@@ -45,6 +46,8 @@ export function Composer({ agent }: { agent: AgentId }) {
   const blocked = Boolean((quota?.exceeded || quota?.expired) && quota?.hardStop);
 
   const models = useAgents((s) => s.info(agent)?.models) ?? NO_MODELS;
+  // Grouped by family so a dozen names read as four things with older versions behind them
+  const modelGroups = useMemo(() => groupModels(models), [models]);
   const efforts = useAgents((s) => s.info(agent)?.efforts) ?? NO_EFFORTS;
 
   // Grow to fit the content
@@ -107,6 +110,7 @@ export function Composer({ agent }: { agent: AgentId }) {
               placeholder={t("Model")}
               value={model}
               options={models}
+              groups={modelGroups}
               onChange={(id) => void setModel(id)}
               title={t("Switch model (affects later messages only)")}
               allowCustom

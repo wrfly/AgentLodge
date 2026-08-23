@@ -448,6 +448,7 @@ function ProvidersCard() {
                 onSave={save}
                 busy={busy}
                 existingKey={existingKeySource(rows, p.id)}
+                providerId={p.id}
               />
             )}
           </div>
@@ -468,7 +469,7 @@ function ProvidersCard() {
 }
 
 function ProviderForm({
-  draft, setDraft, kinds, onSave, busy, existingKey = 'none',
+  draft, setDraft, kinds, onSave, busy, existingKey = 'none', providerId,
 }: {
   draft: ProviderDraft;
   setDraft: (d: ProviderDraft) => void;
@@ -477,6 +478,8 @@ function ProviderForm({
   busy: boolean;
   /** Where this provider's key lives — decides whether an empty field means unchanged or cleared */
   existingKey?: 'file' | 'inline' | 'none';
+  /** Absent while adding one: the key has not been saved yet, so there is nothing to ask with */
+  providerId?: string;
 }) {
   const t = useT();
   // The two built-in kinds never leave the machine, so no address and no key
@@ -566,6 +569,12 @@ function ProviderForm({
           placeholder={'deepseek-v4-flash\ndeepseek-v4-pro'}
           className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-[12.5px] outline-none focus:border-line-strong"
         />
+        {providerId && (
+          <PullModels
+            id={providerId}
+            onPull={(models) => setDraft({ ...draft, models: models.join('\n') })}
+          />
+        )}
       </Field>
       <Field label={t('Default model')} hint={t('Used when a conversation picks none. Leave empty and the CLI decides.')}>
         <Input
@@ -582,6 +591,49 @@ function ProviderForm({
 }
 
 /** Colour follows severity: a path problem blocks saving, an io problem only means this process cannot read it */
+/**
+ * Fills the list from the upstream itself.
+ *
+ * Only offered on a saved provider: the request is made with that provider's stored key, and
+ * a key still being typed into the form has not been saved anywhere the gateway can read.
+ *
+ * A failure is shown rather than swallowed — a compatibility layer that stops at
+ * /v1/messages answers 404 here, and an empty box would read as "no models".
+ */
+function PullModels({ id, onPull }: { id: string; onPull: (models: string[]) => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const pull = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await admin.providerModels(id);
+      if (r.models.length) {
+        onPull(r.models);
+        setNote(t('{n} models', { n: r.models.length }));
+      } else {
+        setNote(r.error ?? t('The upstream returned an empty list'));
+      }
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <Button variant="ghost" onClick={() => void pull()} disabled={busy}>
+        <RefreshCw size={13} className={clsx(busy && 'animate-spin')} />
+        {t('Pull from the upstream')}
+      </Button>
+      {note && <span className="text-[11.5px] text-muted">{note}</span>}
+    </div>
+  );
+}
+
 function problemClass(p: SecretFileProblem): string {
   return p.code === 'path' ? 'text-danger' : 'text-amber-600 dark:text-amber-400';
 }
