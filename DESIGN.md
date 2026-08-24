@@ -1430,7 +1430,7 @@ AgentLodge/
 ├── credential-proxy/     # 独立的凭据注入网关，可选
 ├── credential-manager/   # Go 写的凭据管理服务，存放全部上游凭据
 ├── docker/               # Dockerfile、compose、Caddyfile
-└── scripts/              # 结构检查、假上游、冒烟自测
+└── scripts/              # 结构检查、假上游、冒烟自测、项目页截图
 ```
 
 app 和 gateway 不拆成两个包：代码本就是两个独立的 Fastify app，同包分层 + 边界检查
