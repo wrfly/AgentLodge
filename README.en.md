@@ -141,8 +141,8 @@ No clone needed — two files is the whole of it:
 curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml
 curl -fsSL  https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/env.release.example -o .env
 $EDITOR .env                  # at minimum JWT_SECRET, AUDIT_ADMIN_TOKEN, DATA_DIR
+sudo install -d -o 10001 -g 10001 "$DATA_DIR"   # the uid app and gateway run as
 docker compose -f compose.release.yml up -d
-docker pull docker.io/wrfly/agentlodge-agent:latest
 ```
 
 Images are split by component and published to Docker Hub. `:latest` is the newest release

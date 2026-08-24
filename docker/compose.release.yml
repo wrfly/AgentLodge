@@ -9,7 +9,6 @@
 #   $EDITOR .env                     # JWT_SECRET, AUDIT_ADMIN_TOKEN, DATA_DIR at minimum
 #   sudo install -d -o 10001 -g 10001 "$DATA_DIR"
 #   docker compose -f compose.release.yml up -d
-#   docker pull docker.io/wrfly/agentlodge-agent:latest    # see AGENT_IMAGE below
 #
 # Written for **Docker**. On rootless podman, drop the `user:` and `group_add:` lines from
 # app and gateway — there, root inside a container is already you on the host — and point
@@ -145,6 +144,18 @@ services:
     networks: [frontend]
     depends_on: [app]
     restart: unless-stopped
+
+  # Not a service anybody uses: it exists so that `up` pulls the agent image onto this
+  # machine. app starts the agent containers itself, through the mounted socket, so compose
+  # would otherwise never touch that image — and a deployment that skipped the separate
+  # pull only found out when the first user sent a message.
+  agent-image:
+    image: ${AGENT_IMAGE:-docker.io/wrfly/agentlodge-agent:latest}
+    command: ["sleep", "1"]
+    restart: "no"
+    # It has nothing to talk to, and saying so keeps compose from creating a default
+    # network for the one service that does not declare one
+    network_mode: none
 
   # Holds every upstream credential — pasted keys, key files something else rotates, and
   # subscription refresh tokens — and hands the gateway a short-lived access token per

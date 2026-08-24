@@ -116,8 +116,8 @@ JWT_SECRET=$(openssl rand -base64 32) npm run dev
 curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml
 curl -fsSL  https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/env.release.example -o .env
 $EDITOR .env                  # 至少填 JWT_SECRET、AUDIT_ADMIN_TOKEN、DATA_DIR
+sudo install -d -o 10001 -g 10001 "$DATA_DIR"   # app 和 gateway 以这个 uid 跑
 docker compose -f compose.release.yml up -d
-docker pull docker.io/wrfly/agentlodge-agent:latest
 ```
 
 镜像按组件拆开发布在 Docker Hub 上。`:latest` 是最新的发布版本，`:master` 是分支的滚动构建。

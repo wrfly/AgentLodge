@@ -191,6 +191,23 @@ services:
     depends_on: [audit]
     restart: unless-stopped
 
+  # Not a service anybody uses: it exists so that `up` puts the agent image on this machine.
+  #
+  # The agent containers are not compose's — app starts one per user through the mounted
+  # socket, with its own name, network and mounts — so compose has no reason to know the
+  # image exists and would never build or pull it. Naming it here as a container that exits
+  # immediately is the whole trick: the image lands, and nothing is left running.
+  agent-image:
+    build:
+      context: ..
+      dockerfile: docker/agent.Dockerfile
+    image: agentlodge/agent:1.0
+    command: ["sleep", "1"]
+    restart: "no"
+    # It has nothing to talk to, and saying so keeps compose from creating a default
+    # network for the one service that does not declare one
+    network_mode: none
+
   # ── Credential manager ──────────────────────────────────────────────────
   #
   # The only process that holds upstream credentials: pasted API keys, and the refresh

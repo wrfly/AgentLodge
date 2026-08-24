@@ -1183,12 +1183,14 @@ curl -fsSL  https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/env
 $EDITOR .env
 sudo install -d -o 10001 -g 10001 "$DATA_DIR"     # 目录得归 uid 10001，见下面的 compose 说明
 docker compose -f compose.release.yml up -d
-docker pull docker.io/wrfly/agentlodge-agent:latest   # ← 不能省，见下
 ```
 
-**agent 镜像必须单独 pull。** 它不是 compose 起的服务，是 app 通过挂进来的 socket 用
-`docker run` 现拉起来的，所以 compose 不会替你拉。没拉的话后台「容器隔离」那栏会说
-镜像缺失，并把该敲的命令打出来。
+**agent 镜像也会被这条命令拉下来**，靠的是 compose 里一个叫 `agent-image` 的服务：它
+`sleep 1` 就退出，唯一的作用是让 compose 把那个镜像放到这台机器上。agent 容器本身不归
+compose 管 —— app 通过挂进来的 socket 按用户现起，各有各的名字、网络和挂载 —— 所以
+compose 没有别的理由知道这个镜像存在。`docker compose ps -a` 里看到它 `Exited (0)` 是正常的。
+
+镜像没到位的话，后台「容器隔离」那栏会说镜像缺失，并把该敲的命令打出来。
 
 `compose.release.yml` 是**自包含**的，不需要叠加别的文件，写的是 Docker（rootless podman
 把 app / gateway 的 `user:` 和 `group_add:` 去掉即可）。五个服务全部默认启动，包括
