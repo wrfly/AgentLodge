@@ -122,7 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/wrfly/AgentLodge/master/install.sh 
 改端口、域名、镜像通道：`PORT=8080 SITE=lodge.example.com TAG=master sh install.sh`。
 填域名的话 Caddy 会自动签证书，端口固定 80/443。
 
-手动来也就两个文件：
+不想跑脚本，也可以自己来：
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml

@@ -1186,7 +1186,7 @@ curl -fsSL https://raw.githubusercontent.com/wrfly/AgentLodge/master/install.sh 
 把第一个管理员的邀请码抠出来打给你。`PORT=` `SITE=` `TAG=` 可以覆盖默认值；`START=0` 只写
 文件不启动，方便先看一眼 `.env`。
 
-不想跑脚本就手动来，两个文件就够：
+不想跑脚本，也可以自己来：
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml

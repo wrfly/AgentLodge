@@ -148,7 +148,7 @@ read it first: `curl -fsSLO …/install.sh`, then `less install.sh && sh install
 Port, domain and image channel: `PORT=8080 SITE=lodge.example.com TAG=master sh install.sh`.
 Give it a domain and Caddy gets a certificate, on ports 80 and 443.
 
-By hand it is two files:
+Or do it by hand:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml
