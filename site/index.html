@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AgentLodge — 把 Claude Code 和 Codex 变成多租户服务</title>
-<meta name="description" content="把 Claude Code 和 Codex 包装成多租户的 Web 服务。上游凭据由一个单独的服务保管，每个用户拿的是绑定单次 turn 的票据，配额在 turn 内部就能刹住。">
+<meta name="description" content="把 Claude Code 和 Codex 包装成多租户的 Web 服务：高仿 Claude 的网页对话，一人一个隔离容器，上游可接 DeepSeek、Anthropic、OpenAI。">
 <meta property="og:title" content="AgentLodge">
-<meta property="og:description" content="把 Claude Code 和 Codex 包装成多租户的 Web 服务。上游凭据一把都不用发出去。">
+<meta property="og:description" content="高仿 Claude / Codex，隔离环境，完美支持 DeepSeek / Anthropic / OpenAI。">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏕️</text></svg>">
 <style>
@@ -116,8 +116,8 @@ footer a:hover{color:var(--text)}
     <span class="en">Claude Code and Codex,<br>as a <em>multi-tenant service</em></span>
   </h1>
   <p class="lede">
-    <span class="zh">每个用户有自己的沙箱 agent。上游凭据一把都不用发出去。</span>
-    <span class="en">Every user gets their own sandboxed agent, and no upstream credential is handed out.</span>
+    <span class="zh">高仿 Claude / Codex，隔离环境，完美支持 DeepSeek / Anthropic / OpenAI。</span>
+    <span class="en">A close copy of Claude and Codex, an isolated environment per user, and DeepSeek, Anthropic or OpenAI behind it.</span>
   </p>
   <div class="cta">
     <a class="btn primary" href="#deploy"><span class="zh">自己部署</span><span class="en">Deploy it yourself</span></a>
@@ -128,32 +128,47 @@ footer a:hover{color:var(--text)}
 <section><div class="wrap">
   <div class="claims">
     <div class="claim">
-      <h3><span class="zh">凭据只有一个家</span><span class="en">Credentials live in one place</span></h3>
-      <p><span class="zh">key 和订阅的 refresh token 只在一个单独的服务里，加密落盘。网关每次请求换一个几小时寿命的 token，agent 手上则是绑定 <code>(user, conversation, turn)</code> 的 20 分钟票据。容器被拿下也偷不到东西。</span>
-         <span class="en">Keys and subscription refresh tokens live in one service of their own, encrypted at rest. The gateway gets a token with hours to live, per request, and agents carry a 20-minute ticket bound to <code>(user, conversation, turn)</code>. A compromised container leaks nothing worth having.</span></p>
+      <h3><span class="zh">多租户，一人一个隔离环境</span><span class="en">Multi-tenant, one isolated environment each</span></h3>
+      <p><span class="zh">每个用户一个容器：非 root、CapDrop ALL、内存 / CPU / PID 限额，只挂载自己的工作目录。装什么跑什么互不影响，对话也各自私密。</span>
+         <span class="en">A container per user: non-root, all capabilities dropped, memory / CPU / PID limits, and only that user's workspace mounted. What one installs or runs reaches nobody else, and conversations stay their own.</span></p>
     </div>
     <div class="claim">
-      <h3><span class="zh">配额在 turn 内部刹住</span><span class="en">Quota stops a turn from inside it</span></h3>
-      <p><span class="zh">不只是门口拦一下。agent 循环跑飞了是当场停，不是事后记账。</span>
-         <span class="en">Not just at the door — an agent loop that runs away is stopped while it runs, not billed for afterwards.</span></p>
+      <h3><span class="zh">DeepSeek / Anthropic / OpenAI 都能接</span><span class="en">DeepSeek, Anthropic and OpenAI</span></h3>
+      <p><span class="zh">多条上游同时生效，用户选模型、请求按模型走。同一个模型可以挂两条上游，各配各的价格。</span>
+         <span class="en">Several upstreams at once, and a request follows the model it asks for. One model can be served by two of them, priced separately.</span></p>
     </div>
     <div class="claim">
-      <h3><span class="zh">每条出网请求可留证</span><span class="en">Every outbound request can be recorded</span></h3>
-      <p><span class="zh">经审计代理落盘，完整 prompt，留多久按你的合规要求。</span>
-         <span class="en">Through an audit proxy, with the full prompt, for as long as your compliance rules say.</span></p>
+      <h3><span class="zh">计费、配额、限速</span><span class="en">Billing, quotas and rate limiting</span></h3>
+      <p><span class="zh">按 token 或按金额计费，价格表可改而历史账单锁定当时价格。配额分 5 小时 / 周 / 月三个窗口，在一个 turn 内部就能刹住。每条上游各有自己的并发闸门。</span>
+         <span class="en">Billed by tokens or by money, with past bills keeping the price of their time. Quotas run on three windows — five hours, a week, a month — and stop a turn from inside it. Each upstream has a concurrency gate of its own.</span></p>
     </div>
     <div class="claim">
-      <h3><span class="zh">一人一个容器</span><span class="en">One container per user</span></h3>
-      <p><span class="zh">非 root、CapDrop ALL、内存 / CPU / PID 限额，只挂载自己的工作目录。</span>
-         <span class="en">Non-root, all capabilities dropped, memory / CPU / PID limits, and only that user's workspace mounted.</span></p>
+      <h3><span class="zh">网页端和 CLI 都能用</span><span class="en">The web app and your own CLI</span></h3>
+      <p><span class="zh">网页是高仿 Claude 的对话界面；本机照常敲 <code>claude</code> / <code>codex</code>，一条命令接进来。Anthropic Messages 与 OpenAI Responses 两套协议都兼容。</span>
+         <span class="en">A close copy of the Claude interface in the browser, and <code>claude</code> / <code>codex</code> on your own machine, connected with one command. Both wire protocols are spoken: Anthropic Messages and OpenAI Responses.</span></p>
     </div>
   </div>
 </div></section>
 
+<section id="deploy"><div class="wrap">
+  <h2><span class="zh">部署</span><span class="en">Deploying</span></h2>
+  <p class="sub"><span class="zh">一条命令。密钥自己生成，装完把地址和第一个管理员的邀请码打给你。</span>
+     <span class="en">One command. It generates its own secrets and prints the address and the first administrator's invite code when it is done.</span></p>
+<pre class="sh">curl -fsSL https://u.kfd.me/X7 | sh</pre>
+  <p class="sub" style="margin:16px 0 0">
+    <span class="zh">它会问地址和端口，默认 <code>localhost:8080</code>；填域名就自动签证书。不想被问就直接给：
+      <code>curl -fsSL https://u.kfd.me/X7 | SITE=lodge.example.com sh</code>。
+      想先看再跑：<code>curl -fsSL https://u.kfd.me/X7 -o install.sh</code>，读完 <code>sh install.sh</code>。</span>
+    <span class="en">It asks for the address and the port, defaulting to <code>localhost:8080</code>; give it a domain and it gets a certificate.
+      To answer up front: <code>curl -fsSL https://u.kfd.me/X7 | SITE=lodge.example.com sh</code>.
+      To read it first: <code>curl -fsSL https://u.kfd.me/X7 -o install.sh</code>, then <code>sh install.sh</code>.</span>
+  </p>
+</div></section>
+
 <section><div class="wrap">
   <h2><span class="zh">请求怎么走</span><span class="en">Where a request goes</span></h2>
-  <p class="sub"><span class="zh">容器里没有 key，只有一张票据；换 key 的那一步只发生在网关进程里。</span>
-     <span class="en">There is no key in the container, only a ticket. The swap happens inside the gateway process.</span></p>
+  <p class="sub"><span class="zh">每一次调用都经过计量网关：它按模型决定发往哪条上游，逐次记账，配额和限速也在这一步。</span>
+     <span class="en">Every call goes through the metering gateway: it picks the upstream from the model, books the usage call by call, and applies the quota and the rate limit there.</span></p>
   <div class="flow">
     <div class="node"><b><span class="zh">浏览器</span><span class="en">browser</span></b></div>
     <span class="arrow">→</span>
@@ -235,27 +250,6 @@ footer a:hover{color:var(--text)}
       </ul>
     </div>
   </div>
-</div></section>
-
-<section id="deploy"><div class="wrap">
-  <h2><span class="zh">部署</span><span class="en">Deploying</span></h2>
-  <p class="sub"><span class="zh">一条命令。密钥自己生成，装完把地址和第一个管理员的邀请码打给你。</span>
-     <span class="en">One command. It generates its own secrets and prints the address and the first administrator's invite code when it is done.</span></p>
-<pre class="sh">curl -fsSL https://raw.githubusercontent.com/wrfly/AgentLodge/master/install.sh | sh</pre>
-  <p class="sub" style="margin:16px 0 0">
-    <span class="zh">想先看再跑：<code>curl -fsSLO …/install.sh</code>，读完 <code>sh install.sh</code>。
-      端口和域名用 <code>PORT=8080 SITE=lodge.example.com</code> 覆盖；填域名 Caddy 会自动签证书。</span>
-    <span class="en">To read it first: <code>curl -fsSLO …/install.sh</code>, then <code>sh install.sh</code>.
-      Override with <code>PORT=8080 SITE=lodge.example.com</code>; give it a domain and Caddy gets a certificate.</span>
-  </p>
-  <p class="sub" style="margin:24px 0 8px"><span class="zh">不想跑脚本，也可以自己来：</span><span class="en">Or do it by hand:</span></p>
-<pre class="sh">curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml
-curl -fsSL  https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/env.release.example -o .env
-
-<span class="c"># <span class="zh">至少填 JWT_SECRET、AUDIT_ADMIN_TOKEN、DATA_DIR、TZ</span><span class="en">at minimum JWT_SECRET, AUDIT_ADMIN_TOKEN, DATA_DIR, TZ</span></span>
-$EDITOR .env
-sudo install -d -o 10001 -g 10001 "$DATA_DIR"
-docker compose -f compose.release.yml up -d</pre>
 </div></section>
 
 <footer><div class="wrap" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;width:100%">

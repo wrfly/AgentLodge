@@ -138,15 +138,16 @@ provider — see the manual.
 One command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wrfly/AgentLodge/master/install.sh | sh
+curl -fsSL https://u.kfd.me/X7 | sh
 ```
 
 It generates the three secrets, writes `.env`, creates the data directory, pulls the images,
 starts everything, and prints the address and **the first administrator's invite code**. To
-read it first: `curl -fsSLO …/install.sh`, then `less install.sh && sh install.sh`.
+read it first: `curl -fsSL https://u.kfd.me/X7 -o install.sh`, then `less install.sh && sh install.sh`.
 
-Port, domain and image channel: `PORT=8080 SITE=lodge.example.com TAG=master sh install.sh`.
-Give it a domain and Caddy gets a certificate, on ports 80 and 443.
+It asks for the address and the port, defaulting to `localhost:8080`. To answer up front:
+`curl -fsSL https://u.kfd.me/X7 | SITE=lodge.example.com sh` — a domain gets a certificate
+from Caddy, on ports 80 and 443.
 
 Or do it by hand:
 

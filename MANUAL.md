@@ -1178,13 +1178,14 @@ docker inspect docker.io/wrfly/agentlodge-agent:latest \
 部署本身不需要 clone 仓库。一条命令：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wrfly/AgentLodge/master/install.sh | sh
+curl -fsSL https://u.kfd.me/X7 | sh
 ```
 
 `install.sh` 做的就是下面那几步：生成 `JWT_SECRET` / `AUDIT_ADMIN_TOKEN` /
 `CREDENTIAL_MANAGER_KEY`、写 `.env`、按 uid 10001 建数据目录、`up -d`，然后从 app 的日志里
-把第一个管理员的邀请码抠出来打给你。`PORT=` `SITE=` `TAG=` 可以覆盖默认值；`START=0` 只写
-文件不启动，方便先看一眼 `.env`。
+把第一个管理员的邀请码抠出来打给你。它会问地址和端口（默认 `localhost:8080`），也可以在管道里直接给：
+`curl -fsSL https://u.kfd.me/X7 | SITE=lodge.example.com PORT=9000 sh`。`TAG=` 换镜像通道，
+`START=0` 只写文件不启动，方便先看一眼 `.env`。
 
 不想跑脚本，也可以自己来：
 

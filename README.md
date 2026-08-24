@@ -113,14 +113,15 @@ JWT_SECRET=$(openssl rand -base64 32) npm run dev
 一条命令装好：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wrfly/AgentLodge/master/install.sh | sh
+curl -fsSL https://u.kfd.me/X7 | sh
 ```
 
 它生成三把密钥、写好 `.env`、建好数据目录、把镜像拉齐起起来，最后把地址和**第一个管理员的
-邀请码**打给你。想先看再跑就分两步：`curl -fsSLO …/install.sh` 然后 `less install.sh && sh install.sh`。
+邀请码**打给你。想先看再跑就分两步：`curl -fsSL https://u.kfd.me/X7 -o install.sh` 然后 `less install.sh && sh install.sh`。
 
-改端口、域名、镜像通道：`PORT=8080 SITE=lodge.example.com TAG=master sh install.sh`。
-填域名的话 Caddy 会自动签证书，端口固定 80/443。
+它会问地址和端口，默认 `localhost:8080`。不想被问就直接给：
+`curl -fsSL https://u.kfd.me/X7 | SITE=lodge.example.com sh`——填域名时 Caddy 自动签证书，
+端口固定 80/443。
 
 不想跑脚本，也可以自己来：
 
