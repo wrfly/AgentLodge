@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AgentLodge — 把 Claude Code 和 Codex 变成多租户服务</title>
-<meta name="description" content="把 Claude Code 和 Codex 包装成多租户的 Web 服务。一把上游 key 留在网关里，每个用户拿的是绑定单次 turn 的票据，配额在 turn 内部就能刹住。">
+<meta name="description" content="把 Claude Code 和 Codex 包装成多租户的 Web 服务。上游凭据由一个单独的服务保管，每个用户拿的是绑定单次 turn 的票据，配额在 turn 内部就能刹住。">
 <meta property="og:title" content="AgentLodge">
-<meta property="og:description" content="把 Claude Code 和 Codex 包装成多租户的 Web 服务。一把上游 key，一把都不用发出去。">
+<meta property="og:description" content="把 Claude Code 和 Codex 包装成多租户的 Web 服务。上游凭据一把都不用发出去。">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏕️</text></svg>">
 <style>
@@ -116,8 +116,8 @@ footer a:hover{color:var(--text)}
     <span class="en">Claude Code and Codex,<br>as a <em>multi-tenant service</em></span>
   </h1>
   <p class="lede">
-    <span class="zh">每个用户有自己的沙箱 agent。你只管一把上游 key，一把都不用发出去。</span>
-    <span class="en">Every user gets their own sandboxed agent. You hold one upstream key and hand out none.</span>
+    <span class="zh">每个用户有自己的沙箱 agent。上游凭据一把都不用发出去。</span>
+    <span class="en">Every user gets their own sandboxed agent, and no upstream credential is handed out.</span>
   </p>
   <div class="cta">
     <a class="btn primary" href="#deploy"><span class="zh">自己部署</span><span class="en">Deploy it yourself</span></a>
@@ -128,9 +128,9 @@ footer a:hover{color:var(--text)}
 <section><div class="wrap">
   <div class="claims">
     <div class="claim">
-      <h3><span class="zh">真实 key 只在网关里</span><span class="en">The key never leaves the gateway</span></h3>
-      <p><span class="zh">agent 手上是绑定 <code>(user, conversation, turn)</code> 的 20 分钟票据。计量绕不过去，容器被拿下也偷不到东西。</span>
-         <span class="en">Agents carry a 20-minute ticket bound to <code>(user, conversation, turn)</code>, so metering cannot be bypassed and a compromised container leaks nothing worth having.</span></p>
+      <h3><span class="zh">凭据只有一个家</span><span class="en">Credentials live in one place</span></h3>
+      <p><span class="zh">key 和订阅的 refresh token 只在一个单独的服务里，加密落盘。网关每次请求换一个几小时寿命的 token，agent 手上则是绑定 <code>(user, conversation, turn)</code> 的 20 分钟票据。容器被拿下也偷不到东西。</span>
+         <span class="en">Keys and subscription refresh tokens live in one service of their own, encrypted at rest. The gateway gets a token with hours to live, per request, and agents carry a 20-minute ticket bound to <code>(user, conversation, turn)</code>. A compromised container leaks nothing worth having.</span></p>
     </div>
     <div class="claim">
       <h3><span class="zh">配额在 turn 内部刹住</span><span class="en">Quota stops a turn from inside it</span></h3>
@@ -167,7 +167,7 @@ footer a:hover{color:var(--text)}
     <span class="arrow">→</span>
     <div class="node key">
       <b>gateway</b>
-      <i><span class="zh">在这里换成真 key</span><span class="en">the real key goes on here</span></i>
+      <i><span class="zh">在这里换成上游 token</span><span class="en">the upstream token goes on here</span></i>
       <i><span class="zh">计量 · 配额 · 审计</span><span class="en">metering · quota · audit</span></i>
     </div>
     <span class="arrow">→</span>
@@ -222,13 +222,14 @@ footer a:hover{color:var(--text)}
         <li><span class="zh">网页对话、附件、Markdown + 代码高亮</span><span class="en">The web app, with attachments, Markdown and syntax highlighting</span></li>
         <li><span class="zh">自带 CLI：一条命令装好，照常敲 <code>claude</code></span><span class="en">Your own CLI: one command to install, then run <code>claude</code> as usual</span></li>
         <li><span class="zh">Anthropic Messages 与 OpenAI Responses 两套协议</span><span class="en">Both wire protocols — Anthropic Messages and OpenAI Responses</span></li>
+        <li><span class="zh">多条上游同时生效，按模型路由，同一模型可挂多条、各配各的价格</span><span class="en">Several upstreams at once, routed by model — one model can be served by two of them, priced separately</span></li>
       </ul>
     </div>
     <div>
       <h3><span class="zh">运维</span><span class="en">Operations</span></h3>
       <ul>
         <li><span class="zh">出网审计代理，完整 prompt 落盘</span><span class="en">An audit proxy that records every outbound request, full prompt</span></li>
-        <li><span class="zh">额度、价格、并发、provider 后台热改，无需重启</span><span class="en">Quotas, prices, concurrency and providers change without a restart</span></li>
+        <li><span class="zh">额度、价格、并发、上游与模型后台热改，无需重启</span><span class="en">Quotas, prices, concurrency, upstreams and models change without a restart</span></li>
         <li><span class="zh">界面与提示 9 种语言，覆盖率由测试保证</span><span class="en">Nine languages throughout, with coverage checked by tests</span></li>
       </ul>
     </div>
