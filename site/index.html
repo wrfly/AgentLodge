@@ -239,20 +239,23 @@ footer a:hover{color:var(--text)}
 
 <section id="deploy"><div class="wrap">
   <h2><span class="zh">部署</span><span class="en">Deploying</span></h2>
-  <p class="sub"><span class="zh">不用 clone 仓库，两个文件就够。</span>
-     <span class="en">No clone needed — two files is the whole of it.</span></p>
-<pre class="sh"><span class="c"># <span class="zh">拿到 compose 和环境变量样例</span><span class="en">fetch the compose file and the example environment</span></span>
-curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml
+  <p class="sub"><span class="zh">一条命令。密钥自己生成，装完把地址和第一个管理员的邀请码打给你。</span>
+     <span class="en">One command. It generates its own secrets and prints the address and the first administrator's invite code when it is done.</span></p>
+<pre class="sh">curl -fsSL https://raw.githubusercontent.com/wrfly/AgentLodge/master/install.sh | sh</pre>
+  <p class="sub" style="margin:16px 0 0">
+    <span class="zh">想先看再跑：<code>curl -fsSLO …/install.sh</code>，读完 <code>sh install.sh</code>。
+      端口和域名用 <code>PORT=8080 SITE=lodge.example.com</code> 覆盖；填域名 Caddy 会自动签证书。</span>
+    <span class="en">To read it first: <code>curl -fsSLO …/install.sh</code>, then <code>sh install.sh</code>.
+      Override with <code>PORT=8080 SITE=lodge.example.com</code>; give it a domain and Caddy gets a certificate.</span>
+  </p>
+  <p class="sub" style="margin:24px 0 8px"><span class="zh">手动来是两个文件：</span><span class="en">By hand it is two files:</span></p>
+<pre class="sh">curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml
 curl -fsSL  https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/env.release.example -o .env
 
 <span class="c"># <span class="zh">至少填 JWT_SECRET、AUDIT_ADMIN_TOKEN、DATA_DIR、TZ</span><span class="en">at minimum JWT_SECRET, AUDIT_ADMIN_TOKEN, DATA_DIR, TZ</span></span>
 $EDITOR .env
-docker compose -f compose.release.yml up -d
-docker pull docker.io/wrfly/agentlodge-agent:latest</pre>
-  <p class="sub" style="margin:16px 0 0">
-    <span class="zh">第一个用上启动时打印的邀请码的账号，就是管理员。</span>
-    <span class="en">The console prints a bootstrap invite code — the first account to use it becomes the administrator.</span>
-  </p>
+sudo install -d -o 10001 -g 10001 "$DATA_DIR"
+docker compose -f compose.release.yml up -d</pre>
 </div></section>
 
 <footer><div class="wrap" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;width:100%">

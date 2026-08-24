@@ -135,7 +135,20 @@ provider — see the manual.
 
 ## Deploying from images
 
-No clone needed — two files is the whole of it:
+One command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wrfly/AgentLodge/master/install.sh | sh
+```
+
+It generates the three secrets, writes `.env`, creates the data directory, pulls the images,
+starts everything, and prints the address and **the first administrator's invite code**. To
+read it first: `curl -fsSLO …/install.sh`, then `less install.sh && sh install.sh`.
+
+Port, domain and image channel: `PORT=8080 SITE=lodge.example.com TAG=master sh install.sh`.
+Give it a domain and Caddy gets a certificate, on ports 80 and 443.
+
+By hand it is two files:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml
