@@ -3,6 +3,12 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/wrfly/AgentLodge/master/install.sh | sh
 #
+# It asks for the address to serve on and otherwise takes the defaults below. Settings can
+# also be given up front — note where they go in the pipe, since `SITE=… curl … | sh` sets
+# it for curl and not for the shell that runs this:
+#
+#   curl -fsSL …/install.sh | SITE=lodge.example.com PORT=8080 sh
+#
 # It writes an .env with freshly generated secrets, brings the stack up, and prints the
 # first administrator's invite code. Nothing has to be filled in by hand.
 #
@@ -16,19 +22,48 @@
 #   PORT=8080                the port to serve on                (default 80)
 #   SITE=lodge.example.com   the address Caddy answers on; a real domain gets a
 #                            certificate, anything else stays plain http
-#   TAG=master               image channel                       (default latest)
+#   TAG=latest               image channel                       (default master)
 #   START=0                  write the files and stop, for reading .env before anything runs
 set -eu
 
 REPO="https://raw.githubusercontent.com/wrfly/AgentLodge/master"
 DIR="${DIR:-$PWD/agentlodge}"
 PORT="${PORT:-80}"
+# Whether the address was given, which decides whether there is anything to ask about
+SITE_GIVEN="${SITE+yes}"
 SITE="${SITE:-localhost}"
-TAG="${TAG:-latest}"
+# master is the rolling build of the branch and has every service. `latest` follows the
+# newest release tag, which is only a complete stack once a release has been cut that
+# contains all of them.
+TAG="${TAG:-master}"
 START="${START:-1}"
+YES="${YES:-0}"
 
 say()  { printf '  %s\n' "$*"; }
 die()  { printf '\n  %s\n\n' "$*" >&2; exit 1; }
+
+# Whether something is already listening. Unknown counts as free: a wrong "taken" would
+# move a port the operator asked for, which is worse than letting docker say it clearly.
+port_taken() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH 2>/dev/null | awk '{print $4}' | grep -q -- "[:.]$1$"
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | awk '{print $4}' | grep -q -- "[:.]$1$"
+  else
+    return 1
+  fi
+}
+
+# The first free port at or above a candidate
+free_port() {
+  p=$1
+  i=0
+  while port_taken "$p" && [ $i -lt 50 ]; do
+    p=$((p + 1))
+    i=$((i + 1))
+  done
+  printf '%s' "$p"
+}
 
 # ---- what has to be there before anything is written ------------------------
 command -v docker >/dev/null 2>&1 || die "docker is not installed — https://docs.docker.com/engine/install/"
@@ -40,11 +75,36 @@ command -v curl >/dev/null 2>&1 || die "curl is needed to fetch the compose file
 DOCKER_GID="$(getent group docker 2>/dev/null | cut -d: -f3 || true)"
 [ -n "$DOCKER_GID" ] || die "no docker group on this host; app needs its gid to reach the socket"
 
+port_taken "$PORT" && die "port $PORT is already in use — pass another with PORT=…"
+
 DATA="$DIR/data"
 if [ -e "$DIR/.env" ]; then
   die "$DIR/.env already exists — this script writes a fresh deployment, and overwriting it
   would change JWT_SECRET, which makes every existing session and encrypted setting unreadable.
   Remove it deliberately, or run with DIR=… somewhere else."
+fi
+
+# Piped into sh, stdin is the script itself, so a question has to be asked on the terminal
+# directly. Where there is none — CI, a cron job, a pipe with no tty behind it — this does
+# nothing and the defaults stand. Opening the device is the test: it can exist and still
+# not be attachable.
+ask_site() {
+  # The test is a subshell on purpose: `exec 3<>/dev/tty` is a special builtin, and a
+  # redirection it cannot satisfy kills a non-interactive shell outright — `|| return`
+  # never runs. Failing inside a subshell only fails the subshell.
+  ( : >/dev/tty ) 2>/dev/null || return 0
+
+  printf '\n  Address to serve on. A domain gets a certificate from Caddy;\n' > /dev/tty
+  printf '  anything else is served over plain http.\n\n' > /dev/tty
+  printf '  address [%s]: ' "$SITE" > /dev/tty
+  answer=""
+  IFS= read -r answer < /dev/tty || answer=""
+  [ -n "$answer" ] && SITE="$answer"
+  return 0
+}
+
+if [ -z "$SITE_GIVEN" ] && [ "$YES" != "1" ]; then
+  ask_site
 fi
 
 printf '\n  Installing AgentLodge into %s\n\n' "$DIR"
@@ -72,17 +132,32 @@ case "$SITE" in
 esac
 
 if [ "$IS_DOMAIN" = "1" ]; then
+  # A name Caddy can get a certificate for. It needs 80 and 443 to answer the ACME
+  # challenge, so the port is not ours to move.
+  ADDRESS="$SITE"
   SECURE=true
   BASE="https://$SITE"
   PORTS="HTTP_PORT=80
 HTTPS_PORT=443"
-  [ "$PORT" = "80" ] || say "note: PORT is ignored for a domain — Caddy needs 80 and 443 to get a certificate"
+  [ "$PORT" = "80" ] || say "note: PORT is ignored for a domain — Caddy needs 80 and 443 for its certificate"
 else
+  # A bare port, not a hostname. Given `localhost`, Caddy issues itself a certificate from
+  # its local CA and redirects http to https — which, behind a published port that is not
+  # 443, lands the browser somewhere that is not this deployment. `:80` says plain http,
+  # any Host, which is what a local or reverse-proxied deployment wants.
+  ADDRESS=":80"
   SECURE=false
   [ "$PORT" = "80" ] && BASE="http://$SITE" || BASE="http://$SITE:$PORT"
-  PORTS="HTTP_PORT=$PORT"
+  # Nothing is served over TLS here, but the compose file publishes 443 all the same — so
+  # it gets a high port that is actually free rather than one more thing fighting over 443
+  PORTS="HTTP_PORT=$PORT
+HTTPS_PORT=$(free_port "${HTTPS_PORT:-8443}")"
 fi
 
+say "address        $BASE"
+say "images         ${TAG}"
+say "data           $DATA"
+printf '\n'
 say "writing .env"
 umask 077
 cat > .env <<ENVEOF
@@ -94,10 +169,14 @@ AUDIT_ADMIN_TOKEN=$AUDIT_ADMIN_TOKEN
 CREDENTIAL_MANAGER_KEY=$CREDENTIAL_MANAGER_KEY
 
 DATA_DIR=$DATA
+# The socket credential-manager listens on and gateway dials. Under this deployment rather
+# than the shared /run/agentlodge, so a second deployment on the same host does not bind
+# over the first one's socket and quietly serve its credentials.
+CREDENTIAL_MANAGER_SOCKET_DIR=$DIR/run
 DOCKER_GID=$DOCKER_GID
 AGENTLODGE_TAG=$TAG
 
-SITE_ADDRESS=$SITE
+SITE_ADDRESS=$ADDRESS
 APP_BASE_URL=$BASE
 SECURE_COOKIES=$SECURE
 $PORTS
@@ -122,7 +201,13 @@ if [ "$START" = "0" ]; then
   exit 0
 fi
 
-say "pulling images and starting (this takes a few minutes the first time)"
+# Pulled explicitly rather than left to `up`. Both channels are moving tags, and `up`
+# only fetches an image it does not already have — on a machine that installed once
+# before, that silently keeps whatever was cached, however old.
+say "pulling images (a few minutes the first time)"
+docker compose -f compose.release.yml pull
+
+say "starting"
 docker compose -f compose.release.yml up -d
 
 # ---- the invite code the app prints on a fresh database ---------------------
