@@ -1,4 +1,6 @@
-# AgentLodge — 基于 Claude Code + DeepSeek 的多租户 AI 对话服务
+# AgentLodge — 把 Claude Code / Codex 包装成多租户 AI 对话服务
+
+> 上游模型可插拔：DeepSeek、Claude、Codex、订阅等均可接入，默认示例以 DeepSeek 为例。
 
 > 详细设计文档 v1.0 · 2026-08-17
 
@@ -6,7 +8,7 @@
 
 ## 0. 一句话概括
 
-用户在 Web（桌面/移动）上用高仿 Claude 的界面对话；每个用户在服务器上有一个**独立容器 + 独立工作目录**，容器里跑的是 **Claude Code CLI（headless 模式）**；Claude Code 的 API 请求不直连 DeepSeek，而是全部经过我们自研的**计量网关**——网关负责鉴权、记账、配额闸门和**全局并发限速（最多 3 路 in-flight）**；管理员可以给每个用户配额，用户能实时看到自己用了多少、账户还剩多少钱。
+用户在 Web（桌面/移动）上用高仿 Claude 的界面对话；每个用户在服务器上有一个**独立容器 + 独立工作目录**，容器里跑的是 **Claude Code CLI（headless 模式）**；Claude Code 的 API 请求不直连上游模型，而是全部经过我们自研的**计量网关**——网关负责鉴权、记账、配额闸门和**全局并发限速（最多 3 路 in-flight）**；管理员可以给每个用户配额，用户能实时看到自己用了多少、账户还剩多少钱。上游模型经 provider 注册表可增删改切（DeepSeek、Claude、Codex、订阅等）。
 
 ---
 

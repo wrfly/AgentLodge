@@ -2,17 +2,48 @@
 
 **[中文](./README.md) · [English](./README.en.md) · [项目页](https://wrfly.kfd.me/AgentLodge/)**
 
-把 Claude Code 和 Codex 包装成多租户的 Web 服务。每个用户有自己的沙箱 agent；
-你只管一把上游 key，一把都不用发出去。
+把编程 Agent（Claude / Codex）包装成多租户的 Web 服务：网页对话、兼容 Claude/Codex 的 API、
+自带 CLI，每用户一个独立沙箱 agent。底层可接入 DeepSeek、Claude、Codex 或订阅等多种上游。
 
-- **真实 API key 只存在于网关进程里。** agent 手上是绑定
-  `(user, conversation, turn)` 的 20 分钟票据，计量绕不过去，容器被拿下也偷不到东西。
-- **配额在一个 turn 内部就能刹住**，不只是门口拦一下 —— agent 循环跑飞了是当场停，
-  不是事后记账。
-- **每一条出网请求都可以留证**，经审计代理落盘，完整 prompt，留多久按你的合规要求。
-- **agent 跑在容器里**，一人一个，各自独立的工作区。
+- **网页直接对话**，高仿 Claude 界面，多人各用各的，对话各自私密。
+- **兼容 Anthropic Messages 与 OpenAI Responses 两种协议**，照常敲 `claude` / `codex`。
+- **按 token 或按金额计量**，配额在 turn 内部就刹得住，agent 跑飞了当场停。
+- **每用户独立容器**，各挂自己的工作目录，互不可见。
 
-## 功能
+```mermaid
+flowchart LR
+    subgraph U[入口]
+        W["网页对话<br/>高仿 Claude 界面"]
+        C["CLI<br/>claude / codex"]
+        A["兼容 API<br/>Anthropic Messages · OpenAI Responses"]
+    end
+
+    subgraph L[AgentLodge]
+        direction TB
+        GW["计量网关<br/>鉴权 · 配额闸门 · 并发限速 · 审计"]
+        G1["用户 A 容器<br/>Claude Code / Codex + 独立工作区"]
+        G2["用户 B 容器<br/>Claude Code / Codex + 独立工作区"]
+        G3["用户 C 容器 ······"]
+        GW --> G1
+        GW --> G2
+        GW --> G3
+    end
+
+    subgraph U0[上游 · 可切换]
+        DS["DeepSeek API"]
+        CL["Claude / Codex API"]
+        SB["订阅"]
+    end
+
+    W --> GW
+    C --> GW
+    A --> GW
+    GW --> DS
+    GW --> CL
+    GW --> SB
+```
+
+## 功能特性
 
 **账号**
 - [x] 邀请码注册、邮件定向邀请（SendGrid）
@@ -53,30 +84,30 @@
       Русский / Deutsch / Français / Español / Português，覆盖率由 `npm run typecheck` 机器校验
 - [x] 镜像按组件拆开发布，`docker compose` 两个文件拉起
 
-**还没做**
+**尚未提供**
 - [ ] 余额趋势与三口径对账、会话搜索、附件在对话内引用（M4）
 - [ ] 多实例部署（并发闸门换成 Redis 信号量）（M5）
 
-## 跑起来
+## 快速开始
 
 ```bash
 npm install
 JWT_SECRET=$(openssl rand -base64 32) npm run dev
 ```
 
-打开 http://localhost:5173 控制台会打印一个 bootstrap 邀请码，用它注册的第一个账号
-自动是管理员。
+打开 http://localhost:5173，控制台会打印一个 bootstrap 邀请码，用它注册的第一个账号
+自动成为管理员。
 
-本机需要装 `claude` 和/或 `codex`。缺哪个，哪个页面会说明原因，不影响另一个。
+本机需要安装 `claude` 和/或 `codex`。缺少哪个，对应页面会说明原因，不影响另一个。
 
-只对外提供其中一个也是支持的 —— 管理员在**系统设置 → Agent**里把另一个关掉，
-它会从界面上彻底消失，而不是杵在那儿看着像坏了。
+只提供其中一个也是支持的 —— 管理员在**系统设置 → Agent**里关掉另一个即可，
+它会从界面上彻底消失，而不是留在那里看着像坏了。
 
-想零成本试，把上游指到内置的假 provider —— 见手册。
+想零成本体验，把上游指向内置的假 provider —— 见手册。
 
 ## 从镜像部署
 
-不用 clone，两个文件就够：
+无需 clone，两个文件即可：
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml
@@ -90,9 +121,9 @@ docker pull docker.io/wrfly/agentlodge-agent:latest
 fork 之后流水线自动改用你自己的账号名，不用改任何东西。
 agent 镜像的标签里写着里面装的是哪个版本的 claude 和 codex。
 
-## 接着看哪儿
+## 更多文档
 
 | | |
 |---|---|
-| [MANUAL.md](./MANUAL.md) | 怎么跑、上游怎么配、审计代理、部署、环境变量 |
-| [DESIGN.md](./DESIGN.md) | 为什么这么设计 |
+| [MANUAL.md](./MANUAL.md) | 运行方式、上游配置、审计代理、部署、环境变量 |
+| [DESIGN.md](./DESIGN.md) | 设计思路与取舍 |

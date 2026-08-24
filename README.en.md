@@ -2,17 +2,51 @@
 
 **[中文](./README.md) · [English](./README.en.md) · [Project page](https://wrfly.kfd.me/AgentLodge/)**
 
-Claude Code and Codex, wrapped as a multi-tenant web service. Every user gets
-their own sandboxed agent; you hold one upstream key and hand out none.
+Claude Code and Codex, wrapped as a multi-tenant web service: web chat,
+Claude/Codex-compatible APIs, and your own CLI, each user with an isolated
+sandboxed agent. The backend can hook into DeepSeek, Claude, Codex, subscriptions,
+and other upstreams.
 
-- **The real API key never leaves the gateway process.** Agents carry a
-  20-minute ticket bound to `(user, conversation, turn)`, so metering cannot be
-  bypassed and a compromised container leaks nothing worth having.
-- **Quota is enforced mid-turn**, not just at the door — an agent loop that runs
-  away is stopped while it runs, not billed for afterwards.
-- **Every outbound request can be recorded** through an audit proxy, with the
-  full prompt, for as long as your compliance rules say.
-- **Agents run in containers**, one per user, each with its own workspace.
+- **Chat in the browser**, a close copy of the Claude interface, with each user's
+  conversations kept private.
+- **Both wire protocols — Anthropic Messages and OpenAI Responses**, so `claude` and
+  `codex` work as usual.
+- **Metered by token or by money**, with the quota enforced mid-turn — a
+  runaway agent is stopped while it runs.
+- **One container per user**, each with its own workspace, invisible to the rest.
+
+```mermaid
+flowchart LR
+    subgraph U[Entry points]
+        W["Web chat<br/>a Claude-style UI"]
+        C["CLI<br/>claude / codex"]
+        A["Compatible APIs<br/>Anthropic Messages · OpenAI Responses"]
+    end
+
+    subgraph L[AgentLodge]
+        direction TB
+        GW["Metering gateway<br/>auth · quota gate · concurrency · audit"]
+        G1["User A container<br/>Claude Code / Codex + own workspace"]
+        G2["User B container<br/>Claude Code / Codex + own workspace"]
+        G3["User C container ······"]
+        GW --> G1
+        GW --> G2
+        GW --> G3
+    end
+
+    subgraph U0[Upstream · switchable]
+        DS["DeepSeek API"]
+        CL["Claude / Codex API"]
+        SB["Subscriptions"]
+    end
+
+    W --> GW
+    C --> GW
+    A --> GW
+    GW --> DS
+    GW --> CL
+    GW --> SB
+```
 
 ## Features
 
@@ -110,7 +144,7 @@ Images are split by component and published to Docker Hub. `:latest` is the newe
 and `:master` is the rolling build of the branch. A fork publishes under its own owner with
 nothing to edit. The agent image's labels say which claude and codex versions are inside it.
 
-## Where to look next
+## Further reading
 
 | | |
 |---|---|

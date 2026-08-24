@@ -1,7 +1,7 @@
 # AgentLodge
 
 把 **Claude Code CLI** 和 **Codex CLI** 的能力，包装成一个多租户的 Web 对话服务 ——
-高仿 Claude 的界面，底下跑 DeepSeek。
+高仿 Claude 的界面；上游模型可插拔（DeepSeek、Claude、Codex、订阅等），本文默认示例走 DeepSeek。
 
 当前处于 **M3：计量网关 · 并发限速 · 容器隔离** —— 完整架构见 [DESIGN.md](./DESIGN.md)。
 
