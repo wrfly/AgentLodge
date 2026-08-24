@@ -8,7 +8,7 @@
 
 ## 0. 一句话概括
 
-用户在 Web（桌面/移动）上用高仿 Claude 的界面对话；每个用户在服务器上有一个**独立容器 + 独立工作目录**，容器里跑的是 **Claude Code CLI（headless 模式）**；Claude Code 的 API 请求不直连上游模型，而是全部经过我们自研的**计量网关**——网关负责鉴权、记账、配额闸门和**全局并发限速（最多 3 路 in-flight）**；管理员可以给每个用户配额，用户能实时看到自己用了多少、账户还剩多少钱。上游模型经 provider 注册表可增删改切（DeepSeek、Claude、Codex、订阅等）。
+用户在 Web（桌面/移动）上用高仿 Claude 的界面对话；每个用户在服务器上有一个**独立容器 + 独立工作目录**，容器里跑的是 **Claude Code CLI（headless 模式）**；Claude Code 的 API 请求不直连上游模型，而是全部经过我们自研的**计量网关**——网关负责鉴权、记账、配额闸门和**并发限速（每条上游 3 路 in-flight）**；管理员可以给每个用户配额，用户能实时看到自己用了多少、账户还剩多少钱。上游可以配多条同时生效（DeepSeek、Claude、Codex、订阅等），请求走哪一条由它要的模型决定。
 
 ---
 
@@ -27,7 +27,7 @@
 | 容器 | Podman / Docker CLI，经挂进来的 socket | 不用 dockerode：`exec` 的 stdout 就是 CLI 的 stdout |
 | 反向代理/TLS | Caddy 2 | 自动 HTTPS |
 | Agent | Claude Code CLI、Codex CLI，`ANTHROPIC_BASE_URL` 指向计量网关 | |
-| 上游模型 | provider 注册表，可增删改切 | 官方 Anthropic、DeepSeek 兼容层、本机假上游都支持 |
+| 上游模型 | provider 注册表 + models 路由表 | 多条上游同时生效，按模型选；官方 Anthropic、DeepSeek 兼容层、本机假上游都支持 |
 
 ---
 
@@ -113,7 +113,7 @@ apps/server/src/
                     │  ③ 计量网关  :8788                          │
                     │     ① 验票据 → 归属 user/turn               │
                     │     ② 配额硬闸门（超额 402/429）             │
-                    │     ③ 全局并发闸门 + 用户级公平队列 + AIMD    │
+                    │     ③ 每上游并发闸门 + 用户级公平队列 + AIMD  │
                     │     ④ 协议翻译（仅 openai-chat 上游需要）     │
                     │     ⑤ 票据换成真凭据                         │
                     │     ⑥ SSE 字节透传 + 旁路嗅探 usage → 落账   │
@@ -194,7 +194,7 @@ agent      [agent-net 独占]    CLI 在里面跑自己的工具循环
   ▼
 gateway    [agent-net+frontend+backend]  ROLE=gateway
   ① resolveCredential   票据 或 al_ 长期 key → 同一个 Principal
-  ② resolveUpstream     库里 active=1 的那条 provider
+  ② resolveUpstream     models 表里匹配 body.model 的那一行 → 它的 provider
   ③ egressTarget()      返回 null ⇒ 503，fail closed，绝不静默直连
   ④ quota.check         turn 内部唯一能刹住的点（402，用不可重试类型）
   ⑤ gate.acquire        全局 ≤3 / 单用户 ≤2 + AIMD
@@ -217,7 +217,7 @@ app:     解析 CLI 的 stream-json → 消息落库 → 推到浏览器那条 S
 | 浏览器 → app | access token（JWT） | app | app | 短期，refresh 轮转 |
 | 用户自带 CLI → gateway | `al_` api key | app（库里只存 sha256） | gateway | 长期，可撤销 |
 | agent → gateway | runtime token，绑 (user, cid, tid) | app | gateway | **20 分钟** |
-| gateway → audit → 上游 | 上游真实 key | 管理员填，AES-256-GCM 存库 | 上游 | 长期 |
+| gateway → audit → 上游 | 上游凭据 | credential-manager 持有，每次请求现换 | 上游 | 几小时（key 类为长期） |
 
 **网络归属** —— 决定了谁够得着谁：
 
@@ -913,9 +913,13 @@ weighted = input + cache_read * W.hit + cache_write * W.write + output * W.out;
 又是新的一类 bug。流水表在单机 SQLite 上按用户 + 时间窗聚合是索引命中，成本可以忽略，
 换来的是任何一笔账都能一路追到具体是哪次请求。
 
-### 7.4 全局并发闸门（≤3 in-flight）★
+### 7.4 并发闸门（每条上游 ≤3 in-flight）★
 
-**目标**：任一瞬间打到 DeepSeek 的 in-flight 请求不超过 `MAX_UPSTREAM_CONCURRENCY`（默认 3），避免触发对方流控；同时不让单个用户的 agent 循环饿死其他用户。
+**目标**：任一瞬间打到**同一条上游**的 in-flight 请求不超过 `MAX_UPSTREAM_CONCURRENCY`
+（默认 3），避免触发对方流控；同时不让单个用户的 agent 循环饿死其他用户。
+
+每条上游一个池子，各自计数、各自 AIMD。订阅的限流和付费 API 的限流是两个数字，共用一个池子
+会让一边堵着另一边；上限值是全局配置，每个池子从它开始各自往下收。
 
 #### 重要认知：3 并发 ≠ 只能服务 3 个用户
 
@@ -1385,15 +1389,23 @@ GET    /api/admin/invites
 POST   /api/admin/invites
 DELETE /api/admin/invites/:id
 GET    /api/admin/balance            # DeepSeek 余额 + 趋势
-GET    /api/admin/gate               # 并发闸门实时状态
+GET    /api/admin/gate               # 并发闸门实时状态，按上游一行
 PATCH  /api/admin/gate               { maxConcurrency }
+
+# 模型：用户能选什么、每个走哪条上游
+GET    /api/admin/models             # 模型行 + 上游名字
+POST   /api/admin/models             { name, providerId, upstreamName, priority }
+PATCH  /api/admin/models/:id
+DELETE /api/admin/models/:id
+POST   /api/admin/models/pull        { providerId }   # 问那条上游有哪些，只加不删
 GET    /api/admin/pricing
 POST   /api/admin/pricing
 GET    /api/admin/audit-logs
 
 # 上游凭据（转发到网关，那边才挂着 credential-manager 的 socket）
 GET    /api/admin/credentials         # 名字、掩码提示、过期时间；从不返回值
-POST   /api/admin/credentials         { id, label, apiKey }
+POST   /api/admin/credentials         { id, label, apiKey } | { id, kind:"key-file", path }
+GET    /api/admin/credentials/files   # 白名单目录里有哪些 key 文件，带指纹
 DELETE /api/admin/credentials/:id
 POST   /api/admin/credentials/import  { id, kind }        # 导入挂进容器的凭据文件
 POST   /api/admin/credentials/login/start   { kind, id }  → { loginId, authorizeUrl }
@@ -1464,7 +1476,7 @@ agent-net  agent 容器 ↔ gateway
 |---|---|
 | 用户诱导 Claude 执行恶意命令 | 容器隔离 + 非 root + CapDrop ALL + no-new-privileges + 只读 rootfs |
 | 容器逃逸 | Podman rootless 模式；不挂载任何 socket 到 agent 容器 |
-| 窃取 API Key | Key 只存在于计量网关进程里；容器只有 20 分钟有效、绑死 (user, conversation, turn) 的 runtime token |
+| 窃取上游凭据 | 值只存在于 credential-manager 里，加密落盘；网关每次请求换一个几小时寿命的 access token，refresh token 不过 socket；容器只有 20 分钟有效、绑死 (user, conversation, turn) 的 runtime token |
 | 绕过计量 | agent-net 是 internal 网络，唯一可达目标是 proxy |
 | 挖矿/资源滥用 | CPU/内存/PID/文件描述符全部限死；异常 CPU 持续高占用告警 |
 | 磁盘打满 | 每用户 volume 配额 + 定时 du 检查 |

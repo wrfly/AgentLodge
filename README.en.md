@@ -90,12 +90,17 @@ flowchart LR
       never taken
 - [x] Your own CLI: one command to install, then run `claude` as usual
 - [x] Both wire protocols — Anthropic Messages and OpenAI Responses
-- [x] Upstream providers can be added, edited and switched live, including a built-in mock
+- [x] Several upstreams live at once, routed by model: one model can be served by two of
+      them, priced separately
+- [x] Upstream credentials live in one service of their own — sign a subscription in from
+      the console, paste a key, or point at a file something else rotates. The database
+      holds a name, and the gateway gets a short-lived token per request
+- [x] A built-in mock provider, for exercising the whole path at no cost
 
 **Operations**
 - [x] An audit proxy that records every outbound request, full prompt, with a switch and a
       purge in the console
-- [x] Quotas, prices, concurrency, providers and site settings all change without a restart
+- [x] Quotas, prices, concurrency, upstreams, models and site settings all change without a restart
 - [x] A locked-out administrator can be given a new password from the machine it runs on,
       without going through HTTP — no mail configuration needed
 - [x] Interface, console settings and API messages in nine languages — English, Simplified

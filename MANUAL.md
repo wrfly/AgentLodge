@@ -596,7 +596,7 @@ CLI 那两条线是**平台的**窗口，不是每个人自己的：边界取上
   agent 拿到的是绑定 `(user, conversation, turn)` 的 20 分钟 runtime token
 - 逐次调用记账：从 SSE 流里旁路解析 usage，不改写字节流
 - **配额硬闸门**：在一个 turn 内部也能刹住（M2 的 turn 级拦截做不到）
-- **全局并发闸门**：任一瞬间打到上游的 in-flight ≤ 3（可在后台热调）
+- **并发闸门**：每条上游任一瞬间 in-flight ≤ 3（可在后台热调），各上游一个池子
   - 用户级轮转而非全局 FIFO —— 否则一个用户的 agent 循环会把别人饿死
   - 单用户最多占 2 个 slot，防独占
   - AIMD 自适应：上游返回 429 就把并发砍半，连续成功 20 次再加回来
@@ -742,9 +742,9 @@ workspaces/<userId>/<convId>/AGENTS.md    上面这些渲染成一整份，给 c
 - **上游与模型**：上游是地址、协议、凭据；模型是「名字 → 上游」，同名可挂多条。配了模型就启用计量网关，
   agent 从此只能经网关访问上游；一条都没有则沿用本机 CLI 自己的配置，用量退化为按轮次粗记
 - **审计代理**：启用开关（默认关）、上游白名单、保留策略
-- **并发闸门**：全局上限热调
+- **并发闸门**：上限热调，按上游分池显示各自在途与排队
 - 系统设置：SendGrid Key / 发件人 / 站点地址（带「发测试邮件」按钮）、新用户默认额度、计费权重
-- 密钥用 AES-256-GCM 加密后存库，接口只返回掩码
+- 上游凭据不进库：库里只存名字，值在 credential-manager 里加密保管，接口只返回掩码
 
 **对话**
 - 多轮上下文、SSE 断线续传、同会话串行、中断（SIGINT → 3s → SIGKILL）
@@ -862,21 +862,21 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 | `DATA_DIR` | `./data` | |
 | `LANDING_PATH` | `/landing/` | caddy 用。裸地址跳到哪；设成 `/claude` 就没有介绍页，直接进应用 |
 | `TZ` | `UTC` | **部署机器的时区**。按时间分桶的东西都用它：用量记录算哪一天、配额窗口落在哪。启动横幅会打印实际解析到的时区，对不上就是没生效。取值 `cat /etc/timezone`。⚠️ 别用挂 `/etc/localtime` 代替：`date` 会显示对，Node 仍然是 UTC |
-| `JWT_SECRET` | 随机 | ⚠️ 不设置则每次重启换密钥，已加密的设置项（API key）解不开，需重填 |
+| `JWT_SECRET` | 随机 | ⚠️ 不设置则每次重启换密钥，系统设置里的密文值解不开，需重填。上游凭据不在此列，它们在 credential-manager 里，用它自己的密钥 |
 | `SECURE_COOKIES` | `false` | 生产设 `true` |
 | `TRUST_PROXY` | `1` | 信任几跳反代。反代后面不设就等于**所有人共用一个 IP**：审计追不到来源，而且登录锁定按 IP 分桶会变成全站锁。别设 `true`（Caddy 是追加 XFF，信任整条链等于让客户端自己填 IP）|
 | `CLAUDE_BIN` / `CODEX_BIN` | `claude` / `codex` | |
 | `ENABLED_AGENTS` | `claude,codex` | 这个部署对外提供哪几个 agent，逗号分隔。只是**初值** —— 后台改过之后以设置为准。跟「装没装 CLI」是两回事，见下 |
 | `PERMISSION_MODE` | `bypassPermissions` | Claude Code，⚠️ 见下 |
 | `CODEX_SANDBOX` | `workspace-write` | Codex 原生沙箱 |
-| `SECRET_FILE_ROOTS` | `<DATA_DIR>/secrets:/run/secrets` | 允许「从文件读 key」的目录白名单，冒号分隔。app 和 gateway 要配同一份。写 `/` 等于不限制（想清楚再写，见「key 也可以放在文件里」）|
+| `CREDENTIAL_MANAGER_SOCKET` | — | credential-manager 的 Unix socket 路径。**只挂给 gateway**，它是唯一需要换 token 的进程；不设则控制台不提供凭据管理。credential-manager 自己那几个变量（`CREDENTIAL_FILE_ROOTS`、`CREDENTIAL_MANAGER_KEY` 等）见 `credential-manager/README.md` |
 | `DEEPSEEK_API_KEY` | — | 只在**首次启动**（provider 表为空）时用来播一条 DeepSeek 上游，key 由网关搬进 credential-manager。之后一切以 provider 和 models 两张表为准 |
 | `GATEWAY_PORT` | `8788` | |
 | `ROLE` | `all` | `app` / `gateway` 只跑一半，compose 拆两个容器时用 |
 | `HOST` | `127.0.0.1` | 跑在容器里必须改成 `0.0.0.0`，否则反代进不来 |
 | `GATEWAY_URL` | 自动推导 | **agent** 访问网关的地址；compose 部署时设成 `http://gateway:8788` |
 | `GATEWAY_INTERNAL_URL` | 自动推导 | **本进程**访问网关的地址（后台读闸门）；同上 |
-| `MAX_UPSTREAM_CONCURRENCY` | `3` | 全局 in-flight 上限，后台可热调 |
+| `MAX_UPSTREAM_CONCURRENCY` | `3` | **每条上游**的 in-flight 上限，后台可热调。每条上游一个池子，各自计数 |
 | `PER_USER_INFLIGHT_MAX` | `2` | 单用户最多占几个 slot |
 | `USE_CONTAINERS` | `false` | 开启每用户容器隔离 |
 | `AGENT_NETWORK` | 空 | 容器网络名；Linux 上设成 internal 网络 |
