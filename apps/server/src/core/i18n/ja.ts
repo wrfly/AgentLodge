@@ -83,4 +83,8 @@ export const ja: Record<string, string> = {
   'Nothing to undo': '取り消せる変更がありません',
   'A memory cannot exceed {kb} KB': '記憶 1 件は {kb} KB を超えられません',
   'At most {n} memories': '記憶は最大 {n} 件です',
+  'Paste the code the page showed you': 'ページに表示された code を貼り付けてください',
+  'Missing key': 'key がありません',
+  'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'アップストリーム「{name}」の認証情報 {id} は現在使用できません。管理者に連絡してください',
+  'Upstream "{name}" has no credential configured; ask an administrator': 'アップストリーム「{name}」に認証情報が設定されていません。管理者に連絡してください',
 };

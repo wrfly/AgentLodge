@@ -83,4 +83,8 @@ export const es: Record<string, string> = {
   'Nothing to undo': 'No hay nada que deshacer',
   'A memory cannot exceed {kb} KB': 'Un recuerdo no puede superar {kb} KB',
   'At most {n} memories': 'Como máximo {n} recuerdos',
+  'Paste the code the page showed you': 'Pega el código que mostró la página',
+  'Missing key': 'Falta la clave',
+  'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'La credencial {id} del upstream «{name}» no se puede usar ahora mismo; avisa a un administrador',
+  'Upstream "{name}" has no credential configured; ask an administrator': 'El upstream «{name}» no tiene credencial configurada; avisa a un administrador',
 };

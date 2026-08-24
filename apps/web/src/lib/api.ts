@@ -628,54 +628,25 @@ export interface TraceDetail {
 }
 
 /** What the console knows about a key file. The server returns status, never contents. */
-export interface SecretFile {
+/** One key file the credential manager can see, or why it cannot use it */
+export interface KeyFileEntry {
   path: string;
-  size: number;
-  mtime: string;
-  /** First 8 hex digits of the contents' sha256 — enough to tell "same file" from "it changed" without revealing either */
-  fingerprint: string;
-  /** Masked preview */
-  preview: string;
+  usable: boolean;
+  /** Why not, when usable is false. Shown verbatim: it is the whole diagnosis. */
+  error?: string;
+  /** Masked value, for telling two files apart */
+  hint?: string;
+  /** First 8 hex of the contents' sha256 — answers "did my replacement reach it" */
+  fingerprint?: string;
+  size?: number;
+  mtime?: string;
 }
 
-export interface SecretFileProblem {
-  path: string;
-  error: string;
-  /** path = wrong on its own terms, and refused on save; io = this process cannot read it, which is only a warning */
-  code: 'path' | 'io';
-}
-
-export const isSecretProblem = (x: SecretFile | SecretFileProblem): x is SecretFileProblem =>
-  'error' in x;
-
-/**
- * Whether the API Key box holds a path or the key itself.
- *
- * **This must decide exactly what the server decides** (looksLikePath in
- * core/db/providers.ts). If the console reads the field one way and the server stores it
- * another, what somebody sees and what is actually saved are two different things.
- *
- * Deliberately syntactic: it never asks the server whether the file exists, because the
- * app container may well not have that volume mounted.
- */
-export const looksLikePath = (v: string): boolean => v.trim().startsWith('/');
-
-export interface SecretFileListing {
+export interface KeyFileListing {
   roots: Array<{ path: string; exists: boolean; note?: string }>;
-  files: Array<SecretFile | SecretFileProblem>;
-  /** Present only when the request carried ?path= */
-  checked?: SecretFile | SecretFileProblem;
-  /**
-   * Whose view of the filesystem this is.
-   *
-   * gateway = the authoritative answer: it is the process that actually reads the key when
-   *           a request comes in.
-   * app     = the gateway could not be reached, so this is the local view — app most likely
-   *           has no such volume mounted, so treat it as indicative only.
-   */
-  source?: 'gateway' | 'app';
-  /** Why `source` fell back to app */
-  sourceNote?: string;
+  files: KeyFileEntry[];
+  /** Present when a path was named: what that one path yields right now */
+  checked?: KeyFileEntry;
 }
 
 export interface Provider {
@@ -691,9 +662,17 @@ export interface Provider {
   /** Used when a conversation has not picked a model */
   defaultModel: string;
   /** Non-empty = the key lives in this file, read afresh per request, and not in the database */
-  keyFile: string;
-  /** State of that file right now, when keyFile is set. Only the list endpoint fills it in. */
-  keyFileStatus?: SecretFile | SecretFileProblem;
+  /**
+   * Non-empty = the key is a credential the credential manager holds, named here by id.
+   * What goes upstream is a token that service mints, so nothing usable is stored here.
+   */
+  credentialId: string;
+  /**
+   * True = credentialId names something the credential manager no longer has, so this
+   * provider is configured and unusable at once. undefined = it could not be asked, which
+   * is not the same claim and is drawn as nothing.
+   */
+  credentialMissing?: boolean;
 }
 
 export interface ProviderInput {
@@ -709,7 +688,47 @@ export interface ProviderInput {
    * other source. An empty string switches back to a pasted value.
    */
   apiKeyFile?: string;
+  /**
+   * Id of a credential the credential manager holds. Mutually exclusive with the two
+   * above — sending any one of the three clears the others.
+   */
+  credentialId?: string;
   note?: string;
+}
+
+/** A credential the credential manager holds, as the console is allowed to see it */
+export interface Credential {
+  id: string;
+  /** api-key, or the subscription it is: claude / codex */
+  kind: string;
+  label?: string;
+  /** host-file | typed | login | import */
+  source: string;
+  /** Enough of the value to tell two apart; never enough to use */
+  hint: string;
+  ready: boolean;
+  /** When the current access token stops working (subscriptions only) */
+  expiresAt?: number;
+  refreshTokenExpiresAt?: number;
+  /** False = it can serve the token it has and nothing after it: sign in again */
+  renewable?: boolean;
+  scopes?: string[];
+  accountId?: string;
+  /** kind key-file: the path it reads, plus what that file yields right now */
+  path?: string;
+  fingerprint?: string;
+  mtime?: string;
+  size?: number;
+  /** Why this credential cannot be used at the moment. Shown verbatim. */
+  error?: string;
+}
+
+export interface StartedLogin {
+  loginId: string;
+  authorizeUrl: string;
+  credentialId: string;
+  kind: string;
+  expiresAt: number;
 }
 
 /** One of the upstream's own limit windows, on the scale its headers use (0..1) */
@@ -861,11 +880,6 @@ export const admin = {
     request<{ providers: Provider[]; kinds: Record<string, string>; autoRefreshModels: boolean }>(
       '/api/admin/providers',
     ),
-  /** Key files in the allowlisted directories; passing a path also validates that one */
-  secretFiles: (path?: string) =>
-    request<SecretFileListing>(
-      `/api/admin/secret-files${path ? `?path=${encodeURIComponent(path)}` : ''}`,
-    ),
   createProvider: (input: ProviderInput) =>
     request<Provider>('/api/admin/providers', { method: 'POST', body: JSON.stringify(input) }),
   updateProvider: (id: string, input: ProviderInput) =>
@@ -874,6 +888,48 @@ export const admin = {
     request<Provider>(`/api/admin/providers/${id}/activate`, { method: 'POST' }),
   deleteProvider: (id: string) =>
     request<{ ok: boolean }>(`/api/admin/providers/${id}`, { method: 'DELETE' }),
+
+  /**
+   * Credentials the credential manager holds. `configured: false` means no such service
+   * is running for this deployment, and the console offers only a typed key or a file.
+   */
+  credentials: () =>
+    request<{ configured: boolean; credentials: Credential[]; error?: string }>('/api/admin/credentials'),
+  /** Key files the credential manager can read; passing a path also checks that one */
+  credentialFiles: (path?: string) =>
+    request<KeyFileListing>(
+      `/api/admin/credentials/files${path ? `?path=${encodeURIComponent(path)}` : ''}`,
+    ),
+  storeKeyFileCredential: (input: { id: string; label?: string; path: string }) =>
+    request<{ credential: Credential }>('/api/admin/credentials', {
+      method: 'POST',
+      body: JSON.stringify({ ...input, kind: 'key-file' }),
+    }),
+  storeCredential: (input: { id: string; label?: string; apiKey: string }) =>
+    request<{ credential: Credential }>('/api/admin/credentials', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  /** Copy a credentials file the credential manager has mounted (the host's `claude login`) */
+  importCredential: (input: { id: string; kind: string; label?: string }) =>
+    request<{ credential: Credential }>('/api/admin/credentials/import', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  deleteCredential: (id: string) =>
+    request<{ ok: boolean }>(`/api/admin/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** Step one of signing a subscription in: where to authorise */
+  startCredentialLogin: (input: { kind: string; id: string; label?: string }) =>
+    request<StartedLogin>('/api/admin/credentials/login/start', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  /** Step two: the code the page showed after authorising */
+  finishCredentialLogin: (input: { loginId: string; code: string }) =>
+    request<{ credential: Credential }>('/api/admin/credentials/login/finish', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
 
   auditProxy: () => request<AuditProxyStatus>('/api/admin/audit-proxy'),
 

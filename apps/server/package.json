@@ -10,7 +10,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:period": "tsx src/core/db/period.test.ts",
-    "test:secret-file": "tsx src/core/secret-file.test.ts",
+    "test:routes": "tsx src/gateway/routes.test.ts",
     "test:providers": "tsx src/core/db/providers.test.ts",
     "test:upstream": "tsx src/gateway/upstream.test.ts",
     "test:credential": "tsx src/core/credential.test.ts",

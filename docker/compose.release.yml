@@ -30,7 +30,6 @@
 x-image-base: &image-base docker.io/${AGENTLODGE_NAMESPACE:-wrfly}/agentlodge
 x-data-dir: &data-dir ${DATA_DIR:?must be an absolute path on the host, e.g. /srv/agentlodge/data}
 x-audit-proxy-url: &audit-proxy-url ${AUDIT_PROXY_URL:-http://audit:8796}
-x-secret-file-roots: &secret-file-roots ${SECRET_FILE_ROOTS:-}
 x-audit-admin-token: &audit-admin-token ${AUDIT_ADMIN_TOKEN:?must be set, e.g. openssl rand -base64 32}
 
 services:
@@ -51,7 +50,6 @@ services:
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
       DATA_DIR: /data
-      SECRET_FILE_ROOTS: *secret-file-roots
       USE_CONTAINERS: "true"
       AGENT_NETWORK: agentlodge-agent-net
       # Pulled by the engine on the host, not by compose — see the `docker pull` line above
@@ -89,18 +87,24 @@ services:
       # shell's `date` picks it up and Node does not (DESIGN.md §16).
       TZ: ${TZ:-UTC}
       DATA_DIR: /data
-      SECRET_FILE_ROOTS: *secret-file-roots
       GATEWAY_HOST: 0.0.0.0
       GATEWAY_PORT: "8788"
       AUDIT_PROXY_URL: *audit-proxy-url
       MAX_UPSTREAM_CONCURRENCY: ${MAX_UPSTREAM_CONCURRENCY:-3}
+      # Where upstream credentials live, when the credential-manager profile is running
+      CREDENTIAL_MANAGER_SOCKET: /run/agentlodge/credential-manager.sock
     volumes:
       - type: bind
         source: *data-dir
         target: /data
         bind: { create_host_path: true }
-      # Empty unless the authkey profile is running, which mounts cleanly either way
-      - agentlodge-authkey:/data/secrets/authkey:ro
+      # The credential manager's socket. Empty unless that profile is running, which
+      # mounts cleanly either way; read-only because connecting needs no write access.
+      - type: bind
+        source: ${CREDENTIAL_MANAGER_SOCKET_DIR:-/run/agentlodge}
+        target: /run/agentlodge
+        read_only: true
+        bind: { create_host_path: true }
     networks: [agent-net, frontend, backend]
     depends_on: [audit]
     restart: unless-stopped
@@ -141,34 +145,51 @@ services:
     depends_on: [app]
     restart: unless-stopped
 
-  # Opt-in: `docker compose -f compose.release.yml --profile authkey up -d`.
-  #
-  # The credential authority: pre-refreshes the Claude access token and publishes it both as a
-  # single-line auth.key file drop (what the gateway here reads) and over a Unix socket (for
-  # credential-proxy). Off by default, because most deployments type a key into the console
-  # instead and an unused auther would only log about a file that is not there.
-  auther:
-    profiles: ["authkey"]
-    image: ${AGENTLODGE_NAMESPACE:-wrfly}/agentlodge-auther:${AGENTLODGE_TAG:-latest}
+  # Holds every upstream credential — pasted keys, key files something else rotates, and
+  # subscription refresh tokens — and hands the gateway a short-lived access token per
+  # request. Nothing else in the deployment stores one, so this service is not optional.
+  credential-manager:
+    image: ${AGENTLODGE_NAMESPACE:-wrfly}/agentlodge-credential-manager:${AGENTLODGE_TAG:-latest}
     volumes:
       # The directory, never the file: a credentials file is replaced by rename, and a
       # single-file bind mount pins the old inode for good
       - ${CLAUDE_CREDENTIALS_DIR:-${HOME}/.claude}:/input:ro
+      - ${CODEX_CREDENTIALS_DIR:-${HOME}/.codex}:/input-codex:ro
+      # Key files that something else writes and rotates — a docker secret, a
+      # secret-manager sidecar, another container. Read-only: this service reads them and
+      # never writes back.
       - type: bind
-        source: ${AUTHER_SOCKET_DIR:-/run/agentlodge}
+        source: *data-dir
+        target: /data
+        read_only: true
+        bind: { create_host_path: true }
+      - type: bind
+        source: ${CREDENTIAL_MANAGER_SOCKET_DIR:-/run/agentlodge}
         target: /run/agentlodge
         bind: { create_host_path: true }
-      - agentlodge-authkey:/data/secrets
+      - agentlodge-credentials:/state
     environment:
       CLAUDE_CREDENTIALS_FILE: /input/.credentials.json
-      AUTHER_SOCKET: /run/agentlodge/auther.sock
-      AUTH_KEY_FILE: /data/secrets/auth.key
-      AUTH_KEY_OWNER: "10001:10001"
+      CODEX_HOME: /input-codex
+      # Directories a key file may be read from, colon-separated like PATH. The data
+      # directory's secrets/ is here because that is where a key file usually goes; add a
+      # mount point and name it here to use another.
+      CREDENTIAL_FILE_ROOTS: /data/secrets:/run/secrets
+      CREDENTIAL_MANAGER_SOCKET: /run/agentlodge/credential-manager.sock
+      # The uid the gateway runs as, so it and nothing else can dial the socket
+      CREDENTIAL_MANAGER_SOCKET_OWNER: "10001:10001"
+      # The store is AES-256-GCM encrypted; set CREDENTIAL_MANAGER_KEY in .env to hold the
+      # key outside the volume the ciphertext lives in
+      CREDENTIAL_MANAGER_STATE_FILE: /state/credentials.enc
+      CREDENTIAL_MANAGER_KEY: ${CREDENTIAL_MANAGER_KEY:-}
+      CREDENTIAL_MANAGER_KEY_SEED: /state/store.key
     read_only: true
     cap_drop: [ALL]
     cap_add: [DAC_READ_SEARCH, CHOWN]
     security_opt: ["no-new-privileges:true"]
-    network_mode: none
+    # Outbound only: the token endpoints it mints against. It listens on no port — the Unix
+    # socket is the only way in.
+    networks: [backend]
     restart: unless-stopped
 
 networks:
@@ -187,5 +208,5 @@ networks:
 volumes:
   # Every user's complete prompts. Back it up and control access to it accordingly.
   agentlodge-audit:
-  agentlodge-authkey:
+  agentlodge-credentials:
   caddy-data:

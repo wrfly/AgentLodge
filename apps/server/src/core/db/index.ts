@@ -99,9 +99,9 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
-function columns(d: DatabaseSync, table: string): Set<string> {
+export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
     (d.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>).map((r) => r.name),
   );
@@ -165,6 +165,15 @@ function migrate(d: DatabaseSync): void {
     // name the conversation by. One the user typed is theirs and stays.
     if (!columns(d, 'conversations').has('title_custom')) {
       d.exec('alter table conversations add column title_custom integer not null default 0');
+    }
+  }
+
+  if (from < 4) {
+    // A provider names a credential rather than carrying one. The two columns it used to
+    // carry — an encrypted key and a path — are drained into the credential manager and
+    // dropped on the gateway's next start; see gateway/legacy-keys.ts.
+    if (!columns(d, 'upstream_providers').has('credential_id')) {
+      d.exec('alter table upstream_providers add column credential_id text');
     }
   }
 

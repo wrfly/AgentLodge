@@ -87,4 +87,8 @@ export const zhHant: Record<string, string> = {
   'Nothing to undo': '沒有可復原的變更',
   'A memory cannot exceed {kb} KB': '單則記憶不能超過 {kb} KB',
   'At most {n} memories': '記憶最多 {n} 則',
+  'Paste the code the page showed you': '把頁面給出的 code 貼進來',
+  'Missing key': '缺少 key',
+  'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': '上游「{name}」的憑證 {id} 現在用不了，請找管理員',
+  'Upstream "{name}" has no credential configured; ask an administrator': '上游「{name}」沒有設定憑證，請找管理員',
 };

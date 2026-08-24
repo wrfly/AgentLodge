@@ -61,9 +61,9 @@ jobs:
           - name: audit-proxy
             dockerfile: docker/audit-proxy.Dockerfile
             context: .
-          - name: authkey-sync
-            dockerfile: authkey-sync/Dockerfile
-            context: authkey-sync
+          - name: credential-manager
+            dockerfile: credential-manager/Dockerfile
+            context: credential-manager
     steps:
       - uses: actions/checkout@v4
 

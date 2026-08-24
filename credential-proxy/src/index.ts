@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { config, assertSafeToListen } from './config.js';
 import { requireGatewayToken } from './token.js';
-import { AutherClient } from './auther.js';
+import { CredentialManagerClient } from './credential-manager.js';
 import { forwardDeepseek } from './providers/deepseek.js';
 import { forwardAnthropic } from './providers/anthropic.js';
 import { forwardCodex } from './providers/codex.js';
@@ -57,14 +57,14 @@ async function main(): Promise<void> {
     done(null, body);
   });
 
-  const auther = new AutherClient();
+  const credentialManager = new CredentialManagerClient();
   const sem = new Semaphore(config.maxConcurrent);
 
   app.get('/health', async () => ({ status: 'ok' }));
 
   app.get('/ready', async (_req, reply) => {
-    const claude = await auther.status('claude');
-    const codex = await auther.status('codex');
+    const claude = await credentialManager.status('claude');
+    const codex = await credentialManager.status('codex');
     const deepseek = {
       provider: 'deepseek',
       ok: Boolean(config.deepseekApiKey),
@@ -91,9 +91,9 @@ async function main(): Promise<void> {
     await sem.acquire();
     try {
       if (provider === 'anthropic') {
-        await forwardAnthropic(req, reply, body, auther);
+        await forwardAnthropic(req, reply, body, credentialManager);
       } else if (provider === 'codex') {
-        await forwardCodex(req, reply, body, auther);
+        await forwardCodex(req, reply, body, credentialManager);
       } else {
         await forwardDeepseek(req, reply, body);
       }

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { readSecretFile } from '../secret-file.js';
+import * as credentialManager from '../credential-manager.js';
 import { all, get, nowIso, run } from './index.js';
-import { decrypt, encrypt, invalidate as invalidateSettings } from './settings.js';
+import { decrypt, invalidate as invalidateSettings } from './settings.js';
 
 /**
  * Upstream providers: where the gateway forwards to.
@@ -29,21 +29,21 @@ export interface Provider {
   kind: ProviderKind;
   baseUrl: string;
   /**
-   * Whether a key is configured; never the key itself.
+   * Whether a credential is configured; never anything of the credential itself.
    *
-   * True for a key that comes from a file too — but "configured" is not "readable",
-   * and the file's actual state is queried separately by the console (see
-   * app/routes/admin/providers.ts).
+   * "Configured" is not "usable": whether that credential still exists and still yields
+   * a token is asked of the credential manager separately (see credentialIds in
+   * app/routes/admin/shared.ts).
    */
   hasKey: boolean;
   /**
-   * Path to the file holding the key, as seen inside the container. Empty means the
-   * key is stored in the database directly.
+   * The credential this provider uses, named by id.
    *
-   * A reference, not a value: when another container rotates that file, the next
-   * request uses the new one. See core/secret-file.ts.
+   * The value behind it — a pasted key, the contents of a file another process rotates,
+   * or a subscription's access token — lives in the credential manager and nowhere else.
+   * The gateway asks for it per request; see secretOf.
    */
-  keyFile: string;
+  credentialId: string;
   active: boolean;
   note?: string;
   /**
@@ -67,8 +67,7 @@ interface Row {
   name: string;
   kind: string;
   base_url: string;
-  api_key: string | null;
-  api_key_file: string | null;
+  credential_id: string | null;
   active: number;
   note: string | null;
   models: string | null;
@@ -85,8 +84,8 @@ const toProvider = (r: Row): Provider => ({
   name: r.name,
   kind: r.kind as ProviderKind,
   baseUrl: r.base_url,
-  hasKey: Boolean(r.api_key || r.api_key_file),
-  keyFile: r.api_key_file ?? '',
+  hasKey: Boolean(r.credential_id),
+  credentialId: r.credential_id ?? '',
   active: r.active === 1,
   note: r.note ?? undefined,
   models: splitModels(r.models),
@@ -111,54 +110,25 @@ export function active(): Provider | undefined {
 }
 
 /**
- * The key in plaintext, for the gateway alone — no path that returns to the frontend
- * may touch it.
+ * The value to send upstream, for the gateway alone — no path that returns to the
+ * frontend may touch it.
  *
- * When it is a file reference this **re-reads from disk on every call**, deliberately.
- * The whole point of pointing at a file is that somebody else — a secret sidecar,
- * another container — rotates it, and caching throws away the one benefit that buys.
- * The cost is a few syscalls per upstream request, tens of microseconds, against the
- * LLM call that follows.
+ * It is asked of the credential manager **on every call**. That service mints a
+ * subscription's access token before the old one expires and re-reads a key file each
+ * time it is asked, so what comes back has hours to live at most and holding on to it
+ * would only serve something stale. The cost is one Unix-socket round trip per upstream
+ * request, against the LLM call that follows.
+ *
+ * force asks for a mint before answering, which is what the gateway does after a 401: the
+ * token it just used may have been revoked upstream rather than merely aged out.
  */
-export function secretOf(id: string): string | undefined {
-  const r = get<{ api_key: string | null; api_key_file: string | null }>(
-    'select api_key, api_key_file from upstream_providers where id = ?',
+export async function secretOf(id: string, opts: { force?: boolean } = {}): Promise<string | undefined> {
+  const r = get<{ credential_id: string | null }>(
+    'select credential_id from upstream_providers where id = ?',
     id,
   );
-  if (!r) return undefined;
-
-  if (r.api_key_file) {
-    const read = readSecretFile(r.api_key_file);
-    if ('error' in read) {
-      // All the gateway sees is "no key", which is not enough to debug from, so say why here
-      console.error(`[providers] cannot read the key file (${r.api_key_file}): ${read.error}`);
-      return undefined;
-    }
-    return read.value;
-  }
-
-  if (!r.api_key) return undefined;
-  return decrypt(r.api_key) ?? undefined;
-}
-
-/**
- * Whether what was typed into apiKey is the key itself or the path to a file holding it.
- *
- * One test: **does it start with `/`**.
- *
- * It has to be purely syntactic — no stat to see whether the file exists. The app
- * container very likely does not mount that volume at all (mounting it only into the
- * gateway is the recommended shape; see the comments in core/secret-file.ts). Touch the
- * filesystem and a perfectly good path gets classified as a literal key because *this*
- * process cannot see it, encrypted into the database, and sent upstream as
- * Authorization. The error is a 401, and nothing about it points at the cause.
- *
- * It is the same line secret-file.ts draws: that side only ever accepted absolute paths.
- * Real keys do not start with `/` either — sk-, sk-ant- and the rest all carry a prefix.
- * To bypass the test, pass apiKeyFile directly.
- */
-export function looksLikePath(v: string): boolean {
-  return v.trim().startsWith('/');
+  if (!r?.credential_id) return undefined;
+  return credentialManager.tokenFor(r.credential_id, opts);
 }
 
 export interface UpsertInput {
@@ -166,43 +136,14 @@ export interface UpsertInput {
   kind: ProviderKind;
   baseUrl?: string;
   /**
-   * The key itself, **or** the path to a file holding it — decided by looksLikePath().
-   * Omitted means leave it alone when editing; an empty string clears it.
+   * The credential this provider uses, by id. Omitted means leave it alone when editing;
+   * an empty string clears it, after which the provider has no way to authenticate and
+   * the gateway refuses its requests.
    */
-  apiKey?: string;
-  /** Says outright that this is a path. For bypassing the automatic test; see keyColumns(). */
-  apiKeyFile?: string;
+  credentialId?: string;
   note?: string;
   models?: string[];
   defaultModel?: string;
-}
-
-/**
- * Turns apiKey / apiKeyFile into the two column values.
- *
- * The rule: **either field appearing means the source of the key is being respecified**,
- * and the other column is always cleared. Otherwise the database can end up holding an
- * old ciphertext *and* a new path, while secretOf reads only one of them — the console
- * says "configured" and something else goes out on the wire, which is the hardest kind
- * of discrepancy to chase.
- *
- * apiKey takes both a key and a path in one field; a leading `/` routes it to the file
- * column (see looksLikePath). apiKeyFile remains as the **explicit** form and takes no
- * part in the test.
- *
- * undefined means the patch did not mention a key at all: leave both columns alone.
- */
-function keyColumns(input: Pick<UpsertInput, 'apiKey' | 'apiKeyFile'>):
-  { key: string | null; file: string | null } | undefined {
-  if (input.apiKey === undefined && input.apiKeyFile === undefined) return undefined;
-  const file = (input.apiKeyFile ?? '').trim();
-  if (file) return { key: null, file };
-  const literal = input.apiKey ?? '';
-  // All whitespace clears it. This used to test for the empty string only, so ' ' was
-  // encrypted and stored as a key made of spaces
-  if (!literal.trim()) return { key: null, file: null };
-  if (looksLikePath(literal)) return { key: null, file: literal.trim() };
-  return { key: encrypt(literal), file: null };
 }
 
 /** The frontend can send anything; normalise to a trimmed, de-duplicated, non-empty string array before storing */
@@ -214,17 +155,15 @@ function cleanModels(v: unknown): string[] {
 export function create(input: UpsertInput): Provider {
   const id = crypto.randomUUID();
   const now = nowIso();
-  const key = keyColumns(input) ?? { key: null, file: null };
   run(
     `insert into upstream_providers
-       (id, name, kind, base_url, api_key, api_key_file, active, note, models, default_model, created_at, updated_at)
-     values (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+       (id, name, kind, base_url, credential_id, active, note, models, default_model, created_at, updated_at)
+     values (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
     id,
     input.name.trim(),
     input.kind,
     (input.baseUrl ?? '').replace(/\/+$/, ''),
-    key.key,
-    key.file,
+    (input.credentialId ?? '').trim() || null,
     input.note ?? null,
     cleanModels(input.models).join(','),
     (input.defaultModel ?? '').trim(),
@@ -238,9 +177,9 @@ export function update(id: string, patch: Partial<UpsertInput>): Provider | unde
   const cur = findById(id);
   if (!cur) return undefined;
 
-  // No key in the patch leaves both columns alone; a key in the patch resets both (see keyColumns)
-  const key = keyColumns(patch);
-  const keyClause = key ? ', api_key = ?, api_key_file = ?' : '';
+  // No credential in the patch leaves the column alone; an empty string clears it
+  const credential = patch.credentialId === undefined ? undefined : patch.credentialId.trim() || null;
+  const keyClause = credential !== undefined ? ', credential_id = ?' : '';
   const args: (string | null)[] = [
     patch.name?.trim() ?? cur.name,
     patch.kind ?? cur.kind,
@@ -250,7 +189,7 @@ export function update(id: string, patch: Partial<UpsertInput>): Provider | unde
     (patch.defaultModel ?? cur.defaultModel).trim(),
     nowIso(),
   ];
-  if (key) args.push(key.key, key.file);
+  if (credential !== undefined) args.push(credential);
   args.push(id);
 
   run(
@@ -293,7 +232,6 @@ function legacySetting(key: string): string | undefined {
 export function seedFromSettings(): void {
   if (get('select 1 as x from upstream_providers limit 1')) return;
 
-  const key = legacySetting('deepseek.apiKey') ?? process.env.DEEPSEEK_API_KEY;
   const chat = legacySetting('upstream.protocol') === 'openai-chat';
   const deepseek = {
     baseUrl: () =>
@@ -307,10 +245,13 @@ export function seedFromSettings(): void {
     // belongs to their routing, so it goes in base_url — the gateway layer knows no
     // vendor names (see gateway/upstream.ts)
     baseUrl: chat ? deepseek.baseUrl() : `${deepseek.baseUrl()}/anthropic`,
-    apiKey: key,
     note: 'Migrated from system settings',
   });
-  if (key) activate(p.id);
+  // The key it used to be created with goes to the credential manager instead, from the
+  // gateway, which is the process that can reach it: see gateway/legacy-keys.ts. The row
+  // is activated here regardless — a provider with no credential is visibly unusable in
+  // the console, which is a better state than a deployment with nothing active at all.
+  activate(p.id);
 
   create({
     name: 'Mock upstream (testing)',

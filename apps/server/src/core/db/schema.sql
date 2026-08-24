@@ -239,11 +239,10 @@ create table if not exists upstream_providers (
   name        text not null,
   kind        text not null,
   base_url    text not null default '',
-  api_key     text,                -- ciphertext (enc:v1:...), same key as settings
-  -- For a key kept in a file: **a plaintext path, not a key**, read afresh before every
-  -- use (see core/secret-file.ts). Mutually exclusive with api_key — setting one clears
-  -- the other, so an old value cannot linger and make the two disagree.
-  api_key_file text,
+  -- The credential this provider uses, by id: **a name, not a value**. What is behind it
+  -- lives in the credential manager (credential-manager/), which hands the gateway an
+  -- access token per request. Nothing usable upstream is stored here.
+  credential_id text,
   active      integer not null default 0,
   note        text,
   -- The model list belongs to the provider, not to global settings: switching upstream

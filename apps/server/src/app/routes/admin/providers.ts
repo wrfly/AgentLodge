@@ -4,43 +4,24 @@ import * as audit from '../../../core/db/audit.js';
 import * as providersRepo from '../../../core/db/providers.js';
 import { allowlistProblem, auditProxyProblem } from '../../../core/egress.js';
 import { getBool } from '../../../core/db/settings.js';
-import { inspect } from '../../../core/secret-file.js';
-import { callGateway, guard, keyFileStatuses } from './shared.js';
+import { callGateway, credentialIds, guard } from './shared.js';
 import { tr } from '../../../core/i18n/locale.js';
-
-/**
- * When a key is a file reference, look at the path before saving.
- *
- * Only `code === 'path'` is refused — not absolute, not in the allowlist — because that is
- * wrong on any machine. "Missing" and "no permission" are not refused: the gateway is what
- * reads the key, app is free not to mount that volume, and one fewer process able to see a
- * secret is better. Those show as red text in the list, which is enough for a person to act
- * on.
- *
- * A path typed into apiKey goes through the same check, using the very looksLikePath that
- * decides where it is stored. It has to be the same function, or one side would validate it
- * as a key while the other stored it as a path.
- */
-function keyFileProblem(input: { apiKey?: string; apiKeyFile?: string }): string | undefined {
-  const explicit = (input.apiKeyFile ?? '').trim();
-  const combined = input.apiKey ?? '';
-  const p = explicit || (providersRepo.looksLikePath(combined) ? combined.trim() : '');
-  if (!p) return undefined;
-  const r = inspect(p);
-  return 'error' in r && r.code === 'path' ? `key file: ${r.error}` : undefined;
-}
 
 export function register(app: FastifyInstance): void {
 
   app.get('/api/admin/providers', guard, async (req) => {
-    // For providers holding a key file, fetch its current status too: "a path is configured"
-    // and "that path yields a key right now" are different things and the interface shows them
-    // separately. The status comes from the gateway, since the gateway is what reads it (see
-    // secretFilesView in shared.ts)
     const rows = providersRepo.list();
-    const status = await keyFileStatuses(rows.map((p) => p.keyFile), req.headers.authorization);
+    // Which credentials the credential manager still has. A provider naming one that was
+    // deleted is configured and unusable at the same time, and without this the console
+    // shows the name and nothing else — the failure surfaces only as a refused request.
+    // undefined means the question could not be asked, which is not the same as "it is
+    // gone" and must not be drawn as one.
+    const known = await credentialIds(req.headers.authorization);
     return {
-      providers: rows.map((p) => ({ ...p, keyFileStatus: p.keyFile ? status.get(p.keyFile) : undefined })),
+      providers: rows.map((p) => ({
+        ...p,
+        credentialMissing: p.credentialId && known ? !known.has(p.credentialId) : undefined,
+      })),
       kinds: providersRepo.KIND_LABEL,
       /**
        * The hourly refresh switch, which the console draws at the foot of this card.
@@ -55,8 +36,6 @@ export function register(app: FastifyInstance): void {
     const b = (req.body ?? {}) as providersRepo.UpsertInput;
     if (!b.name?.trim()) return reply.code(400).send({ error: tr(req, 'Missing name') });
     if (!providersRepo.KIND_LABEL[b.kind]) return reply.code(400).send({ error: tr(req, 'Unknown kind') });
-    const bad = keyFileProblem(b);
-    if (bad) return reply.code(400).send({ error: bad });
     const p = providersRepo.create(b);
     audit.log({ actorId: req.user!.id, action: 'admin.provider.create', targetType: 'provider', targetId: p.id, detail: { name: p.name, kind: p.kind }, ip: req.ip });
     return p;
@@ -68,8 +47,6 @@ export function register(app: FastifyInstance): void {
     if (!cur) return reply.code(404).send({ error: tr(req, 'No such provider') });
 
     const b = (req.body ?? {}) as providersRepo.UpsertInput;
-    const bad = keyFileProblem(b);
-    if (bad) return reply.code(400).send({ error: bad });
 
     // The active provider cannot be edited into "reaches the network with no audit proxy" —
     // otherwise activating first and clearing the proxy afterwards walks around the check in

@@ -9,6 +9,7 @@
  * Run: npm -w @agentlodge/server run test:model-refresh
  */
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 // Type-only, so it does not execute the module before the environment is set below
@@ -18,6 +19,16 @@ import type { Provider } from '../core/db/providers.js';
 const box = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-refresh-')));
 process.env.DATA_DIR = box;
 process.env.JWT_SECRET = 'test-only-not-a-real-secret';
+
+// A stand-in for the credential manager: the refresher asks it for the key the same way a
+// request on its way upstream does
+const managerSocket = path.join(box, 'credential-manager.sock');
+process.env.CREDENTIAL_MANAGER_SOCKET = managerSocket;
+const manager = http.createServer((req, res) => {
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ credential: 'lab-key', accessToken: 'sk-lab-key' }));
+});
+await new Promise<void>((resolve) => manager.listen(managerSocket, resolve));
 
 const { initDb } = await import('../core/db/index.js');
 initDb();
@@ -58,7 +69,7 @@ function reset(models: string[]): Provider {
   for (const p of providers.list()) providers.remove(p.id);
   const p = providers.create({
     name: 'lab', kind: 'anthropic-native', baseUrl: 'https://api.example.com',
-    apiKey: 'sk-key', models,
+    credentialId: 'lab-key', models,
   });
   providers.activate(p.id);
   logs.length = 0;
@@ -156,6 +167,7 @@ console.log('\n=== With no provider at all ===');
   ok('it does nothing quietly', logs.length === 0);
 }
 
+manager.close();
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

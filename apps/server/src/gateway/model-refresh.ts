@@ -33,14 +33,17 @@ const FIRST_MS = 30_000;
 /** Reused from the console's button, so both go out under the same audit rules */
 type Egress = Parameters<typeof fetchModels>[2];
 
-async function refreshOnce(egressFor: (p: providersRepo.Provider) => Egress, log: (msg: string) => void): Promise<void> {
+async function refreshOnce(
+  egressFor: (p: providersRepo.Provider, apiKey: string) => Egress,
+  log: (msg: string) => void,
+): Promise<void> {
   if (!getBoolFresh('agents.autoRefreshModels')) return;
 
   const provider = providersRepo.active();
   if (!provider) return;
 
-  const apiKey = providersRepo.secretOf(provider.id) ?? '';
-  const result = await fetchModels(provider, apiKey, egressFor(provider));
+  const apiKey = (await providersRepo.secretOf(provider.id)) ?? '';
+  const result = await fetchModels(provider, apiKey, egressFor(provider, apiKey));
   if (result.error || result.models.length === 0) {
     log(`model refresh: ${provider.name} — ${result.error ?? 'no models'}`);
     return;
@@ -61,10 +64,12 @@ async function refreshOnce(egressFor: (p: providersRepo.Provider) => Egress, log
 
 /**
  * @param egressFor how a request to this provider should leave — the audit proxy when one is
- * configured. Passed in rather than imported so this file has no opinion about egress.
+ * configured. Passed in rather than imported so this file has no opinion about egress. It
+ * is handed the key as well, because resolving one can mean a call to the credential
+ * manager and doing it twice would mean two.
  */
 export function startModelRefresh(
-  egressFor: (p: providersRepo.Provider) => Egress,
+  egressFor: (p: providersRepo.Provider, apiKey: string) => Egress,
   log: (msg: string) => void,
 ): void {
   const tick = (): void => {

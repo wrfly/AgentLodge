@@ -10,41 +10,40 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
 
-// persistentState is what gets written to disk, encrypted. It is keyed by
-// provider name and holds the full tokenPair (including the refresh token),
-// which is why it must never be written in the clear.
+// persistentState is what gets written to disk, encrypted: the whole store,
+// refresh tokens and pasted keys included. That is exactly why it is never
+// written in the clear.
 type persistentState struct {
-	Tokens map[string]*tokenPair `json:"tokens"`
+	Credentials map[string]*credential `json:"credentials"`
 }
 
-// loadAuthKey returns the 32-byte encryption key. Sources, in order: the
-// AUTHER_KEY environment variable (raw bytes, or hex / base64), a keyfile at
-// AUTHER_KEY_FILE, or a key generated and stored next to the state file. The
+// loadStateKey returns the 32-byte encryption key. Sources, in order: the
+// CREDENTIAL_MANAGER_KEY environment variable (raw bytes, or hex / base64), a keyfile at
+// CREDENTIAL_MANAGER_KEY_FILE, or a key generated and stored next to the state file. The
 // last fallback exists so a first run "just works"; operators who want the
-// state to survive container rebuilds should supply AUTHER_KEY explicitly.
-func loadAuthKey() ([]byte, error) {
-	if v := os.Getenv("AUTHER_KEY"); v != "" {
+// state to survive container rebuilds should supply CREDENTIAL_MANAGER_KEY explicitly.
+func loadStateKey() ([]byte, error) {
+	if v := os.Getenv("CREDENTIAL_MANAGER_KEY"); v != "" {
 		return normalizeKey([]byte(v))
 	}
-	if p := os.Getenv("AUTHER_KEY_FILE"); p != "" {
+	if p := os.Getenv("CREDENTIAL_MANAGER_KEY_FILE"); p != "" {
 		raw, err := os.ReadFile(p)
 		if err != nil {
-			return nil, fmt.Errorf("read AUTHER_KEY_FILE: %w", err)
+			return nil, fmt.Errorf("read CREDENTIAL_MANAGER_KEY_FILE: %w", err)
 		}
 		return normalizeKey(raw)
 	}
 	// No explicit key: derive a stable key from the machine id / a generated
 	// seed file, so restarts on the same host keep working.
-	seedFile := os.Getenv("AUTHER_KEY_SEED")
+	seedFile := os.Getenv("CREDENTIAL_MANAGER_KEY_SEED")
 	if seedFile == "" {
-		seedFile = filepath.Join(os.Getenv("HOME"), ".agentlodge", "auther.key")
+		seedFile = filepath.Join(os.Getenv("HOME"), ".agentlodge", "credential-manager.key")
 	}
 	raw, err := os.ReadFile(seedFile)
 	if err != nil {
@@ -128,12 +127,13 @@ func decryptState(key, ciphertext []byte) (*persistentState, error) {
 	return &state, nil
 }
 
-// persist writes the current cached tokens to the state file, encrypted.
-func (a *auther) persist() {
+// persist writes the store to the state file, encrypted. Called on every
+// change, so a restart comes back to what the console last saw.
+func (a *manager) persist() {
 	if a.cfg.stateFile == "" || len(a.cfg.authKey) == 0 {
 		return
 	}
-	state := &persistentState{Tokens: a.cached}
+	state := &persistentState{Credentials: a.creds}
 	ct, err := encryptState(a.cfg.authKey, state)
 	if err != nil {
 		return
@@ -148,8 +148,8 @@ func (a *auther) persist() {
 	_ = os.Rename(tmp, a.cfg.stateFile)
 }
 
-// restore loads previously persisted tokens into the cache.
-func (a *auther) restore() error {
+// restore loads a previously persisted store.
+func (a *manager) restore() error {
 	raw, err := os.ReadFile(a.cfg.stateFile)
 	if err != nil {
 		return err
@@ -158,17 +158,17 @@ func (a *auther) restore() error {
 	if err != nil {
 		return err
 	}
-	for name, pair := range state.Tokens {
-		if pair != nil {
-			a.cached[name] = pair
+	for id, c := range state.Credentials {
+		if c != nil {
+			a.creds[id] = c
 		}
 	}
 	return nil
 }
 
-// parseOwner reads a numeric "uid", "uid:gid" or ":gid" spec for the file
-// drop's AUTH_KEY_OWNER. Names are not accepted (the scratch image has no
-// passwd database, so only ids are meaningful).
+// parseOwner reads a numeric "uid", "uid:gid" or ":gid" spec for
+// CREDENTIAL_MANAGER_SOCKET_OWNER. Names are not accepted (the scratch image
+// has no passwd database, so only ids are meaningful).
 func parseOwner(spec string) (uid, gid int, err error) {
 	uid, gid = keepOwner, keepOwner
 	rawUID, rawGID, hasGID := strings.Cut(spec, ":")
@@ -193,60 +193,4 @@ func parseOwner(spec string) (uid, gid int, err error) {
 		return keepOwner, keepOwner, errors.New("no id given")
 	}
 	return uid, gid, nil
-}
-
-// writeFileAtomic replaces path via a temp-file + rename, so a reader never
-// sees a truncated or transiently-wrong-mode file.
-func writeFileAtomic(path string, data []byte, mode os.FileMode, uid, gid int) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".auther-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if uid != keepOwner || gid != keepOwner {
-		if err := tmp.Chown(uid, gid); err != nil {
-			tmp.Close()
-			return err
-		}
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
-}
-
-// publish writes the current claude access token to the configured file drop,
-// if one is set, for key-file consumers. Assumes the caller holds a.lock().
-func (a *auther) publish() {
-	if a.cfg.authKeyFile == "" {
-		return
-	}
-	pair := a.cached[providerClaude]
-	if pair == nil || pair.AccessToken == "" {
-		return
-	}
-	// Skip when already equal, to avoid churn.
-	if cur, err := os.ReadFile(a.cfg.authKeyFile); err == nil && string(cur) == pair.AccessToken {
-		return
-	}
-	if err := writeFileAtomic(a.cfg.authKeyFile, []byte(pair.AccessToken), a.cfg.authKeyMode, a.cfg.authKeyUID, a.cfg.authKeyGID); err != nil {
-		log.Printf("auther: publish %s: %v", a.cfg.authKeyFile, err)
-	} else {
-		log.Printf("auther: published access token to %s", a.cfg.authKeyFile)
-	}
 }

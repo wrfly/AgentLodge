@@ -75,22 +75,7 @@ export const config = {
   /** On in production, so cookies carry Secure */
   secureCookies: process.env.SECURE_COOKIES === 'true',
 
-  /**
-   * Directories a key may be read from, colon-separated like PATH.
-   *
-   * Empty uses the two defaults, `<DATA_DIR>/secrets` and `/run/secrets` (see
-   * core/secret-file.ts). Add to it when another container writes credentials to a
-   * different mount point. Writing `/` means no restriction — think that through: it
-   * lets an administrator have the server treat any file in the container as a key and
-   * send it to an upstream address they also chose.
-   *
-   * **app and gateway need the same value**: app validates paths and lists directories
-   * with it, gateway does the actual reading.
-   */
-  secretFileRoots: (process.env.SECRET_FILE_ROOTS ?? '')
-    .split(':')
-    .map((s) => s.trim())
-    .filter(Boolean),
+  credentialManagerSocket: (process.env.CREDENTIAL_MANAGER_SOCKET ?? '').trim(),
 
   /* ---------------- Metering gateway ---------------- */
 

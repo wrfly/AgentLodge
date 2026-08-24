@@ -83,4 +83,8 @@ export const de: Record<string, string> = {
   'Nothing to undo': 'Nichts rückgängig zu machen',
   'A memory cannot exceed {kb} KB': 'Ein Gedächtniseintrag darf {kb} KB nicht überschreiten',
   'At most {n} memories': 'Höchstens {n} Gedächtniseinträge',
+  'Paste the code the page showed you': 'Den angezeigten Code einfügen',
+  'Missing key': 'Schlüssel fehlt',
+  'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'Die Zugangsdaten {id} für Upstream „{name}“ sind derzeit nicht verwendbar; wenden Sie sich an einen Administrator',
+  'Upstream "{name}" has no credential configured; ask an administrator': 'Für Upstream „{name}“ sind keine Zugangsdaten konfiguriert; wenden Sie sich an einen Administrator',
 };

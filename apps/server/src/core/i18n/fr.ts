@@ -83,4 +83,8 @@ export const fr: Record<string, string> = {
   'Nothing to undo': 'Rien à annuler',
   'A memory cannot exceed {kb} KB': 'Une mémoire ne peut pas dépasser {kb} Ko',
   'At most {n} memories': '{n} mémoires au maximum',
+  'Paste the code the page showed you': 'Collez le code affiché par la page',
+  'Missing key': 'Clé manquante',
+  'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'Les identifiants {id} de l\\\'amont « {name} » sont inutilisables pour le moment ; contactez un administrateur',
+  'Upstream "{name}" has no credential configured; ask an administrator': 'Aucun identifiant configuré pour l\\\'amont « {name} » ; contactez un administrateur',
 };

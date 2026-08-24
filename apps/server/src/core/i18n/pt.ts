@@ -83,4 +83,8 @@ export const pt: Record<string, string> = {
   'Nothing to undo': 'Nada para anular',
   'A memory cannot exceed {kb} KB': 'Uma memória não pode exceder {kb} KB',
   'At most {n} memories': 'No máximo {n} memórias',
+  'Paste the code the page showed you': 'Cole o código que a página mostrou',
+  'Missing key': 'Falta a chave',
+  'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'A credencial {id} do upstream «{name}» não pode ser usada neste momento; contacte um administrador',
+  'Upstream "{name}" has no credential configured; ask an administrator': 'O upstream «{name}» não tem credencial configurada; contacte um administrador',
 };

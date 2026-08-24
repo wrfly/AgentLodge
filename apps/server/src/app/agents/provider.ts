@@ -145,7 +145,7 @@ export interface BalanceResult {
  * `https://api.deepseek.com/anthropic`, with `/v1/messages` appended straight onto it,
  * while the balance lives at the root.
  */
-function balanceEndpoint(): { url: string; key: string } | null {
+async function balanceEndpoint(): Promise<{ url: string; key: string } | null> {
   const p = providers.active();
   if (!p) return null;
   let host: string;
@@ -155,14 +155,14 @@ function balanceEndpoint(): { url: string; key: string } | null {
     return null;
   }
   if (!(host === 'api.deepseek.com' || host.endsWith('.deepseek.com'))) return null;
-  const key = providers.secretOf(p.id);
+  const key = await providers.secretOf(p.id);
   if (!key) return null;
   const root = p.baseUrl.replace(/\/anthropic\/?$/, '').replace(/\/+$/, '');
   return { url: `${root}/user/balance`, key };
 }
 
 export async function fetchBalance(): Promise<BalanceResult | null> {
-  const target = balanceEndpoint();
+  const target = await balanceEndpoint();
   if (!target) return null;
   const key = target.key;
 

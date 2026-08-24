@@ -83,4 +83,8 @@ export const zh: Record<string, string> = {
   'Nothing to undo': '没有可撤销的修改',
   'A memory cannot exceed {kb} KB': '单条记忆不能超过 {kb} KB',
   'At most {n} memories': '最多 {n} 条记忆',
+  'Paste the code the page showed you': '把页面给出的 code 粘进来',
+  'Missing key': '缺少 key',
+  'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': '上游「{name}」的凭据 {id} 现在用不了，请找管理员',
+  'Upstream "{name}" has no credential configured; ask an administrator': '上游「{name}」没有配置凭据，请找管理员',
 };

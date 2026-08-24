@@ -19,7 +19,7 @@ import {
   type Principal,
 } from '../core/credential.js';
 import { attachUser, requireAdmin } from '../core/auth/guard.js';
-import { inspect, listCandidates } from '../core/secret-file.js';
+import * as credentialManager from '../core/credential-manager.js';
 import { installLocale, tr } from '../core/i18n/locale.js';
 import { localAgentText, mockStream, outboundHeaders, resolveUpstream, type Resolved } from './upstream.js';
 import {
@@ -157,14 +157,8 @@ function egressTarget(target: Resolved): Egress | null {
  */
 export function startModelAutoRefresh(log: (message: string) => void): void {
   startModelRefresh(
-    (provider) => (upstreamUrl) =>
-      egressTarget({
-        url: upstreamUrl,
-        wire: 'anthropic',
-        translate: false,
-        apiKey: providersRepo.secretOf(provider.id) ?? '',
-        provider,
-      }),
+    (provider, apiKey) => (upstreamUrl) =>
+      egressTarget({ url: upstreamUrl, wire: 'anthropic', translate: false, apiKey, provider }),
     log,
   );
 }
@@ -172,7 +166,7 @@ export function startModelAutoRefresh(log: (message: string) => void): void {
 /** The model list for one provider, sent out under the same audit rules as everything else */
 async function modelsFor(provider: providersRepo.Provider | undefined): Promise<{ models: string[]; error?: string }> {
   if (!provider) return { models: [], error: 'No upstream provider is enabled' };
-  const apiKey = providersRepo.secretOf(provider.id) ?? '';
+  const apiKey = (await providersRepo.secretOf(provider.id)) ?? '';
   return fetchModels(provider, apiKey, (upstreamUrl) =>
     egressTarget({ url: upstreamUrl, wire: 'anthropic', translate: false, apiKey, provider }),
   );
@@ -214,7 +208,7 @@ async function handleProxy(
     return sendError(reply, wire, 401, 'authentication_error', 'invalid_request_error', tr(req, 'The credential is invalid or has expired'));
   }
 
-  const target = resolveUpstream(wire, req.url);
+  const target = await resolveUpstream(wire, req.url);
   if (!target) {
     return sendError(
       reply,
@@ -236,14 +230,15 @@ async function handleProxy(
       'api_error',
       'server_error',
       // With a key held in a file, "could not read it" and "not configured" are different
-      // problems: one is fixed in the console, the other by checking the mount. The reason
-      // — missing, no permission, wrong contents — is in the server log; see secretOf
-      target.provider.keyFile
-        ? tr(req, 'The API key file for upstream "{name}" cannot be read ({path}); ask an administrator', {
+      // Two different problems reach this line: no credential is named, or the credential
+      // manager could not produce a value for the one that is. Which one it was is in the
+      // server log — see secretOf and the [credentials] lines it writes.
+      target.provider.credentialId
+        ? tr(req, 'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator', {
             name: target.provider.name,
-            path: target.provider.keyFile,
+            id: target.provider.credentialId,
           })
-        : tr(req, 'Upstream "{name}" has no API key configured; ask an administrator', {
+        : tr(req, 'Upstream "{name}" has no credential configured; ask an administrator', {
             name: target.provider.name,
           }),
     );
@@ -563,6 +558,25 @@ function settle(
 
 /* ---------------- The server ---------------- */
 
+/**
+ * One call to the credential manager, with its failures turned into something the console
+ * can display. They are all of one kind — the service is not running, or it refused what
+ * was asked — and none of them should read as "the gateway broke".
+ */
+async function credentialManagerCall<T>(
+  reply: { code: (n: number) => { send: (body: unknown) => unknown } },
+  call: () => Promise<T>,
+): Promise<unknown> {
+  if (!credentialManager.isConfigured()) {
+    return reply.code(400).send({ error: 'No credential manager is configured for this deployment' });
+  }
+  try {
+    return await call();
+  } catch (e) {
+    return reply.code(400).send({ error: (e as Error).message });
+  }
+}
+
 export function buildGateway(): FastifyInstance {
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'warn' },
@@ -617,7 +631,7 @@ export function buildGateway(): FastifyInstance {
       return reply.code(401).send(anthropicError('authentication_error', tr(req, 'The credential is invalid or has expired')));
     }
 
-    const target = resolveUpstream('anthropic', '/v1/messages/count_tokens');
+    const target = await resolveUpstream('anthropic', '/v1/messages/count_tokens');
     const egress = target && egressTarget(target);
     if (target && egress && target.apiKey && !target.translate) {
       try {
@@ -723,22 +737,88 @@ export function buildGateway(): FastifyInstance {
   });
 
   /**
-   * The status of a key file. **The gateway decides.**
+   * Credentials, as the credential manager holds them. **The gateway decides**: its socket
+   * is mounted into this container, because this is the process that needs a token when a
+   * request is on its way out. One fewer process able to ask for one is better, so the
+   * console reaches them through here.
    *
-   * This process is what reads the key, so it is the only one that can say whether it is
-   * readable. The app container is free not to mount that volume — the recommended shape,
-   * see core/secret-file.ts — and then app's own stat says "no such file" while the file is
-   * fine and the gateway reads it on every request. Asking app is asking an unrelated
-   * process a question about this one.
-   *
-   * Authenticated for the same reason /gate is, and more so: this returns file fingerprints
-   * and masked previews — the first and last four characters of a key — and agent
-   * containers are on agent-net.
+   * Nothing on these routes returns a credential's value. The list carries a masked hint
+   * and an expiry; signing in returns a URL to authorise at. The value goes out as
+   * Authorization from this process and nowhere else.
    */
-  app.get('/secret-files', adminOnly, async (req) => {
+  app.get('/credentials', adminOnly, async () => {
+    if (!credentialManager.isConfigured()) return { configured: false, credentials: [] };
+    try {
+      return { configured: true, credentials: await credentialManager.list() };
+    } catch (e) {
+      return { configured: true, credentials: [], error: (e as Error).message };
+    }
+  });
+
+  app.post('/credentials', adminOnly, async (req, reply) => {
+    const b = (req.body ?? {}) as { id?: string; label?: string; apiKey?: string; kind?: string; path?: string };
+    if (!b.id?.trim()) return reply.code(400).send({ error: tr(req, 'Missing name') });
+    if (b.kind === 'key-file') {
+      if (!b.path?.trim()) return reply.code(400).send({ error: tr(req, 'Missing key') });
+      return credentialManagerCall(reply, () =>
+        credentialManager.storeKeyFile({ id: b.id!.trim(), label: b.label, path: b.path!.trim() }),
+      );
+    }
+    if (!b.apiKey?.trim()) return reply.code(400).send({ error: tr(req, 'Missing key') });
+    return credentialManagerCall(reply, () =>
+      credentialManager.storeApiKey({ id: b.id!.trim(), label: b.label, apiKey: b.apiKey!.trim() }),
+    );
+  });
+
+  app.post('/credentials/import', adminOnly, async (req, reply) => {
+    const b = (req.body ?? {}) as { id?: string; kind?: string; label?: string };
+    const kind = b.kind?.trim() || 'claude';
+    return credentialManagerCall(reply, () =>
+      credentialManager.importFromHost({ id: b.id?.trim() || kind, kind, label: b.label }),
+    );
+  });
+
+  app.delete('/credentials', adminOnly, async (req, reply) => {
+    const { id } = (req.query ?? {}) as { id?: string };
+    if (!id) return reply.code(400).send({ error: tr(req, 'Missing name') });
+    return credentialManagerCall(reply, async () => {
+      await credentialManager.remove(id);
+      return { ok: true };
+    });
+  });
+
+  app.post('/credentials/login/start', adminOnly, async (req, reply) => {
+    const b = (req.body ?? {}) as { kind?: string; id?: string; label?: string };
+    const kind = b.kind?.trim() || 'claude';
+    return credentialManagerCall(reply, () =>
+      credentialManager.startLogin({ kind, id: b.id?.trim() || kind, label: b.label }),
+    );
+  });
+
+  app.post('/credentials/login/finish', adminOnly, async (req, reply) => {
+    const b = (req.body ?? {}) as { loginId?: string; code?: string };
+    if (!b.loginId || !b.code?.trim()) {
+      return reply.code(400).send({ error: tr(req, 'Paste the code the page showed you') });
+    }
+    return credentialManagerCall(reply, () =>
+      credentialManager.finishLogin({ loginId: b.loginId!, code: b.code!.trim() }),
+    );
+  });
+
+  /**
+   * What is in the directories a key file may be read from. **The gateway decides**, for
+   * the same reason the credential routes above are here: the credential manager's socket
+   * is mounted into this container and nowhere else.
+   *
+   * Status only — size, time, fingerprint, a masked hint. Never the contents: the whole
+   * reason for naming a file instead of pasting it is that the value does not travel.
+   *
+   * Authenticated for the same reason /gate is, and more so: agent containers sit on
+   * agent-net, and this lists paths and fingerprints.
+   */
+  app.get('/credentials/files', adminOnly, async (req, reply) => {
     const { path } = (req.query ?? {}) as { path?: string };
-    const listing = listCandidates();
-    return path ? { ...listing, checked: inspect(path) } : listing;
+    return credentialManagerCall(reply, () => credentialManager.files(path));
   });
 
   return app;

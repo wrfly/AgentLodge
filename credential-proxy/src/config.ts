@@ -21,15 +21,15 @@ export const config = {
   /** The subscription allowance is shared, so concurrency is capped */
   maxConcurrent: int('GATEWAY_MAX_CONCURRENT', 2),
 
-  /* ---- Auth: credentials live in the auther sidecar, not here ---- */
-  /** Unix socket path for the auther service (the only holder of refresh tokens). */
-  autherSocket: str('AUTHER_SOCKET', '/run/agentlodge/auther.sock'),
+  /* ---- Auth: credentials live in the credential manager, not here ---- */
+  /** Unix socket path for the credential-manager service (the only holder of refresh tokens). */
+  credentialManagerSocket: str('CREDENTIAL_MANAGER_SOCKET', '/run/agentlodge/credential-manager.sock'),
 
   /* ---- DeepSeek: passed straight through with your own API key ---- */
   deepseekUpstream: str('DEEPSEEK_UPSTREAM', 'https://api.deepseek.com'),
   deepseekApiKey: str('DEEPSEEK_API_KEY', ''),
 
-  /* ---- Anthropic / Codex upstreams (credentials come from the auther) ---- */
+  /* ---- Anthropic / Codex upstreams (credentials come from the credential manager) ---- */
   anthropicUpstream: str('ANTHROPIC_UPSTREAM', 'https://api.anthropic.com'),
   codexUpstream: str('CODEX_UPSTREAM', 'https://chatgpt.com/backend-api/codex'),
 

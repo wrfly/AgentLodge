@@ -457,6 +457,43 @@ agent 能读到云厂商下发的机器凭据。
 
 ---
 
+### 3.4 凭据管理服务（`credential-manager/`，Go）
+
+**为什么单独一个进程。** 一把长期 API key 加密进库就够了，订阅不行：订阅背后是 refresh
+token，能一直换出新的 access token，等于订阅本身。它进了库，就同时进了备份、进了任何能读库
+的路径；它经过浏览器，就进了浏览器。所以把它关在一个只做这件事的进程里，别人只拿名字换
+token。
+
+**边界。**
+
+| 谁 | 拿得到什么 |
+|---|---|
+| 浏览器 / 控制台 | 凭据的名字、掩码提示（`sk-ant-a…cdef`）、过期时间 |
+| 数据库 | 名字 |
+| 网关 | 每次请求换一次 access token，几小时寿命 |
+| credential-manager | 原值：key、refresh token |
+
+**socket 就是访问控制。** 它不监听任何端口，只 bind 一个 0600 的 Unix socket，并 chown 给
+网关那个 uid。所以「谁能要 token」这件事由挂载和属主决定，不需要在它里面再做一套认证 ——
+能打开这个 socket 的进程，已经是我们打算给的那个。控制台的凭据页面因此是**转发到网关**的，
+跟 key 文件状态同一个理由：真正要发出去的那个进程，才是唯一需要能问的那个。
+
+**四种凭据**：`api-key`（粘一次的 key）、`key-file`（只存路径，每次要 token 时现读，给
+docker secret / secret manager sidecar 这类别人轮换的场景）、`claude` 和 `codex`（订阅的
+refresh token）。订阅可以在控制台登录（authorization code + PKCE，给链接、浏览器授权、把
+页面回显的 code 粘回来），也可以从挂进容器的凭据文件导入。claude.ai 没有 device code 授权，
+`claude login` 打不开浏览器时走的也是这条粘 code 的路。
+
+**刷新的所有权是排他的。** token 端点每次刷新都换发新的 refresh token，谁刷谁拿到新的，
+另一边那份即刻作废。所以一个订阅只能由一边管：交给它，宿主机就别再 `claude login`。
+
+**存储**：AES-256-GCM 写在它自己的卷里。密钥默认生成在同一个卷 —— 扛重启和重建，不扛整卷
+被拿走；要那份保证就从部署的 secret store 给 `CREDENTIAL_MANAGER_KEY`。
+
+**Go 而不是 TS**：静态二进制 + `scratch` 镜像，没有运行时也没有包管理器；`read_only`、
+`cap_drop: ALL`（只留 `DAC_READ_SEARCH` 读宿主机 0600 文件、`CHOWN` 交接 socket）。
+持有 refresh token 的进程，能被攻击的面越小越好，这一条压过了「全仓库一种语言」。
+
 ## 4. 数据模型
 
 **SQLite，WAL 模式。** 单机足够，`ROLE` 双进程共享同一个库文件实测可行
@@ -478,7 +515,7 @@ schema 只在这一个文件里，启动时整体执行（每张表都是 `creat
 | `conversations` / `messages` | 会话与消息，消息的 blocks 和 usage 存 JSON |
 | `usage_records` | 一次上游调用一行，计费的事实表 |
 | `model_pricing` | 价格表，带生效时间，改价不影响历史账 |
-| `upstream_providers` | 上游注册表，key 可以是密文也可以是文件路径 |
+| `upstream_providers` | 上游注册表，凭据只存名字，值在 credential-manager 里 |
 | `settings` | 系统设置，值是明文 JSON 或密文 |
 | `audit_logs` | 管理动作留痕 |
 
@@ -488,8 +525,9 @@ schema 只在这一个文件里，启动时整体执行（每张表都是 `creat
 （`enc:v1:` 前缀），AES key 由 `JWT_SECRET` 派生。所以换 `JWT_SECRET` 等于把这些值
 作废 —— 这一条在部署文档里单独写了。
 
-**key 也可以只存路径。** `api_key_file` 与 `api_key` 二选一。存路径时库里没有密钥，
-网关每次请求现读文件，上游轮换文件后下一个请求就用上了。
+**上游凭据不进库。** `upstream_providers.credential_id` 存的是凭据的名字，值在
+credential-manager 里（见 §3.4）。网关每次请求经 Unix socket 换一个 access token，寿命几小时。
+备份、日志、任何能读库的路径都拿不到可用的上游凭据。
 
 **用量是流水不是计数器。** `usage_records` 一次调用一行，所有汇总都从它算。
 计数器省查询但对不上账时无从查起，而这张表可以按天、按会话、按 key、按模型
@@ -1317,6 +1355,14 @@ PATCH  /api/admin/gate               { maxConcurrency }
 GET    /api/admin/pricing
 POST   /api/admin/pricing
 GET    /api/admin/audit-logs
+
+# 上游凭据（转发到网关，那边才挂着 credential-manager 的 socket）
+GET    /api/admin/credentials         # 名字、掩码提示、过期时间；从不返回值
+POST   /api/admin/credentials         { id, label, apiKey }
+DELETE /api/admin/credentials/:id
+POST   /api/admin/credentials/import  { id, kind }        # 导入挂进容器的凭据文件
+POST   /api/admin/credentials/login/start   { kind, id }  → { loginId, authorizeUrl }
+POST   /api/admin/credentials/login/finish  { loginId, code }
 ```
 
 ---
@@ -1335,7 +1381,7 @@ AgentLodge/
 │       └── src/{core,app,gateway}/
 ├── trace-proxy/          # 审计代理，零依赖，纯 Node 内置模块
 ├── credential-proxy/     # 独立的凭据注入网关，可选
-├── authkey-sync/         # Go 写的凭据同步 sidecar，可选
+├── credential-manager/   # Go 写的凭据管理服务，存放全部上游凭据
 ├── docker/               # Dockerfile、compose、Caddyfile
 └── scripts/              # 结构检查、假上游、冒烟自测
 ```
@@ -1352,7 +1398,7 @@ app 和 gateway 不拆成两个包：代码本就是两个独立的 Fastify app�
 | `compose.yml` | 从源码构建，开发和自建部署用；`compose.docker.yml` 是 Docker 引擎的覆盖层（主文件按 podman 写） |
 | `compose.release.yml` | 自包含，跑发布好的镜像，部署只需要它 + 一个 `.env` |
 
-五个服务：`caddy` / `app` / `gateway` / `audit` / `authkey-sync`（最后一个可选）。
+五个服务：`caddy` / `app` / `gateway` / `audit` / `credential-manager`。
 没有 postgres 也没有 redis —— 库是 SQLite，一个文件，app 和 gateway 共享（WAL）。
 
 三张网络：

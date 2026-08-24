@@ -22,12 +22,15 @@ export interface Resolved {
   provider: providers.Provider;
 }
 
-export function resolveUpstream(wire: Wire, originalUrl: string): Resolved | undefined {
+export async function resolveUpstream(wire: Wire, originalUrl: string): Promise<Resolved | undefined> {
   const p = providers.active();
   if (!p) return undefined;
 
   const base = p.baseUrl.replace(/\/+$/, '');
-  const apiKey = providers.secretOf(p.id) ?? '';
+  // Awaited because a credential may live in the credential manager, one socket call
+  // away (core/db/providers.ts). A key in the database or in a file answers without
+  // suspending at all.
+  const apiKey = (await providers.secretOf(p.id)) ?? '';
 
   // An upstream that only speaks chat: requests from both CLIs need translating
   if (p.kind === 'openai-chat') {

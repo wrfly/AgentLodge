@@ -26,12 +26,11 @@ import {
   type QuotaScope,
   type SettingView,
   type Provider,
-  type SecretFile,
-  type SecretFileProblem,
-  looksLikePath,
-  type SecretFileListing,
+  type Credential,
+  type StartedLogin,
+  type KeyFileEntry,
+  type KeyFileListing,
   type UpstreamAllowanceView,
-  isSecretProblem,
   type AuditProxyStatus,
   type AdminTraces,
   type TraceDetail,
@@ -298,28 +297,435 @@ interface ProviderDraft {
   name: string;
   kind: string;
   baseUrl: string;
-  /**
-   * The key itself, or the path to a file holding it — one field takes both.
-   * A leading `/` means it is a path (looksLikePath, the same test the server
-   * applies).
-   *
-   * Empty means leave the existing one alone. Clearing needs the explicit
-   * button, which is what clearKey is: with a single field, "empty" cannot mean
-   * both "unchanged" and "cleared".
-   */
-  key: string;
-  clearKey: boolean;
+  /** The credential's id. Empty means this provider has no way to authenticate. */
+  credential: string;
   models: string;
   defaultModel: string;
 }
 
+/* ---------------- Upstream credentials ---------------- */
+
+/** How long the token this credential holds is still good for, in words */
+function expiryNote(c: Credential, t: ReturnType<typeof useT>): string | null {
+  if (!c.expiresAt) return null;
+  const ms = c.expiresAt - Date.now();
+  if (ms <= 0) return t('expired');
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours >= 1) return t('{n}h left', { n: hours });
+  return t('{n}m left', { n: Math.max(1, Math.floor(ms / 60_000)) });
+}
+
 /**
- * Where this provider's key currently lives, which is what decides whether an
- * empty field means "unchanged" or "cleared".
+ * Where a credential came from, in words.
+ *
+ * A switch of literals rather than a lookup table: `t(TABLE[key])` type-checks and renders,
+ * and the i18n check cannot see the strings, so they stay English in every locale.
  */
-function existingKeySource(rows: Provider[] | null, id: string | null): 'file' | 'inline' | 'none' {
-  const p = rows?.find((r) => r.id === id);
-  return p?.keyFile ? 'file' : p?.hasKey ? 'inline' : 'none';
+function credentialSource(source: string, t: ReturnType<typeof useT>): string {
+  switch (source) {
+    case 'host-file': return t('read from the mounted file');
+    case 'typed': return t('pasted here');
+    case 'login': return t('signed in here');
+    case 'import': return t('imported from the mounted file');
+    case 'file': return t('read from a file');
+    default: return source;
+  }
+}
+
+/**
+ * Credentials the credential manager holds.
+ *
+ * A provider points at one by name. The value — a pasted key, a file another process
+ * rotates, or the refresh token behind a subscription — stays in that service, and what
+ * goes upstream is an access token it mints ahead of expiry. So this card shows a masked
+ * hint and an expiry, and has no way to display a value: there is nothing here to read
+ * back.
+ *
+ * Signing in happens in a browser that is not ours. The button hands back a link to
+ * authorise at, and the page that redirect lands on shows a code to paste back — the same
+ * flow `claude login` uses when it cannot open a browser itself.
+ */
+function CredentialsCard() {
+  const t = useT();
+  const [state, setState] = useState<{ configured: boolean; rows: Credential[]; error?: string } | null>(null);
+  const [panel, setPanel] = useState<'login' | 'key' | 'file' | 'import' | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = () =>
+    admin
+      .credentials()
+      .then((d) => setState({ configured: d.configured, rows: d.credentials, error: d.error }))
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+
+  useEffect(() => { void load(); }, []);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await fn();
+      await load();
+      setPanel(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!state) return null;
+
+  return (
+    <Card
+      title={t('Upstream credentials')}
+      description={t('Keys and subscriptions held by the credential manager. A provider points at one by name: the value stays in that service, and what goes upstream is a token it mints.')}
+    >
+      {err && <Banner tone="error">{err}</Banner>}
+      {state.error && <Banner tone="error">{state.error}</Banner>}
+
+      {!state.configured ? (
+        <div className="text-[12px] leading-relaxed text-faint">
+          {t('The credential manager is not running, so no upstream can authenticate. Start that service and its credentials appear here.')}
+        </div>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {state.rows.length === 0 && (
+              <div className="text-[12px] text-faint">{t('Nothing here yet.')}</div>
+            )}
+            {state.rows.map((c) => (
+              <div key={c.id} className="flex items-center gap-3 rounded-lg border border-line p-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="truncate text-[13px] font-medium">{c.id}</span>
+                    <span className="shrink-0 text-[11px] text-faint">{c.kind}</span>
+                    {c.renewable === false && (
+                      <span className="shrink-0 text-[11px] text-danger">{t('cannot be renewed — sign in again')}</span>
+                    )}
+                  </div>
+                  <div className="truncate font-mono text-[11px] text-faint">
+                    {c.hint || '—'}
+                    {` · ${credentialSource(c.source, t)}`}
+                    {expiryNote(c, t) && ` · ${expiryNote(c, t)}`}
+                    {c.label && ` · ${c.label}`}
+                  </div>
+                  {c.path && (
+                    <div className="truncate font-mono text-[11px] text-faint">
+                      {c.path}
+                      {c.fingerprint && ` · ${t('fingerprint {v}', { v: c.fingerprint })}`}
+                    </div>
+                  )}
+                  {c.error && <div className="truncate text-[11px] text-danger">{c.error}</div>}
+                </div>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => void run(() => admin.deleteCredential(c.id))}
+                >
+                  {t('Delete')}
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          {panel === null && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button variant="ghost" onClick={() => setPanel('login')}>{t('Sign in to a subscription')}</Button>
+              <Button variant="ghost" onClick={() => setPanel('key')}>{t('Paste an API key')}</Button>
+              <Button variant="ghost" onClick={() => setPanel('file')}>{t('Read a key from a file')}</Button>
+              <Button variant="ghost" onClick={() => setPanel('import')}>{t('Import a mounted credentials file')}</Button>
+            </div>
+          )}
+
+          {panel === 'login' && <SignInPanel busy={busy} run={run} onCancel={() => setPanel(null)} />}
+          {panel === 'key' && <PasteKeyPanel busy={busy} run={run} onCancel={() => setPanel(null)} />}
+          {panel === 'file' && <KeyFilePanel busy={busy} run={run} onCancel={() => setPanel(null)} />}
+          {panel === 'import' && <ImportPanel busy={busy} run={run} onCancel={() => setPanel(null)} />}
+        </>
+      )}
+    </Card>
+  );
+}
+
+type PanelProps = {
+  busy: boolean;
+  run: (fn: () => Promise<unknown>) => Promise<void>;
+  onCancel: () => void;
+};
+
+/**
+ * Signing a subscription in, in the two steps the flow actually has.
+ *
+ * The link is not opened for the administrator: it goes to an account, and which browser
+ * profile that happens in is theirs to decide.
+ */
+function SignInPanel({ busy, run, onCancel }: PanelProps) {
+  const t = useT();
+  const [kind, setKind] = useState('claude');
+  const [id, setId] = useState('claude');
+  const [label, setLabel] = useState('');
+  const [started, setStarted] = useState<StartedLogin | null>(null);
+  const [code, setCode] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  const start = async () => {
+    setStarting(true);
+    setErr(null);
+    try {
+      setStarted(await admin.startCredentialLogin({ kind, id: id.trim() || kind, label: label.trim() }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border border-line p-2.5">
+      {err && <Banner tone="error">{err}</Banner>}
+      {!started ? (
+        <>
+          <Field label={t('Which subscription')}>
+            <Select value={kind} onChange={(e) => { setKind(e.target.value); setId(e.target.value); }}>
+              <option value="claude">Claude (claude.ai)</option>
+              <option value="codex">Codex (ChatGPT)</option>
+            </Select>
+          </Field>
+          <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>
+            <Input value={id} onChange={(e) => setId(e.target.value)} spellCheck={false} />
+          </Field>
+          <Field label={t('Note')}>
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('optional')} />
+          </Field>
+          <div className="flex gap-2">
+            <Button onClick={() => void start()} loading={starting}>{t('Get the link')}</Button>
+            <Button variant="ghost" onClick={onCancel}>{t('Cancel')}</Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="text-[12px] leading-relaxed text-faint">
+            {t('Open this link, authorise there, and paste back the code the page shows.')}
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              href={started.authorizeUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-accent hover:underline"
+            >
+              {started.authorizeUrl}
+            </a>
+            <button
+              type="button"
+              title={t('Copy')}
+              onClick={() => void navigator.clipboard.writeText(started.authorizeUrl)}
+              className="shrink-0 rounded-md border border-line px-2 py-1 text-faint transition hover:text-muted"
+            >
+              <Copy size={13} />
+            </button>
+          </div>
+          <Field label={t('Code')}>
+            <Input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="abc123#state"
+              spellCheck={false}
+              className="font-mono text-[12.5px]"
+            />
+          </Field>
+          <div className="flex gap-2">
+            <Button
+              disabled={busy || !code.trim()}
+              onClick={() => void run(() => admin.finishCredentialLogin({ loginId: started.loginId, code: code.trim() }))}
+            >
+              {t('Finish')}
+            </Button>
+            <Button variant="ghost" onClick={onCancel}>{t('Cancel')}</Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** A key pasted once and never shown again — the field is write-only by design */
+function PasteKeyPanel({ busy, run, onCancel }: PanelProps) {
+  const t = useT();
+  const [id, setId] = useState('');
+  const [label, setLabel] = useState('');
+  const [key, setKey] = useState('');
+
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border border-line p-2.5">
+      <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>
+        <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="deepseek" spellCheck={false} />
+      </Field>
+      <Field label="API Key">
+        <Input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="sk-…" spellCheck={false} />
+      </Field>
+      <Field label={t('Note')}>
+        <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('optional')} />
+      </Field>
+      <div className="flex gap-2">
+        <Button
+          disabled={busy || !id.trim() || !key.trim()}
+          onClick={() => void run(() => admin.storeCredential({ id: id.trim(), label: label.trim(), apiKey: key.trim() }))}
+        >
+          {t('Save')}
+        </Button>
+        <Button variant="ghost" onClick={onCancel}>{t('Cancel')}</Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A key that lives in a file something else writes: a docker secret, a secret-manager
+ * sidecar, another container writing into a shared volume.
+ *
+ * Only the path is stored. The credential manager re-reads that file every time it is
+ * asked for a token, so a rotation takes effect on the next request — which is the whole
+ * reason to name a file instead of pasting its contents.
+ *
+ * A typo in a hand-typed path would surface as an upstream 401, three layers from the
+ * cause, so what is actually in those directories is listed and can be clicked.
+ */
+function KeyFilePanel({ busy, run, onCancel }: PanelProps) {
+  const t = useT();
+  const [id, setId] = useState('');
+  const [label, setLabel] = useState('');
+  const [path, setPath] = useState('');
+  const [listing, setListing] = useState<KeyFileListing | null>(null);
+  const [checked, setChecked] = useState<KeyFileEntry | null>(null);
+
+  useEffect(() => {
+    admin.credentialFiles().then(setListing).catch(() => {});
+  }, []);
+
+  // Check a typed path, debounced. A lone / is the first character being typed, and
+  // "not in an allowed directory" then is pure noise.
+  useEffect(() => {
+    const target = path.trim();
+    if (target.length < 2) {
+      setChecked(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      admin.credentialFiles(target).then((d) => setChecked(d.checked ?? null)).catch(() => setChecked(null));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [path]);
+
+  const roots = (listing?.roots ?? [])
+    .map((r) => (r.exists ? r.path : `${r.path} ${t('(not mounted)')}`))
+    .join('、');
+
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border border-line p-2.5">
+      <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>
+        <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="vault-upstream" spellCheck={false} />
+      </Field>
+      <Field
+        label={t('Path')}
+        hint={t('Readable directories: {roots}. Set CREDENTIAL_FILE_ROOTS on the credential manager to add others.', { roots: roots || t('(none)') })}
+      >
+        <Input
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder="/run/secrets/upstream.key"
+          spellCheck={false}
+          className="font-mono text-[12.5px]"
+        />
+      </Field>
+
+      {checked && (
+        <div className={clsx('text-[11.5px]', checked.usable ? 'text-faint' : 'text-danger')}>
+          {checked.usable
+            ? t('read {hint} · {size} bytes · fingerprint {fp} · updated {when}', {
+                hint: checked.hint ?? '',
+                size: checked.size ?? 0,
+                fp: checked.fingerprint ?? '',
+                when: fmtDate(checked.mtime ?? ''),
+              })
+            : checked.error}
+        </div>
+      )}
+
+      {listing && listing.files.length > 0 && (
+        <div className="divide-y divide-line overflow-hidden rounded-lg border border-line">
+          {listing.files.map((f) => (
+            <button
+              key={f.path}
+              type="button"
+              disabled={!f.usable}
+              onClick={() => setPath(f.path)}
+              className={clsx(
+                'flex w-full items-baseline gap-2 px-2 py-1.5 text-left text-[11.5px] transition',
+                f.path === path.trim() ? 'bg-accent/10' : 'hover:bg-elevated',
+                !f.usable && 'cursor-not-allowed',
+              )}
+            >
+              <span className="truncate font-mono">{f.path}</span>
+              <span className={clsx('ml-auto shrink-0', f.usable ? 'text-faint' : 'text-danger')}>
+                {f.usable ? `${f.hint} · ${t('{n} bytes', { n: f.size ?? 0 })}` : f.error}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <Field label={t('Note')}>
+        <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('optional')} />
+      </Field>
+      <div className="flex gap-2">
+        <Button
+          disabled={busy || !id.trim() || !path.trim()}
+          onClick={() => void run(() => admin.storeKeyFileCredential({ id: id.trim(), label: label.trim(), path: path.trim() }))}
+        >
+          {t('Save')}
+        </Button>
+        <Button variant="ghost" onClick={onCancel}>{t('Cancel')}</Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Copying in the credentials file the credential manager has mounted — the host's
+ * `claude login` output. Useful when that machine is already signed in; the credential
+ * becomes this service's own from then on, and re-signing in on the host does not change
+ * it until it is imported again.
+ */
+function ImportPanel({ busy, run, onCancel }: PanelProps) {
+  const t = useT();
+  const [kind, setKind] = useState('claude');
+  const [id, setId] = useState('claude');
+
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border border-line p-2.5">
+      <Field label={t('Which subscription')}>
+        <Select value={kind} onChange={(e) => { setKind(e.target.value); setId(e.target.value); }}>
+          <option value="claude">Claude (claude.ai)</option>
+          <option value="codex">Codex (ChatGPT)</option>
+        </Select>
+      </Field>
+      <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>
+        <Input value={id} onChange={(e) => setId(e.target.value)} spellCheck={false} />
+      </Field>
+      <div className="flex gap-2">
+        <Button
+          disabled={busy || !id.trim()}
+          onClick={() => void run(() => admin.importCredential({ kind, id: id.trim() }))}
+        >
+          {t('Import')}
+        </Button>
+        <Button variant="ghost" onClick={onCancel}>{t('Cancel')}</Button>
+      </div>
+    </div>
+  );
 }
 
 function ProvidersCard() {
@@ -329,9 +735,13 @@ function ProvidersCard() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProviderDraft>({
-    name: '', kind: 'openai-chat', baseUrl: '',
-    key: '', clearKey: false, models: '', defaultModel: '',
+    name: '', kind: 'openai-chat', baseUrl: '', credential: '', models: '', defaultModel: '',
   });
+  /**
+   * What the credential manager holds, for the picker in the form. Empty when no such
+   * service is configured, and then the form does not offer that source at all.
+   */
+  const [credentials, setCredentials] = useState<Credential[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -342,6 +752,9 @@ function ProvidersCard() {
       .catch(() => {});
 
   useEffect(() => { void load(); }, []);
+  const loadCredentials = () =>
+    admin.credentials().then((d) => setCredentials(d.credentials)).catch(() => {});
+  useEffect(() => { void loadCredentials(); }, []);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -360,15 +773,15 @@ function ProvidersCard() {
   if (!rows) return null;
 
   const startEdit = (p?: Provider) => {
+    // Again on every open: the credentials card is right above this one, and a credential
+    // signed in there a moment ago has to be in the picker without a page reload
+    void loadCredentials();
     setEditing(p?.id ?? 'new');
     setDraft({
       name: p?.name ?? '',
       kind: p?.kind ?? 'openai-chat',
       baseUrl: p?.baseUrl ?? '',
-      // Put the path back when the key is read from a file — a path is not a
-      // secret. A stored key is never returned in plaintext by the server.
-      key: p?.keyFile ?? '',
-      clearKey: false,
+      credential: p?.credentialId ?? '',
       models: (p?.models ?? []).join('\n'),
       defaultModel: p?.defaultModel ?? '',
     });
@@ -383,16 +796,10 @@ function ProvidersCard() {
       defaultModel: draft.defaultModel.trim(),
     };
 
-    /*
-     * The key goes out as one field, apiKey; the server decides path or literal
-     * with the same looksLikePath test.
-     *
-     * Three cases: "clear" was pressed, so send an empty string and the server
-     * clears both columns; something was typed, so send it; nothing was typed,
-     * so send no key field at all and the database is left as it is.
-     */
-    const keyFields =
-      draft.clearKey ? { apiKey: '' } : draft.key.trim() ? { apiKey: draft.key } : {};
+    // Absent would leave it alone; the form always knows what it should be, so it is
+    // always sent — an empty string clears it, and the console then shows the provider
+    // as having no credential
+    const keyFields = { credentialId: draft.credential };
 
     return run(() =>
       editing === 'new'
@@ -429,11 +836,15 @@ function ProvidersCard() {
                 <div className="truncate text-[11.5px] text-faint">
                   {t(kinds[p.kind] ?? p.kind)}
                   {p.baseUrl && ` · ${p.baseUrl}`}
-                  {p.hasKey && ` · ${t(p.keyFile ? 'key from file' : 'key configured')}`}
+                  {p.credentialId && ` · ${t('credential {id}', { id: p.credentialId })}`}
                   {p.models.length > 0 && ` · ${t('{n} models', { n: p.models.length })}`}
                   {p.defaultModel && ` · ${t('default {model}', { model: p.defaultModel })}`}
                 </div>
-                {p.keyFile && <KeyFileLine path={p.keyFile} status={p.keyFileStatus} />}
+                {p.credentialMissing && (
+                  <div className="truncate text-[11px] text-danger">
+                    {t('{id} is not in the credential manager any more, so requests are refused', { id: p.credentialId })}
+                  </div>
+                )}
               </div>
               <Button variant="ghost" onClick={() => startEdit(p)}>{t('Edit')}</Button>
               <Button
@@ -453,8 +864,8 @@ function ProvidersCard() {
                 kinds={kinds}
                 onSave={save}
                 busy={busy}
-                existingKey={existingKeySource(rows, p.id)}
                 providerId={p.id}
+                credentials={credentials}
               />
             )}
           </div>
@@ -463,7 +874,7 @@ function ProvidersCard() {
 
       {editing === 'new' ? (
         <div className="mt-2 rounded-lg border border-line p-2.5">
-          <ProviderForm draft={draft} setDraft={setDraft} kinds={kinds} onSave={save} busy={busy} />
+          <ProviderForm draft={draft} setDraft={setDraft} kinds={kinds} onSave={save} busy={busy} credentials={credentials} />
         </div>
       ) : (
         <Button variant="ghost" className="mt-2" onClick={() => startEdit()}>
@@ -520,22 +931,21 @@ function AutoRefreshModels({ on, reload }: { on: boolean; reload: () => Promise<
 
 
 function ProviderForm({
-  draft, setDraft, kinds, onSave, busy, existingKey = 'none', providerId,
+  draft, setDraft, kinds, onSave, busy, providerId, credentials = [],
 }: {
   draft: ProviderDraft;
   setDraft: (d: ProviderDraft) => void;
   kinds: Record<string, string>;
   onSave: () => void;
   busy: boolean;
-  /** Where this provider's key lives — decides whether an empty field means unchanged or cleared */
-  existingKey?: 'file' | 'inline' | 'none';
+  /** What the credential manager holds. Empty means there is none, and that source is not offered. */
+  credentials?: Credential[];
   /** Absent while adding one: the key has not been saved yet, so there is nothing to ask with */
   providerId?: string;
 }) {
   const t = useT();
-  // The two built-in kinds never leave the machine, so no address and no key
+  // The two built-in kinds never leave the machine, so no address and no credential
   const needsEndpoint = draft.kind === 'anthropic-native' || draft.kind === 'openai-chat';
-  const keyIsPath = looksLikePath(draft.key);
 
   return (
     <div className="mt-2.5 space-y-2 border-t border-line pt-2.5">
@@ -555,56 +965,19 @@ function ProviderForm({
             <Input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://api.example.com" />
           </Field>
           <Field
-            label="API Key"
+            label={t('Credential')}
             hint={
-              draft.clearKey
-                ? t('Marked for clearing — after saving this provider has no key')
-                : keyIsPath
-                  ? undefined
-                  : draft.key.trim()
-                    ? undefined
-                    : existingKey === 'file'
-                      ? t('This one reads from a file; the path is filled in below. Empty means unchanged.')
-                      : existingKey === 'inline'
-                        ? t('Leave empty to keep the existing one')
-                        : t('A leading / is read as a file path inside the container; anything else is the key itself. Local models can leave it empty.')
+              credentials.length === 0
+                ? t('None yet — add one under Upstream credentials above.')
+                : t('The gateway asks the credential manager for a token per request, so a subscription stays renewed and nothing usable is stored here.')
             }
           >
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <Input
-                  /* A path is not a secret and is easier to check when visible; a key stays masked */
-                  type={keyIsPath ? 'text' : 'password'}
-                  value={draft.key}
-                  onChange={(e) => setDraft({ ...draft, key: e.target.value, clearKey: false })}
-                  placeholder="sk-… or /data/secrets/authkey/auth.key"
-                  spellCheck={false}
-                  className={clsx('flex-1', keyIsPath && 'font-mono text-[12.5px]')}
-                />
-                {/* With one field, empty only means unchanged — clearing has to be said */}
-                {existingKey !== 'none' && !draft.key.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => setDraft({ ...draft, clearKey: !draft.clearKey })}
-                    className={clsx(
-                      'shrink-0 rounded-md border px-2.5 py-1 text-[12px] transition',
-                      draft.clearKey
-                        ? 'border-danger/60 bg-danger/10 text-danger'
-                        : 'border-line text-faint hover:text-muted',
-                    )}
-                  >
-                    {t(draft.clearKey ? 'Undo clear' : 'Clear')}
-                  </button>
-                )}
-              </div>
-
-              {keyIsPath && (
-                <KeyFileHelper
-                  path={draft.key}
-                  onPick={(v) => setDraft({ ...draft, key: v, clearKey: false })}
-                />
-              )}
-            </div>
+            <Select value={draft.credential} onChange={(e) => setDraft({ ...draft, credential: e.target.value })}>
+              <option value="">{t('None')}</option>
+              {credentials.map((c) => (
+                <option key={c.id} value={c.id}>{`${c.id} · ${c.kind} · ${c.hint}`}</option>
+              ))}
+            </Select>
           </Field>
         </>
       )}
@@ -641,7 +1014,6 @@ function ProviderForm({
   );
 }
 
-/** Colour follows severity: a path problem blocks saving, an io problem only means this process cannot read it */
 /**
  * Fills the list from the upstream itself.
  *
@@ -685,140 +1057,6 @@ function PullModels({ id, onPull }: { id: string; onPull: (models: string[]) => 
   );
 }
 
-function problemClass(p: SecretFileProblem): string {
-  return p.code === 'path' ? 'text-danger' : 'text-amber-600 dark:text-amber-400';
-}
-
-/** The row in the provider list: the key file's path plus the status just fetched (never its contents) */
-function KeyFileLine({ path, status }: { path: string; status?: SecretFile | SecretFileProblem }) {
-  const t = useT();
-  const base = 'truncate font-mono text-[11px]';
-  if (!status) return <div className={clsx(base, 'text-faint')}>{path}</div>;
-  if (isSecretProblem(status)) {
-    return <div className={clsx(base, problemClass(status))}>{path} · {status.error}</div>;
-  }
-  return (
-    <div className={clsx(base, 'text-faint')}>
-      {path} · {status.preview} · {t('fingerprint {v}', { v: status.fingerprint })} · {fmtDate(status.mtime)}
-    </div>
-  );
-}
-
-/**
- * The helper that appears under the API Key field once it recognises a path.
- *
- * A typo in a hand-typed path shows up as an upstream 401, three layers away
- * from the cause, which nobody can debug. So this does two things: it lists
- * what is actually in the mounted directories so the path can be clicked
- * rather than typed, and it reports live status for a typed path — size, mask,
- * fingerprint. The fingerprint answers "I replaced the file; is the server
- * seeing the new one?"
- *
- * The input itself is not here — it is shared with the literal-key case, up in
- * the API Key field.
- */
-function KeyFileHelper({ path, onPick }: { path: string; onPick: (v: string) => void }) {
-  const t = useT();
-  const [listing, setListing] = useState<SecretFileListing | null>(null);
-  // Keep the whole response: besides `checked` itself we need to know who
-  // answered (source)
-  const [probe, setProbe] = useState<SecretFileListing | null>(null);
-
-  useEffect(() => {
-    admin.secretFiles().then(setListing).catch(() => {});
-  }, []);
-
-  // Check a typed path against the backend, debounced by 400ms
-  useEffect(() => {
-    const target = path.trim();
-    // A lone / is "the first character was just typed"; reporting "not in an
-    // allowed directory" then is pure noise. The candidate list still shows,
-    // which is the useful thing at that moment.
-    if (target.length < 2) {
-      setProbe(null);
-      return;
-    }
-    const timer = setTimeout(() => {
-      admin.secretFiles(target).then(setProbe).catch(() => setProbe(null));
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [path]);
-
-  const checked = probe?.checked ?? null;
-
-  const rootHint = (listing?.roots ?? [])
-    .map((r) => (r.exists ? r.path : `${r.path} ${t('(not mounted)')}`))
-    .join('、');
-
-  return (
-    <div className="space-y-1.5">
-      {checked &&
-        (isSecretProblem(checked) ? (
-          <div className={clsx('text-[11.5px]', problemClass(checked))}>
-            {checked.error}
-            {/* io problems need the filesystem to detect, so who looked decides how much this line means */}
-            {checked.code === 'io' &&
-              (probe?.source === 'gateway'
-                ? t('(the gateway cannot read it — it is what reads this file when a request goes out, so this key does not work right now)')
-                : ` (${probe?.sourceNote ?? t('cannot reach the gateway')}${t(', this is what the app container sees — for reference only')})`)}
-          </div>
-        ) : (
-          <div className="text-[11.5px] text-faint">
-            {t('read {preview} · {size} bytes · fingerprint {fp} · updated {when}', {
-              preview: checked.preview,
-              size: checked.size,
-              fp: checked.fingerprint,
-              when: fmtDate(checked.mtime),
-            })}
-          </div>
-        ))}
-
-      {listing && listing.files.length > 0 && (
-        <div className="divide-y divide-line overflow-hidden rounded-lg border border-line">
-          {listing.files.map((f) => (
-            <button
-              key={f.path}
-              type="button"
-              disabled={isSecretProblem(f)}
-              onClick={() => onPick(f.path)}
-              className={clsx(
-                'flex w-full items-baseline gap-2 px-2 py-1.5 text-left text-[11.5px] transition',
-                f.path === path.trim() ? 'bg-accent/10' : 'hover:bg-elevated',
-                isSecretProblem(f) && 'cursor-not-allowed',
-              )}
-            >
-              <span className="truncate font-mono">{f.path}</span>
-              <span
-                className={clsx(
-                  'ml-auto shrink-0',
-                  isSecretProblem(f) ? problemClass(f) : 'text-faint',
-                )}
-              >
-                {isSecretProblem(f) ? f.error : `${f.preview} · ${t('{n} bytes', { n: f.size })}`}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="text-[11px] text-faint">
-        {listing?.source === 'app' &&
-          `${listing.sourceNote ?? t('cannot reach the gateway')}${t('. Below is what the app container sees:')} `}
-        {t('Readable directories: {roots}. Add other mount points with SECRET_FILE_ROOTS — the allowlist has to be set on both app and gateway. The list above is the gateway\'s, while the path-validity check at save time runs in the app, so different values produce "the app refused it but the gateway can read it".', {
-          roots: rootHint || t('(none)'),
-        })}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Audit proxy configuration.
- *
- * The configuration lives on the proxy, persisted in its own volume; this is
- * only a view of it. So when the proxy is unreachable, or no control credential
- * is configured, this section is read-only and says why.
- */
 function AuditProxyCard() {
   const t = useT();
   const [st, setSt] = useState<AuditProxyStatus | null>(null);
@@ -2039,6 +2277,7 @@ function SettingsTab() {
       {/* Upstreams, the audit proxy and the gate used to live under Overview.
           Overview should be statistics only, so everything editable moved here. */}
       <AgentsCard />
+      <CredentialsCard />
       <ProvidersCard />
       <AuditProxyCard />
       <GateCard />

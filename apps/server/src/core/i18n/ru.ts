@@ -83,4 +83,8 @@ export const ru: Record<string, string> = {
   'Nothing to undo': 'Нечего отменять',
   'A memory cannot exceed {kb} KB': 'Одна запись не может превышать {kb} КБ',
   'At most {n} memories': 'Не более {n} записей',
+  'Paste the code the page showed you': 'Вставьте код, который показала страница',
+  'Missing key': 'Не указан ключ',
+  'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'Учётные данные {id} для апстрима «{name}» сейчас недоступны — обратитесь к администратору',
+  'Upstream "{name}" has no credential configured; ask an administrator': 'Для апстрима «{name}» не настроены учётные данные — обратитесь к администратору',
 };

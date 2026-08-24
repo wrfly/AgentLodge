@@ -1,0 +1,61 @@
+name: credential-manager
+
+services:
+  credential-manager:
+    build: .
+    image: credential-manager:latest
+    restart: unless-stopped
+    volumes:
+      # Credential directories, one per provider. Mount the *directory*, not the
+      # file: `claude login` / `codex login` replace the file by rename, and a
+      # single-file bind mount pins the old inode so the container never sees
+      # the update. Read-only — this service holds its own copy from the moment
+      # it imports one, and never writes back to the host's.
+      - ${CLAUDE_CREDENTIALS_DIR:-${HOME}/.claude}:/claude:ro
+      - ${CODEX_CREDENTIALS_DIR:-${HOME}/.codex}:/codex:ro
+      # The Unix socket consumers connect to.
+      - credential-manager-run:/run/agentlodge
+      # Where the credentials live between restarts, encrypted.
+      - credential-manager-state:/state
+    environment:
+      # Where a consumer finds the socket. Both sides need the same path.
+      CREDENTIAL_MANAGER_SOCKET: /run/agentlodge/credential-manager.sock
+      # Who may dial it. Unset leaves it owned by this container's root.
+      CREDENTIAL_MANAGER_SOCKET_OWNER: "10001:10001"
+      # Paths inside the container, matching the mounts above.
+      CLAUDE_CREDENTIALS_FILE: /claude/.credentials.json
+      CODEX_HOME: /codex
+      # The store. Encrypted with CREDENTIAL_MANAGER_KEY when one is given, and
+      # otherwise with a key generated next to it on first run.
+      CREDENTIAL_MANAGER_STATE_FILE: /state/credentials.enc
+      CREDENTIAL_MANAGER_KEY_SEED: /state/store.key
+      # ---- Refresh & sign-in (see README.md) ----
+      # CREDENTIAL_MANAGER_KEY: <32-byte key, hex/base64>
+      # REFRESH_LEAD_SECONDS: 60
+      # HTTP_TIMEOUT: 30s
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH  # read the host user's 0600 credential files
+      - CHOWN            # hand the socket to CREDENTIAL_MANAGER_SOCKET_OWNER
+    security_opt:
+      - no-new-privileges:true
+
+  # Example consumer: curls the socket and prints the access token, proving a
+  # neighbouring container can reach it.
+  consumer:
+    image: alpine:3.22
+    depends_on:
+      - credential-manager
+    command:
+      - sh
+      - -c
+      - 'apk add --no-cache curl >/dev/null && while :; do echo "token=$(curl -s --unix-socket /run/agentlodge/credential-manager.sock http://localhost/token?credential=claude)"; sleep 10; done'
+    volumes:
+      - credential-manager-run:/run/agentlodge:ro
+    user: "10001:10001"
+
+volumes:
+  credential-manager-run:
+  credential-manager-state:

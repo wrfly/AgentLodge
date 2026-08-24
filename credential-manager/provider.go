@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -54,7 +55,7 @@ func (c *claudeProvider) loadFile() (*tokenPair, error) {
 }
 
 func (c *claudeProvider) loadKeychain() (*tokenPair, error) {
-	if os.Getenv("GOOS_UNSUPPORTED_KEYCHAIN") != "" || os.Getenv("AUTHER_DISABLE_KEYCHAIN") != "" {
+	if os.Getenv("GOOS_UNSUPPORTED_KEYCHAIN") != "" || os.Getenv("CREDENTIAL_MANAGER_DISABLE_KEYCHAIN") != "" {
 		return nil, fmt.Errorf("keychain disabled")
 	}
 	out, err := exec.Command("security", "find-generic-password", "-s", claudeKeychainService, "-w").Output()
@@ -95,24 +96,26 @@ func (c *claudeProvider) refresh(ctx context.Context, pair *tokenPair) (*tokenPa
 	if pair.RefreshToken == "" {
 		return nil, fmt.Errorf("no claude refresh token available")
 	}
-	form := url.Values{
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {pair.RefreshToken},
+	// JSON, not a form: this is the request `claude login` makes for the same
+	// grant, and the endpoint is particular about it.
+	payload := map[string]string{
+		"grant_type":    "refresh_token",
+		"refresh_token": pair.RefreshToken,
 	}
 	if pair.ClientID != "" {
-		form.Set("client_id", pair.ClientID)
+		payload["client_id"] = pair.ClientID
 	} else if c.clientID != "" {
-		form.Set("client_id", c.clientID)
+		payload["client_id"] = c.clientID
 	}
 	scopes := pair.Scopes
 	if len(scopes) == 0 {
 		scopes = c.scopes
 	}
 	if len(scopes) > 0 {
-		form.Set("scope", strings.Join(scopes, " "))
+		payload["scope"] = strings.Join(scopes, " ")
 	}
 
-	body, err := postForm(ctx, c.tokenURL, form, nil, c.timeout)
+	body, err := postJSON(ctx, c.tokenURL, payload, c.timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -251,6 +254,36 @@ func postForm(ctx context.Context, endpoint string, form url.Values, headers map
 		return nil, fmt.Errorf("token endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	return body, nil
+}
+
+// postJSON POSTs a JSON body and returns the response body, with the same
+// non-2xx-is-an-error rule as postForm.
+func postJSON(ctx context.Context, endpoint string, payload any, timeout time.Duration) ([]byte, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("token endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(out)))
+	}
+	return out, nil
 }
 
 func stringField(m map[string]any, keys ...string) string {

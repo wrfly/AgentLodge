@@ -75,37 +75,39 @@ DeepSeek API Key    随便填（网关只要求非空）
 
 同一时刻只有一条生效。key 用 AES-256-GCM 加密存库，接口只返回 `hasKey`，生效中的那条不允许删除。
 
-### key 也可以放在文件里
+### 凭据只有一个家：credential-manager
 
-后台那个 API Key 框有两种模式：
+上游的 key 不存在数据库里，也不经过浏览器。`upstream_providers` 只存一个**凭据名字**
+（`credential_id`），值放在 `credential-manager/` 这个单独的服务里，网关每次发请求前
+经 Unix socket 问它要一次。
 
-| 模式 | 存的是什么 | 什么时候用 |
+凭据有四种，都在后台「上游凭据」卡片里建：
+
+| 类型 | 存的是什么 | 用在哪 |
 |---|---|---|
-| 直接填写 | 密文（AES-256-GCM）进库 | 手上就一把长期 key |
-| 从文件读取 | **只存路径**，每次发请求前现读 | key 由别的东西产出：docker/podman secret、secret manager sidecar、另一个容器写进共享卷 |
+| `api-key` | 粘一次的 key | 手上有一把长期 key，比如 DeepSeek |
+| `key-file` | **只有路径**，每次要 token 时现读 | key 由别的东西产出：docker/podman secret、secret manager sidecar、另一个容器写进共享卷 |
+| `claude` | claude.ai 订阅的 refresh token | 用订阅跑，控制台里登录或从挂载的凭据文件导入 |
+| `codex` | ChatGPT 订阅的 refresh token | 同上 |
 
-「从文件读取」解决两件事：密钥不经过浏览器、也不多一份拷贝进我们的库；
-**别人轮换了那个文件，下一次请求就用新值** —— 不重启、不改配置、不用有人记得去后台改一遍。
+`key-file` 的意义是别人轮换那个文件之后下一次请求就用上新值，不用重启、不用改配置。
+可读的目录是白名单，默认 `/data/secrets` 和 `/run/secrets`，别的挂载点用
+credential-manager 的 `CREDENTIAL_FILE_ROOTS` 加（冒号分隔，语义同 `PATH`）。
 
-能读哪些目录是白名单，默认两个：
+白名单是必要的：路径由管理员填，读出来的内容会被当成 `Authorization` 发到同样由管理员填的
+上游地址，不限制就等于允许把容器里任意文件传到任意服务器。路径不在白名单里、写成相对路径、
+或者是指向白名单外的软链接，保存时就拒。
 
-| 目录 | 说明 |
-|---|---|
-| `<DATA_DIR>/secrets` | 数据卷里的子目录 —— app 和 gateway 本来就都挂了它，不用改 compose |
-| `/run/secrets` | docker / podman secret 的约定位置 |
+后台会显示文件大小、更新时间、掩码和内容指纹（sha256 前 8 位），换过文件之后靠指纹确认
+服务端读到的是不是新的那份。内容本身任何接口都不返回。
 
-别的挂载点用 `SECRET_FILE_ROOTS` 加（冒号分隔，语义同 `PATH`）。
-**真正读 key 的是 gateway**，所以那个卷至少要挂给 gateway；app 挂不挂都行 ——
-不挂的话后台会提示「文件不存在（这是 app 容器看到的）」，保存不受影响，
-少一个进程能碰到密钥反而更好。
-
-把另一个容器的卷 share 进来，compose 里大致长这样：
+把另一个容器的卷接进来，compose 里大致这样：
 
 ```yaml
 services:
-  gateway:
+  credential-manager:
     volumes:
-      - vault-out:/data/secrets/vault:ro   # 白名单里已经有 <DATA_DIR>/secrets
+      - vault-out:/data/secrets/vault:ro   # 白名单里已经有 /data/secrets
   vault-agent:                              # 那个往里写 key 的容器
     volumes:
       - vault-out:/out
@@ -113,13 +115,44 @@ volumes:
   vault-out:
 ```
 
-为什么要白名单：路径是管理员填的，读出来的内容会被当成 `Authorization` 发到**同样由管理员填的**
-上游地址 —— 不限制的话「任意路径」就等于「把容器里任意文件传到管理员自己的服务器」。
-路径不在白名单里、写成相对路径、或者是指向白名单外的软链接，保存时直接拒。
+**从旧版本升级**：库里原来的 `api_key`（密文）和 `api_key_file`（路径）会在网关启动时
+自动搬进 credential-manager，凭据名字取自上游的名字，搬完两列就删掉。credential-manager
+没起来时不会动任何数据，日志里说明哪几条没搬成，下次启动再试。
 
-后台会显示文件的大小、更新时间、掩码和**内容指纹**（sha256 前 8 位）——
-换过文件之后靠指纹确认服务端看到的是不是新的那份。内容本身任何接口都不返回。
+### 订阅登录：credential-manager
 
+一把长期 key 填进后台就完了，订阅不行 —— 订阅背后是一个 **refresh token**，能一直换出新的
+access token，把它放进库里、让它经过浏览器，等于把订阅本身放在那儿。所以有一个单独的服务
+`credential-manager/`（Go，静态二进制，scratch 镜像）专门拿这个东西：
+
+- **只有它持有 refresh token 和 key 的原值**；库里存的是凭据的**名字**
+- 网关每次发请求前经 Unix socket 问它要一次 token，拿到的是几小时寿命的 access token
+- 它在过期前就把新的换好，所以下一次请求直接用新的，不用重启、不用有人去点一下
+
+凭据有三种进法，都在后台「上游凭据」那张卡里：
+
+| 进法 | 干了什么 |
+|---|---|
+| **登录订阅** | 给你一个授权链接，你在浏览器里授权，页面回显一个 code，粘回来它去换 token |
+| **粘贴 API Key** | 存一把 key。只有 key 能这么给，订阅不能手填 |
+| **导入挂载的凭据文件** | 读挂进容器的 `~/.claude/.credentials.json` / `~/.codex/auth.json` |
+
+登录用的是 authorization code + PKCE，跟 `claude login` 打不开浏览器时走的是同一条路
+（claude.ai 没有 device code 这种授权方式）。code verifier 从头到尾不出这个进程，`state`
+回来时校验，浏览器和数据库都碰不到 refresh token。
+
+宿主机上那两个凭据文件也会在**首次启动时自动导入**一份，名字就叫 `claude` 和 `codex`，
+所以什么都不配也有东西可指。已经存在的不会被覆盖 —— 在后台登录过之后重启，不该把你登的那个
+冲掉。
+
+⚠️ **一个订阅只能有一个主人。** token 端点每次刷新都会换发新的 refresh token，谁刷的谁拿到
+新的，另一边手上那份就废了。所以要么让 credential-manager 管（宿主机上别再 `claude login`），
+要么让宿主机管（那就别导进来）。真的两边都动过，重新导入一次即可。
+
+凭据存在它自己的卷里，AES-256-GCM 加密。密钥默认生成在同一个卷里 —— 这能扛住重启和重建，
+扛不住有人把整个卷拿走；要那份保证就在 `.env` 里给 `CREDENTIAL_MANAGER_KEY`。
+
+发布镜像里它是默认服务，不再走 profile —— 没有它任何上游都没法鉴权。
 
 ### `anthropic-native` 的 Base URL 要带完整前缀
 
@@ -1105,7 +1138,7 @@ data/workspaces/<用户>/<会话>/probe.txt      ← 不存在
 | `agentlodge-web` | 前端产物 + Caddy |
 | `agentlodge-agent` | 每用户 agent 容器，装了 claude 与 codex |
 | `agentlodge-audit-proxy` | 审计代理（trace-proxy） |
-| `agentlodge-authkey-sync` | 凭据同步 sidecar，可选 |
+| `agentlodge-credential-manager` | 凭据管理服务，存放全部上游凭据 |
 
 标签规则：
 
@@ -1150,12 +1183,8 @@ docker pull docker.io/wrfly/agentlodge-agent:latest   # ← 不能省，见下
 镜像缺失，并把该敲的命令打出来。
 
 `compose.release.yml` 是**自包含**的，不需要叠加别的文件，写的是 Docker（rootless podman
-把 app / gateway 的 `user:` 和 `group_add:` 去掉即可）。凭据同步 sidecar 走 profile，
-默认不起：
-
-```bash
-docker compose -f compose.release.yml --profile authkey up -d
-```
+把 app / gateway 的 `user:` 和 `group_add:` 去掉即可）。五个服务全部默认启动，包括
+credential-manager。
 
 **fork 友好**：流水线用的 namespace 是 `github.repository_owner`，不是写死的 `wrfly`。
 fork 之后什么都不用改，镜像会发到你自己的账号下 —— 在仓库 Settings → Secrets 里配好
@@ -1207,7 +1236,7 @@ audit   ── 审计代理 8796，出网流量必经，只接 backend
 agent   ── 每用户一个，只在 agent-net 上
 ```
 
-（另有可选的 `authkey-sync`，不接任何网络。）
+（`credential-manager` 只接 backend，它要去上游换 token。）
 
 **agent-net 是有外网出口的，这是刻意的。** 定位是「一个跑在沙箱里的 Claude Code」，
 要能 npm install、git clone、查资料 —— 隔离靠容器本身，不靠断网。它够不到的是

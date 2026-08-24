@@ -21,6 +21,7 @@ import { registerCliRoutes } from './app/routes/cli.js';
 import { registerConversationRoutes } from './app/routes/conversations.js';
 import { MAX_UPLOAD_BYTES } from './app/workspace.js';
 import { buildGateway, gate, startModelAutoRefresh } from './gateway/index.js';
+import { drainLegacyProviderKeys } from './gateway/legacy-keys.js';
 import { gatewayEnabled } from './app/agents/provider.js';
 import * as containers from './app/containers.js';
 import * as recap from './app/recap.js';
@@ -200,8 +201,10 @@ const runsGateway = config.role !== 'app';
 if (runsGateway) {
   const gateway = buildGateway();
   await gateway.listen({ port: config.gatewayPort, host: config.gatewayHost });
-  // Here rather than on the app side: the key that authorises the question is in this process
+  // Here rather than on the app side: the credential that authorises the question is
+  // reachable from this process and from no other
   startModelAutoRefresh((message) => console.log(`  ${message}`));
+  await drainLegacyProviderKeys((message) => console.log(`  ${message}`));
 }
 if (runsApp) {
   await app.listen({ port: config.port, host: config.host });
