@@ -80,7 +80,6 @@ export const de: Record<string, string> = {
   'Message {agent}': 'Nachricht an {agent}',
   Model: 'Modell',
   'Switch model (affects later messages only)': 'Modell wechseln (gilt erst für spätere Nachrichten)',
-  'Custom model name — press Enter': 'Eigener Modellname — Enter drücken',
   Effort: 'Aufwand',
   'Reasoning effort (affects later messages only)': 'Denkaufwand (gilt erst für spätere Nachrichten)',
   'Stop generating': 'Erzeugung stoppen',
@@ -445,8 +444,6 @@ export const de: Record<string, string> = {
   'Hide the script': 'Skript ausblenden',
   'Pull from the upstream': 'Vom Upstream abrufen',
   'The upstream returned an empty list': 'Der Upstream hat eine leere Liste geliefert',
-  'Fewer': 'Weniger',
-  '{n} older': '{n} ältere',
   'SendGrid API Key': 'SendGrid-API-Schlüssel',
   'Refresh the model list hourly': 'Modellliste stündlich aktualisieren',
   'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': 'Fragt einmal pro Stunde beim aktiven Upstream nach, welche Modelle es gibt, und überschreibt dessen Liste. Aus lässt die Liste genau so, wie sie eingetragen ist. In beiden Fällen funktioniert die Schaltfläche „Vom Upstream abrufen“ weiterhin.',
@@ -574,4 +571,6 @@ export const de: Record<string, string> = {
   'Upstreams in use': 'Genutzte Upstreams',
   'limit {n} each': 'je Limit {n}',
   '{active} in flight · {queued} queued': '{active} unterwegs · {queued} in der Warteschlange',
+  '{n} versions': '{n} Versionen',
+  'no longer offered': 'nicht mehr im Angebot',
 };
