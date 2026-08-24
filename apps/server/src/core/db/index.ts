@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,7 +100,7 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -174,6 +175,54 @@ function migrate(d: DatabaseSync): void {
     // dropped on the gateway's next start; see gateway/legacy-keys.ts.
     if (!columns(d, 'upstream_providers').has('credential_id')) {
       d.exec('alter table upstream_providers add column credential_id text');
+    }
+  }
+
+  if (from < 5) {
+    /*
+     * Models become the thing requests are routed by, and a provider stops being a global
+     * switch. What each provider listed moves into rows of its own, in the order it was
+     * written, so the picker keeps showing the same names in the same order.
+     *
+     * The defaults follow the same move: a provider carried one, and the two agents get
+     * one each — from the row that was active, since that is the one those defaults were
+     * written for.
+     */
+    const cols = columns(d, 'upstream_providers');
+    if (cols.has('models')) {
+      const rows = d
+        .prepare('select id, models, default_model, active from upstream_providers')
+        .all() as Array<{ id: string; models: string | null; default_model: string | null; active: number }>;
+      const now = new Date().toISOString();
+      for (const row of rows) {
+        const names = (row.models ?? '').split(',').map((m) => m.trim()).filter(Boolean);
+        names.forEach((name, i) => {
+          d.prepare(
+            `insert or ignore into models (id, name, provider_id, upstream_name, enabled, priority, created_at, updated_at)
+             values (?, ?, ?, '', 1, ?, ?, ?)`,
+          ).run(crypto.randomUUID(), name, row.id, i, now, now);
+        });
+      }
+      const active = rows.find((r) => r.active === 1);
+      const fallback = (active?.default_model ?? '').trim();
+      if (fallback) {
+        for (const key of ['agent.claude.defaultModel', 'agent.codex.defaultModel']) {
+          d.prepare('insert or ignore into settings (key, value, updated_at) values (?, ?, ?)').run(key, fallback, now);
+        }
+      }
+      d.exec('alter table upstream_providers drop column models');
+      d.exec('alter table upstream_providers drop column default_model');
+      d.exec('alter table upstream_providers drop column active');
+    }
+
+    // Which upstream served a call, and what that upstream charges: two providers can
+    // offer one model at two prices, and neither the bill nor the report can be worked
+    // out from the model name alone.
+    if (!columns(d, 'usage_records').has('provider_id')) {
+      d.exec('alter table usage_records add column provider_id text');
+    }
+    if (!columns(d, 'model_pricing').has('provider_id')) {
+      d.exec('alter table model_pricing add column provider_id text');
     }
   }
 

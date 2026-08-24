@@ -144,7 +144,7 @@ console.log('\n=== Draining a database from before the credential manager ===');
   const inline = mk();
   const file = mk();
   run('update upstream_providers set name = ?, api_key = ? where id = ?', 'DeepSeek prod', encrypt('sk-deepseek-legacy'), inline);
-  run('update upstream_providers set name = ?, api_key_file = ?, active = 1 where id = ?', 'Vault fed', '/run/secrets/upstream.key', file);
+  run('update upstream_providers set name = ?, api_key_file = ? where id = ?', 'Vault fed', '/run/secrets/upstream.key', file);
 
   const logs: string[] = [];
 

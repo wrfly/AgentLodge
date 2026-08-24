@@ -1,4 +1,5 @@
 import { config } from '../../core/config.js';
+import * as models from '../../core/db/models.js';
 import * as providers from '../../core/db/providers.js';
 
 /**
@@ -21,7 +22,7 @@ import * as providers from '../../core/db/providers.js';
  * system is complete.
  */
 export function gatewayEnabled(): boolean {
-  return Boolean(providers.active());
+  return models.any();
 }
 
 /*
@@ -139,26 +140,30 @@ export interface BalanceResult {
  * rather than a separate piece of configuration.
  *
  * Only DeepSeek offers this endpoint (`/user/balance`); every other upstream returns null
- * and the balance card disappears from the interface.
+ * and the balance card disappears from the interface. With several upstreams configured
+ * the first DeepSeek one that has a credential answers — the card is about an account's
+ * balance, and a deployment with two DeepSeek keys has two accounts to ask about, which
+ * is a question this card does not currently ask.
  *
  * baseUrl backs off to the root: what the provider carries is
  * `https://api.deepseek.com/anthropic`, with `/v1/messages` appended straight onto it,
  * while the balance lives at the root.
  */
 async function balanceEndpoint(): Promise<{ url: string; key: string } | null> {
-  const p = providers.active();
-  if (!p) return null;
-  let host: string;
-  try {
-    host = new URL(p.baseUrl).hostname;
-  } catch {
-    return null;
+  for (const p of providers.list()) {
+    let host: string;
+    try {
+      host = new URL(p.baseUrl).hostname;
+    } catch {
+      continue;
+    }
+    if (!(host === 'api.deepseek.com' || host.endsWith('.deepseek.com'))) continue;
+    const key = await providers.secretOf(p.id);
+    if (!key) continue;
+    const root = p.baseUrl.replace(/\/anthropic\/?$/, '').replace(/\/+$/, '');
+    return { url: `${root}/user/balance`, key };
   }
-  if (!(host === 'api.deepseek.com' || host.endsWith('.deepseek.com'))) return null;
-  const key = await providers.secretOf(p.id);
-  if (!key) return null;
-  const root = p.baseUrl.replace(/\/anthropic\/?$/, '').replace(/\/+$/, '');
-  return { url: `${root}/user/balance`, key };
+  return null;
 }
 
 export async function fetchBalance(): Promise<BalanceResult | null> {

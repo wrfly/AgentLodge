@@ -529,6 +529,8 @@ export interface AdminOverview {
 export interface PricingRow {
   id: number;
   model: string;
+  /** The upstream this price is for. Empty means any of them. */
+  providerId: string;
   currency: string;
   /** Micro-unit price per million tokens */
   priceInput: number;
@@ -649,18 +651,37 @@ export interface KeyFileListing {
   checked?: KeyFileEntry;
 }
 
+/** A model a user can pick, and the upstream that serves it */
+export interface Model {
+  id: string;
+  name: string;
+  providerId: string;
+  /** The name to send upstream, when it differs. Empty means they match. */
+  upstreamName: string;
+  enabled: boolean;
+  /** Lowest first among rows sharing a name */
+  priority: number;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelInput {
+  name?: string;
+  providerId?: string;
+  upstreamName?: string;
+  enabled?: boolean;
+  priority?: number;
+  note?: string;
+}
+
 export interface Provider {
   id: string;
   name: string;
   kind: string;
   baseUrl: string;
   hasKey: boolean;
-  active: boolean;
   note?: string;
-  /** Model names this upstream knows. Empty = fall back to the agent's own default. */
-  models: string[];
-  /** Used when a conversation has not picked a model */
-  defaultModel: string;
   /** Non-empty = the key lives in this file, read afresh per request, and not in the database */
   /**
    * Non-empty = the key is a credential the credential manager holds, named here by id.
@@ -678,8 +699,6 @@ export interface Provider {
 export interface ProviderInput {
   name?: string;
   kind?: string;
-  models?: string[];
-  defaultModel?: string;
   baseUrl?: string;
   /** Absent = leave it alone; empty string = clear it */
   apiKey?: string;
@@ -767,12 +786,11 @@ export interface UpstreamAllowanceView {
   error?: string;
 }
 
-export interface GateStatus {
-  enabled: boolean;
-  containers: { enabled: boolean; ok: boolean; detail: string; running: number };
-  /** In a split deployment the gate lives in the gateway container; when it cannot be reached, only these two fields are filled in */
-  unreachable?: boolean;
-  error?: string;
+/** One upstream's own in-flight pool. Limits belong to the upstream, so each has its own. */
+export interface GatePool {
+  providerId: string;
+  /** The upstream's name, for the row's label */
+  name?: string;
   active: number;
   queued: number;
   effectiveMax: number;
@@ -782,6 +800,18 @@ export interface GateStatus {
   totalThrottled: number;
   waitMsP50: number;
   waitMsP95: number;
+}
+
+export interface GateStatus {
+  enabled: boolean;
+  containers: { enabled: boolean; ok: boolean; detail: string; running: number };
+  /** In a split deployment the gate lives in the gateway container; when it cannot be reached, only these two fields are filled in */
+  unreachable?: boolean;
+  error?: string;
+  /** The ceiling every pool starts from */
+  max: number;
+  /** One per upstream that has seen traffic since the gateway started */
+  pools: GatePool[];
 }
 
 export interface AuditEntry {
@@ -880,12 +910,28 @@ export const admin = {
     request<{ providers: Provider[]; kinds: Record<string, string>; autoRefreshModels: boolean }>(
       '/api/admin/providers',
     ),
+
+  /* The model catalogue: what users pick, and which upstream serves each */
+  models: () =>
+    request<{ models: Model[]; providers: Array<{ id: string; name: string; kind: string }> }>(
+      '/api/admin/models',
+    ),
+  createModel: (input: ModelInput) =>
+    request<Model>('/api/admin/models', { method: 'POST', body: JSON.stringify(input) }),
+  updateModel: (id: string, input: ModelInput) =>
+    request<Model>(`/api/admin/models/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  deleteModel: (id: string) =>
+    request<{ ok: boolean }>(`/api/admin/models/${id}`, { method: 'DELETE' }),
+  /** Ask one upstream what it offers and add whatever is missing */
+  pullModels: (providerId: string) =>
+    request<{ added: number; offered: string[]; models: Model[] }>('/api/admin/models/pull', {
+      method: 'POST',
+      body: JSON.stringify({ providerId }),
+    }),
   createProvider: (input: ProviderInput) =>
     request<Provider>('/api/admin/providers', { method: 'POST', body: JSON.stringify(input) }),
   updateProvider: (id: string, input: ProviderInput) =>
     request<Provider>(`/api/admin/providers/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  activateProvider: (id: string) =>
-    request<Provider>(`/api/admin/providers/${id}/activate`, { method: 'POST' }),
   deleteProvider: (id: string) =>
     request<{ ok: boolean }>(`/api/admin/providers/${id}`, { method: 'DELETE' }),
 

@@ -4,10 +4,11 @@ import { all, get, nowIso, run } from './index.js';
 import { decrypt, invalidate as invalidateSettings } from './settings.js';
 
 /**
- * Upstream providers: where the gateway forwards to.
+ * Upstream providers: where the gateway can forward to.
  *
- * Several can be configured — DeepSeek, a local Ollama, another third party, the mock
- * — and exactly one is active at a time. Switching needs no code change and no restart.
+ * This registry answers "how do we connect to it" — address, protocol, credential — and
+ * nothing about when it is used. Which upstream serves a request follows from the model
+ * that request asks for; see core/db/models.ts.
  */
 
 export type ProviderKind = 'anthropic-native' | 'openai-chat' | 'mock' | 'local-agent';
@@ -44,20 +45,7 @@ export interface Provider {
    * The gateway asks for it per request; see secretOf.
    */
   credentialId: string;
-  active: boolean;
   note?: string;
-  /**
-   * Model names this upstream answers to. Empty falls back to each agent's own defaults
-   * (Claude's aliases, Codex's models.json).
-   *
-   * On the provider rather than in global settings because a model name is **a property
-   * of the endpoint**: switching upstream means switching the whole set of names. Held
-   * globally you would have to edit it again on the way back, and for the instant after
-   * a switch the list and the endpoint would disagree.
-   */
-  models: string[];
-  /** Used when a conversation names no model. Empty leaves it to the CLI. */
-  defaultModel: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -68,16 +56,10 @@ interface Row {
   kind: string;
   base_url: string;
   credential_id: string | null;
-  active: number;
   note: string | null;
-  models: string | null;
-  default_model: string | null;
   created_at: string;
   updated_at: string;
 }
-
-const splitModels = (raw: string | null): string[] =>
-  (raw ?? '').split(',').map((m) => m.trim()).filter(Boolean);
 
 const toProvider = (r: Row): Provider => ({
   id: r.id,
@@ -86,10 +68,7 @@ const toProvider = (r: Row): Provider => ({
   baseUrl: r.base_url,
   hasKey: Boolean(r.credential_id),
   credentialId: r.credential_id ?? '',
-  active: r.active === 1,
   note: r.note ?? undefined,
-  models: splitModels(r.models),
-  defaultModel: (r.default_model ?? '').trim(),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -100,12 +79,6 @@ export function list(): Provider[] {
 
 export function findById(id: string): Provider | undefined {
   const r = get<Row>('select * from upstream_providers where id = ?', id);
-  return r && toProvider(r);
-}
-
-/** The active one, or undefined when there is none — which is how callers tell whether the gateway can work at all */
-export function active(): Provider | undefined {
-  const r = get<Row>('select * from upstream_providers where active = 1 limit 1');
   return r && toProvider(r);
 }
 
@@ -142,14 +115,6 @@ export interface UpsertInput {
    */
   credentialId?: string;
   note?: string;
-  models?: string[];
-  defaultModel?: string;
-}
-
-/** The frontend can send anything; normalise to a trimmed, de-duplicated, non-empty string array before storing */
-function cleanModels(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return [...new Set(v.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean))];
 }
 
 export function create(input: UpsertInput): Provider {
@@ -157,16 +122,14 @@ export function create(input: UpsertInput): Provider {
   const now = nowIso();
   run(
     `insert into upstream_providers
-       (id, name, kind, base_url, credential_id, active, note, models, default_model, created_at, updated_at)
-     values (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+       (id, name, kind, base_url, credential_id, note, created_at, updated_at)
+     values (?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     input.name.trim(),
     input.kind,
     (input.baseUrl ?? '').replace(/\/+$/, ''),
     (input.credentialId ?? '').trim() || null,
     input.note ?? null,
-    cleanModels(input.models).join(','),
-    (input.defaultModel ?? '').trim(),
     now,
     now,
   );
@@ -185,8 +148,6 @@ export function update(id: string, patch: Partial<UpsertInput>): Provider | unde
     patch.kind ?? cur.kind,
     (patch.baseUrl ?? cur.baseUrl).replace(/\/+$/, ''),
     patch.note ?? cur.note ?? null,
-    (patch.models === undefined ? cur.models : cleanModels(patch.models)).join(','),
-    (patch.defaultModel ?? cur.defaultModel).trim(),
     nowIso(),
   ];
   if (credential !== undefined) args.push(credential);
@@ -194,7 +155,7 @@ export function update(id: string, patch: Partial<UpsertInput>): Provider | unde
 
   run(
     `update upstream_providers
-        set name = ?, kind = ?, base_url = ?, note = ?, models = ?, default_model = ?, updated_at = ?${keyClause}
+        set name = ?, kind = ?, base_url = ?, note = ?, updated_at = ?${keyClause}
       where id = ?`,
     ...args,
   );
@@ -203,14 +164,6 @@ export function update(id: string, patch: Partial<UpsertInput>): Provider | unde
 
 export function remove(id: string): boolean {
   return run('delete from upstream_providers where id = ?', id).changes > 0;
-}
-
-/** Switch the active provider. Exactly one globally: clear, then set. */
-export function activate(id: string): Provider | undefined {
-  if (!findById(id)) return undefined;
-  run('update upstream_providers set active = 0 where active = 1');
-  run('update upstream_providers set active = 1, updated_at = ? where id = ?', nowIso(), id);
-  return findById(id);
 }
 
 /** Read a legacy setting that may still be in the database — the specs are gone, the rows are not */
@@ -248,10 +201,8 @@ export function seedFromSettings(): void {
     note: 'Migrated from system settings',
   });
   // The key it used to be created with goes to the credential manager instead, from the
-  // gateway, which is the process that can reach it: see gateway/legacy-keys.ts. The row
-  // is activated here regardless — a provider with no credential is visibly unusable in
-  // the console, which is a better state than a deployment with nothing active at all.
-  activate(p.id);
+  // gateway, which is the process that can reach it: see gateway/legacy-keys.ts.
+  void p;
 
   create({
     name: 'Mock upstream (testing)',
@@ -259,42 +210,4 @@ export function seedFromSettings(): void {
     note: 'No network, no cost — for exercising the path and the metering',
   });
   console.log('[providers] upstream list initialised');
-}
-
-/**
- * One-off: move the old global model list onto the active provider.
- *
- * The list used to be four global settings — agent.claude.models, agent.codex.models and
- * two defaultModel entries — and now belongs to the provider. The rules:
- *   - only onto the active row, and only when it has no list yet; other providers are
- *     meant to carry their own
- *   - two agents had a list each and a provider has one, so take the **union**. The same
- *     endpoint should answer to the same names for both agents anyway, and where they
- *     differ, merging is safer than discarding
- *   - the four rows are deleted afterwards, so a second run does nothing
- */
-export function migrateModelSettings(): void {
-  const keys = [
-    'agent.claude.models',
-    'agent.codex.models',
-    'agent.claude.defaultModel',
-    'agent.codex.defaultModel',
-  ];
-  const [claudeModels, codexModels, claudeDefault, codexDefault] = keys.map(legacySetting);
-  if (!claudeModels && !codexModels && !claudeDefault && !codexDefault) return;
-
-  const cur = active();
-  if (cur && cur.models.length === 0) {
-    const merged = [
-      ...new Set(
-        `${claudeModels ?? ''},${codexModels ?? ''}`.split(',').map((m) => m.trim()).filter(Boolean),
-      ),
-    ];
-    update(cur.id, { models: merged, defaultModel: (claudeDefault || codexDefault || '').trim() });
-    console.log(
-      `[providers] model list migrated from system settings onto "${cur.name}": ${merged.join(', ') || '(empty)'}`,
-    );
-  }
-  for (const k of keys) run('delete from settings where key = ?', k);
-  invalidateSettings();
 }

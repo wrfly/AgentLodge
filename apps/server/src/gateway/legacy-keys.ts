@@ -97,7 +97,11 @@ export async function drainLegacyProviderKeys(log: (message: string) => void): P
   }
 
   if (orphanKey) {
-    const target = get<LegacyRow>('select id, name, credential_id from upstream_providers where active = 1');
+    // The first provider still without a credential: that key belonged to whichever
+    // upstream the deployment was using, and a database this old has one.
+    const target = get<LegacyRow>(
+      'select id, name, credential_id from upstream_providers where credential_id is null order by created_at limit 1',
+    );
     if (target && !target.credential_id) {
       const id = credentialIdFor(target.name, target.id);
       try {

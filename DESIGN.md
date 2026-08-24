@@ -515,7 +515,8 @@ schema 只在这一个文件里，启动时整体执行（每张表都是 `creat
 | `conversations` / `messages` | 会话与消息，消息的 blocks 和 usage 存 JSON |
 | `usage_records` | 一次上游调用一行，计费的事实表 |
 | `model_pricing` | 价格表，带生效时间，改价不影响历史账 |
-| `upstream_providers` | 上游注册表，凭据只存名字，值在 credential-manager 里 |
+| `upstream_providers` | 上游注册表：地址、协议、凭据名字 |
+| `models` | 用户能选的模型，以及每个模型由哪条上游服务 |
 | `settings` | 系统设置，值是明文 JSON 或密文 |
 | `audit_logs` | 管理动作留痕 |
 
@@ -529,6 +530,11 @@ schema 只在这一个文件里，启动时整体执行（每张表都是 `creat
 credential-manager 里（见 §3.4）。网关每次请求经 Unix socket 换一个 access token，寿命几小时。
 备份、日志、任何能读库的路径都拿不到可用的上游凭据。
 
+**路由的主语是模型。** `models` 一行 =（模型名，上游），请求带哪个名字就走哪一行。同一个名字
+可以有多行，代表同一个模型由多条上游提供，`priority` 小的先用。因此计价和用量也带上游维度：
+`model_pricing.provider_id` 为空表示「任意上游」，`usage_records.provider_id` 记下这次实际是谁
+服务的 —— 两条上游同一个模型价格不同时，账只能这样算。
+
 **用量是流水不是计数器。** `usage_records` 一次调用一行，所有汇总都从它算。
 计数器省查询但对不上账时无从查起，而这张表可以按天、按会话、按 key、按模型
 任意切，代价只是一个索引。
@@ -538,6 +544,35 @@ credential-manager 里（见 §3.4）。网关每次请求经 Unix socket 换一
 
 **消息的 blocks 存 JSON。** 一条消息里 text / thinking / tool_use 的结构随 CLI 演进，
 拆成关系表意味着每次上游加一种 block 都要改 schema。查询也从不需要按 block 检索。
+
+## 4.3 模型路由
+
+注册的时候以供应商为中心，使用的时候以模型为中心。管理员配置的是「有哪些上游、每个上游提供
+哪些模型」，用户看到的只是一个模型清单。
+
+```
+请求 body.model
+   ↓  models 表里 name 匹配、enabled=1 的行，按 priority 升序
+   ↓  取第一行 → provider_id
+   ↓  upstream_providers → base_url / kind / credential_id
+   ↓  credential-manager → access token
+上游
+```
+
+几条规则：
+
+- **一个名字可以挂多条上游。** A 和 B 都提供 `deepseek-v4-pro` 就是两行，价格可以各配各的。
+  `priority` 决定用哪条，其余是将来做故障转移时的候选。
+- **关掉的行不参与。** 管理员把一行关掉的意思是「别往这儿发」，包括不作为备选。
+- **没配过的名字仍然能走。** CLI 会发 `sonnet` 这类别名，落到第一条可用的行上，并且**按客户端
+  写的原样转发**，不改名。
+- **上游叫别的名字时才改名。** `models.upstream_name` 非空才会重写 body 里的 model，账仍然记在
+  用户选的那个名字上。
+- **默认模型按 agent 分。** `agent.claude.defaultModel` 和 `agent.codex.defaultModel` 两个设置，
+  对话没选模型时用对应那个。
+
+并发闸门也跟着按上游拆：每条上游一个池子，各自计数、各自 AIMD。订阅的限流和付费 API 的限流是
+两回事，共用一个池子会让一边堵着另一边。上限值是全局配置，每个池子从它开始各自往下收。
 
 ## 5. 认证与注册
 

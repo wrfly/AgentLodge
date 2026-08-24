@@ -48,19 +48,14 @@ export function register(app: FastifyInstance): void {
 
     const b = (req.body ?? {}) as providersRepo.UpsertInput;
 
-    // The active provider cannot be edited into "reaches the network with no audit proxy" —
-    // otherwise activating first and clearing the proxy afterwards walks around the check in
-    // activate
-    if (cur.active) {
-      const problem = auditProxyProblem({
-        kind: b.kind ?? cur.kind,
-        baseUrl: b.baseUrl ?? cur.baseUrl,
-      });
-      if (problem) return reply.code(400).send({ error: problem });
+    // An upstream that would reach the network with no audit proxy is refused here,
+    // because there is no later moment to refuse it: every provider with a model pointed
+    // at it is live, so saving one is the same act that puts it in the path.
+    const problem = auditProxyProblem({ kind: b.kind ?? cur.kind, baseUrl: b.baseUrl ?? cur.baseUrl });
+    if (problem) return reply.code(400).send({ error: problem });
 
-      const denied = await allowlistProblem(b.baseUrl ?? cur.baseUrl);
-      if (denied) return reply.code(400).send({ error: denied });
-    }
+    const denied = await allowlistProblem(b.baseUrl ?? cur.baseUrl);
+    if (denied) return reply.code(400).send({ error: denied });
 
     const p = providersRepo.update(id, b);
     if (!p) return reply.code(404).send({ error: tr(req, 'No such provider') });
@@ -68,30 +63,11 @@ export function register(app: FastifyInstance): void {
     return p;
   });
 
-  app.post('/api/admin/providers/:id/activate', guard, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const target = providersRepo.findById(id);
-    if (!target) return reply.code(404).send({ error: tr(req, 'No such provider') });
-
-    // Blocked before switching, or the refusal only surfaces when a user sends a message
-    const problem = auditProxyProblem(target);
-    if (problem) return reply.code(400).send({ error: problem });
-
-    // Ask again whether the proxy accepts this host: having a proxy is not the same as the
-    // proxy being willing to relay
-    const denied = await allowlistProblem(target.baseUrl);
-    if (denied) return reply.code(400).send({ error: denied });
-
-    const p = providersRepo.activate(id);
-    if (!p) return reply.code(404).send({ error: tr(req, 'No such provider') });
-    audit.log({ actorId: req.user!.id, action: 'admin.provider.activate', targetType: 'provider', targetId: id, detail: { name: p.name, kind: p.kind }, ip: req.ip });
-    return p;
-  });
-
   app.delete('/api/admin/providers/:id', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const p = providersRepo.findById(id);
-    if (p?.active) return reply.code(400).send({ error: tr(req, 'The active upstream cannot be deleted; switch to another first') });
+    // Deleting takes its models with it (on delete cascade), which is what the console
+    // warns about — an upstream nothing points at is safe to remove, one with models is
+    // not the same act
     if (!providersRepo.remove(id)) return reply.code(404).send({ error: tr(req, 'No such provider') });
     audit.log({ actorId: req.user!.id, action: 'admin.provider.delete', targetType: 'provider', targetId: id, ip: req.ip });
     return { ok: true };

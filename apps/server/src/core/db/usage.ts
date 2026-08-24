@@ -17,6 +17,8 @@ export interface RecordInput {
   turnId?: string;
   agent: AgentId;
   model?: string;
+  /** The upstream that served it, which is what decides the price when two of them offer the same model */
+  providerId?: string;
   effort?: string;
   usage?: TurnUsage;
   status: 'completed' | 'error' | 'aborted';
@@ -50,16 +52,17 @@ export function record(input: RecordInput): void {
   // A failed turn with no usage still gets a row, for debugging, but is not billed
   run(
     `insert into usage_records
-       (user_id, conversation_id, turn_id, agent, model, effort,
+       (user_id, conversation_id, turn_id, agent, model, provider_id, effort,
         input_tokens, cache_read_tokens, cache_creation_tokens, output_tokens,
         billable_tokens, cost_usd, cost_micro, duration_ms, num_turns, status, created_at, day,
         source, queue_wait_ms, ttft_ms, api_key_id)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.userId,
     input.conversationId ?? null,
     input.turnId ?? null,
     input.agent,
     input.model ?? null,
+    input.providerId ?? null,
     input.effort ?? null,
     u?.inputTokens ?? 0,
     u?.cacheReadTokens ?? 0,
@@ -67,7 +70,7 @@ export function record(input: RecordInput): void {
     u?.outputTokens ?? 0,
     u ? billable(u) : 0,
     u?.costUsd ?? 0,
-    u ? pricing.costMicro(input.model, u) : 0,
+    u ? pricing.costMicro(input.model, u, undefined, input.providerId) : 0,
     u?.durationMs ?? null,
     u?.numTurns ?? null,
     input.status,

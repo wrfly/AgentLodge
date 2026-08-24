@@ -6,11 +6,10 @@ import * as quota from '../core/quota.js';
 import * as trace from '../core/trace.js';
 import { publish } from '../core/events.js';
 import {
+  GatePool,
   AbortedError,
   OverloadedError,
   QueueTimeoutError,
-  UpstreamGate,
-  type GateStats,
 } from './gate.js';
 import {
   resolve as resolveCredential,
@@ -41,6 +40,7 @@ import {
 import * as allowance from './upstream-allowance.js';
 import { fetchModels } from './models.js';
 import { startModelRefresh } from './model-refresh.js';
+import * as modelsRepo from '../core/db/models.js';
 import * as providersRepo from '../core/db/providers.js';
 
 /**
@@ -54,7 +54,7 @@ import * as providersRepo from '../core/db/providers.js';
  * change.
  */
 
-export const gate = new UpstreamGate({
+export const gate = new GatePool({
   maxConcurrency: config.maxUpstreamConcurrency,
   maxQueueDepth: config.maxQueueDepth,
   queueTimeoutMs: config.queueTimeoutMs,
@@ -208,7 +208,8 @@ async function handleProxy(
     return sendError(reply, wire, 401, 'authentication_error', 'invalid_request_error', tr(req, 'The credential is invalid or has expired'));
   }
 
-  const target = await resolveUpstream(wire, req.url);
+  const asked = (req.body as { model?: unknown } | undefined)?.model;
+  const target = await resolveUpstream(wire, req.url, typeof asked === 'string' ? asked : undefined);
   if (!target) {
     return sendError(
       reply,
@@ -295,7 +296,7 @@ async function handleProxy(
 
   let lease;
   try {
-    lease = await gate.acquire({
+    lease = await gate.for(target.provider.id).acquire({
       userId: claims.sub,
       turnId: claims.tid,
       priority: isBackground ? 1 : 0,
@@ -344,13 +345,17 @@ async function handleProxy(
       return undefined;
     }
 
-    const reqModel =
-      ((body ?? {}) as AnthropicRequest & ResponsesRequest).model ?? 'local';
+    // What the client asked for, and what this upstream calls it. They differ when the
+    // model was configured with an upstream name of its own: the row is the mapping, and
+    // this is the one place the request is rewritten to use it.
+    const askedModel = ((body ?? {}) as AnthropicRequest & ResponsesRequest).model ?? 'local';
+    const reqModel = target.upstreamModel || askedModel;
+    const sent = target.upstreamModel ? { ...(body ?? {}), model: target.upstreamModel } : (body ?? {});
     const outbound = !target.translate
-      ? (body ?? {})
+      ? sent
       : wire === 'anthropic'
-        ? anthropicRequestToChat((body ?? {}) as AnthropicRequest, reqModel)
-        : responsesRequestToChat((body ?? {}) as ResponsesRequest, reqModel);
+        ? anthropicRequestToChat(sent as AnthropicRequest, reqModel)
+        : responsesRequestToChat(sent as ResponsesRequest, reqModel);
 
     // null was already refused above, so this cannot fall back to a direct connection
     const egress = egressTarget(target)!;
@@ -369,7 +374,7 @@ async function handleProxy(
      */
     allowance.record(target.provider.name, target.wire, upstream.headers);
     const retryAfter = Number(upstream.headers.get('retry-after')) * 1000;
-    gate.reportUpstream(status, Number.isFinite(retryAfter) ? retryAfter : undefined);
+    gate.for(target.provider.id).reportUpstream(status, Number.isFinite(retryAfter) ? retryAfter : undefined);
 
     const ct = upstream.headers.get('content-type') ?? 'application/json';
     /*
@@ -484,7 +489,16 @@ async function handleProxy(
     // have to return the slot. Missing one permanently costs a third of the capacity
     lease.release();
     const latencyMs = Date.now() - startedAt;
-    settle(claims, acc, { status, latencyMs, queueWaitMs: lease.waitedMs });
+    settle(claims, acc, {
+      status,
+      latencyMs,
+      queueWaitMs: lease.waitedMs,
+      providerId: target.provider.id,
+      // The name the user picked, not the one the upstream answered with. They differ when
+      // a model is configured with an upstream name of its own, and the price table and
+      // every report are keyed by what was picked.
+      model: typeof asked === 'string' ? asked : undefined,
+    });
 
     // So a user can see what actually went upstream. A structured summary of the request
     // side, recorded on failure too — the failed one is usually the one they want to see
@@ -518,7 +532,7 @@ async function handleProxy(
 function settle(
   claims: Principal,
   acc: ReturnType<typeof newUsageAcc>,
-  meta: { status: number; latencyMs: number; queueWaitMs: number },
+  meta: { status: number; latencyMs: number; queueWaitMs: number; providerId?: string; model?: string },
 ): void {
   const total =
     acc.inputTokens + acc.cacheReadTokens + acc.cacheCreationTokens + acc.outputTokens;
@@ -529,7 +543,8 @@ function settle(
     conversationId: claims.cid || undefined,
     turnId: claims.tid || undefined,
     agent: claims.agent,
-    model: acc.model,
+    model: meta.model ?? acc.model,
+    providerId: meta.providerId,
     usage: {
       inputTokens: acc.inputTokens,
       cacheReadTokens: acc.cacheReadTokens,
@@ -631,7 +646,8 @@ export function buildGateway(): FastifyInstance {
       return reply.code(401).send(anthropicError('authentication_error', tr(req, 'The credential is invalid or has expired')));
     }
 
-    const target = await resolveUpstream('anthropic', '/v1/messages/count_tokens');
+    const counted = (req.body as { model?: unknown } | undefined)?.model;
+    const target = await resolveUpstream('anthropic', '/v1/messages/count_tokens', typeof counted === 'string' ? counted : undefined);
     const egress = target && egressTarget(target);
     if (target && egress && target.apiKey && !target.translate) {
       try {
@@ -685,7 +701,13 @@ export function buildGateway(): FastifyInstance {
     if (!who) {
       return reply.code(401).send(anthropicError('authentication_error', tr(req, 'The credential is invalid or has expired')));
     }
-    return reply.code(200).send(await modelsFor(providersRepo.active()));
+    // Answered from the models table rather than by asking an upstream: with several
+    // upstreams live at once there is no single one to ask, and this list is exactly what
+    // an administrator configured for people to pick from.
+    return reply.code(200).send({
+      object: 'list',
+      data: modelsRepo.names().map((id) => ({ id, object: 'model' })),
+    });
   });
 
   app.post('/responses', (req, reply) => handleProxy(req, reply, 'responses'));
@@ -706,7 +728,13 @@ export function buildGateway(): FastifyInstance {
    */
   const adminOnly = { preHandler: [attachUser, requireAdmin] };
 
-  app.get('/gate', adminOnly, async (): Promise<GateStats> => gate.stats());
+  app.get('/gate', adminOnly, async () => ({
+    max: gate.max(),
+    // One row per upstream that has seen traffic since this process started. An upstream
+    // with no row has had no request go to it, which is different from having a limit of
+    // zero and is drawn that way.
+    pools: gate.stats().map((p) => ({ ...p, name: providersRepo.findById(p.providerId)?.name ?? p.providerId })),
+  }));
 
   /**
    * The shared plan's own allowance, as the upstream last reported it.
@@ -719,12 +747,12 @@ export function buildGateway(): FastifyInstance {
   /**
    * The same question, for a named provider rather than the active one.
    *
-   * An administrator configuring an upstream needs its model list before making it the
-   * active one, and that is the whole point of the button this serves.
+   * An administrator adding models needs to see what an upstream actually offers, which
+   * is what the console's "pull from the upstream" button asks for.
    */
   app.get('/models', adminOnly, async (req) => {
     const { provider } = (req.query ?? {}) as { provider?: string };
-    return modelsFor(provider ? providersRepo.findById(provider) : providersRepo.active());
+    return modelsFor(provider ? providersRepo.findById(provider) : undefined);
   });
 
   app.patch('/gate', adminOnly, async (req, reply) => {
@@ -733,7 +761,7 @@ export function buildGateway(): FastifyInstance {
     if (!Number.isFinite(n) || n < 1 || n > 64)
       return reply.code(400).send({ error: tr(req, 'The concurrency limit has to be between 1 and 64') });
     gate.setMaxConcurrency(n);
-    return gate.stats();
+    return { max: gate.max(), pools: gate.stats() };
   });
 
   /**

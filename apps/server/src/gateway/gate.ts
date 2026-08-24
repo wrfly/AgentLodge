@@ -276,3 +276,46 @@ export class UpstreamGate {
     };
   }
 }
+
+/**
+ * One gate per upstream.
+ *
+ * The limits belong to the upstream, not to us: a subscription's rate limit and a paid
+ * API's are unrelated numbers, and a shared pool would make one of them queue behind the
+ * other for no reason. Each pool keeps its own in-flight count and its own AIMD state, so
+ * an upstream answering 429 narrows itself and leaves the rest alone.
+ *
+ * The configured ceiling is shared — it is the answer to "how many at once do we allow",
+ * which is a deployment-wide decision — and each pool adapts downward from it on its own.
+ */
+export class GatePool {
+  private readonly gates = new Map<string, UpstreamGate>();
+
+  constructor(private readonly cfg: GateConfig) {}
+
+  /** The gate for one upstream, created the first time a request goes there */
+  for(providerId: string): UpstreamGate {
+    let gate = this.gates.get(providerId);
+    if (!gate) {
+      gate = new UpstreamGate({ ...this.cfg });
+      this.gates.set(providerId, gate);
+    }
+    return gate;
+  }
+
+  /** Applies to every pool, including the ones that do not exist yet */
+  setMaxConcurrency(n: number): void {
+    this.cfg.maxConcurrency = Math.max(1, n);
+    for (const gate of this.gates.values()) gate.setMaxConcurrency(this.cfg.maxConcurrency);
+  }
+
+  /** What the console draws: one row per upstream that has seen traffic */
+  stats(): Array<GateStats & { providerId: string }> {
+    return [...this.gates.entries()].map(([providerId, gate]) => ({ providerId, ...gate.stats() }));
+  }
+
+  /** The ceiling every pool starts from */
+  max(): number {
+    return this.cfg.maxConcurrency;
+  }
+}

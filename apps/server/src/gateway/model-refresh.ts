@@ -1,4 +1,5 @@
 import * as audit from '../core/db/audit.js';
+import * as modelsRepo from '../core/db/models.js';
 import * as providersRepo from '../core/db/providers.js';
 import { getBoolFresh } from '../core/db/settings.js';
 import { fetchModels } from './models.js';
@@ -39,27 +40,34 @@ async function refreshOnce(
 ): Promise<void> {
   if (!getBoolFresh('agents.autoRefreshModels')) return;
 
-  const provider = providersRepo.active();
-  if (!provider) return;
+  // Every provider that can be asked, not one of them: with several upstreams live at
+  // once, refreshing only one would leave the rest of the picker frozen at whatever was
+  // configured by hand.
+  for (const provider of providersRepo.list()) {
+    if (provider.kind === 'mock' || provider.kind === 'local-agent') continue;
 
-  const apiKey = (await providersRepo.secretOf(provider.id)) ?? '';
-  const result = await fetchModels(provider, apiKey, egressFor(provider, apiKey));
-  if (result.error || result.models.length === 0) {
-    log(`model refresh: ${provider.name} — ${result.error ?? 'no models'}`);
-    return;
+    const apiKey = (await providersRepo.secretOf(provider.id)) ?? '';
+    if (!apiKey) continue;
+
+    const result = await fetchModels(provider, apiKey, egressFor(provider, apiKey));
+    if (result.error || result.models.length === 0) {
+      log(`model refresh: ${provider.name} — ${result.error ?? 'no models'}`);
+      continue;
+    }
+
+    // Only additions. A name somebody turned off stays off, an order somebody set stays,
+    // and a name that vanished upstream for a minute does not empty anybody's picker.
+    const added = modelsRepo.addMissing(provider.id, result.models);
+    if (added === 0) continue;
+
+    audit.log({
+      action: 'provider.models.refresh',
+      targetType: 'provider',
+      targetId: provider.id,
+      detail: { added, models: result.models },
+    });
+    log(`model refresh: ${provider.name} — ${added} new model(s)`);
   }
-
-  // Same list, same order: nothing to write, and updated_at should not move every hour
-  if (result.models.join(',') === provider.models.join(',')) return;
-
-  providersRepo.update(provider.id, { models: result.models });
-  audit.log({
-    action: 'provider.models.refresh',
-    targetType: 'provider',
-    targetId: provider.id,
-    detail: { before: provider.models, after: result.models },
-  });
-  log(`model refresh: ${provider.name} — ${provider.models.length} → ${result.models.length} models`);
 }
 
 /**

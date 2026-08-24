@@ -135,7 +135,6 @@ pricing.seedDefaults();
 providersRepo.seedFromSettings();
 // Move the model list from global settings onto the provider (idempotent; the old rows are
 // deleted afterwards)
-providersRepo.migrateModelSettings();
 
 /** A fresh deployment: mint a bootstrap administrator invite code and print it */
 function bootstrapInvite(): void {
