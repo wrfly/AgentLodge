@@ -87,7 +87,6 @@ export const zh: Record<string, string> = {
   'Message {agent}': '给 {agent} 发消息',
   Model: '模型',
   'Switch model (affects later messages only)': '切换模型（只影响后续消息）',
-  'Custom model name — press Enter': '自定义模型名，回车确认',
   Effort: '强度',
   'Reasoning effort (affects later messages only)': '推理强度（只影响后续消息）',
   'Stop generating': '停止生成',
@@ -470,8 +469,6 @@ export const zh: Record<string, string> = {
   'Hide the script': '收起脚本',
   'Pull from the upstream': '从上游拉取',
   'The upstream returned an empty list': '上游返回了空列表',
-  'Fewer': '收起',
-  '{n} older': '{n} 个旧版本',
   'SendGrid API Key': 'SendGrid API Key',
   'Refresh the model list hourly': '每小时刷新模型列表',
   'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': '每小时问一次当前启用的上游有哪些模型，并覆盖该 provider 的列表。关闭则完全保持你填的内容。无论开关如何，「从上游拉取」按钮都可用。',
@@ -601,4 +598,6 @@ export const zh: Record<string, string> = {
   'Upstreams in use': '在用的上游',
   'limit {n} each': '每个上限 {n}',
   '{active} in flight · {queued} queued': '{active} 在途 · {queued} 排队',
+  '{n} versions': '{n} 个版本',
+  'no longer offered': '已不再提供',
 };

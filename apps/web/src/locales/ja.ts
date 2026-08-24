@@ -87,7 +87,6 @@ export const ja: Record<string, string> = {
   'Message {agent}': '{agent} にメッセージを送る',
   Model: 'モデル',
   'Switch model (affects later messages only)': 'モデルを切り替える（以降のメッセージのみ）',
-  'Custom model name — press Enter': 'モデル名を入力 — Enter で確定',
   Effort: '推論の深さ',
   'Reasoning effort (affects later messages only)': '推論の深さ（以降のメッセージのみ）',
   'Stop generating': '生成を停止',
@@ -470,8 +469,6 @@ export const ja: Record<string, string> = {
   'Hide the script': 'スクリプトを隠す',
   'Pull from the upstream': '上流から取得',
   'The upstream returned an empty list': '上流は空のリストを返しました',
-  'Fewer': '折りたたむ',
-  '{n} older': '旧バージョン {n} 件',
   'SendGrid API Key': 'SendGrid API キー',
   'Refresh the model list hourly': 'モデル一覧を 1 時間ごとに更新',
   'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': '有効な上流に 1 時間ごとにモデル一覧を問い合わせ、その provider の一覧を上書きします。オフなら入力したままです。どちらの場合でも「上流から取得」ボタンは使えます。',
@@ -601,4 +598,6 @@ export const ja: Record<string, string> = {
   'Upstreams in use': '使用中のアップストリーム',
   'limit {n} each': '各上限 {n}',
   '{active} in flight · {queued} queued': '実行中 {active} · 待ち {queued}',
+  '{n} versions': '{n} バージョン',
+  'no longer offered': '現在は提供されていません',
 };

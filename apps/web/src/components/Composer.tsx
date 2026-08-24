@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Gauge, Sparkle, Square } from 'lucide-react';
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
-import { groupModels } from '../lib/protocol';
+import { groupByVendor } from '../lib/protocol';
 import { useChat } from '../store/chat';
 import { useAgents } from '../store/agents';
 import { useQuota } from '../store/quota';
@@ -49,8 +49,8 @@ export function Composer({ agent }: { agent: AgentId }) {
   const blocked = Boolean(quota?.exceeded && quota?.hardStop);
 
   const models = useAgents((s) => s.info(agent)?.models) ?? NO_MODELS;
-  // Grouped by family so a dozen names read as four things with older versions behind them
-  const modelGroups = useMemo(() => groupModels(models), [models]);
+  // vendor → family → version, so two upstreams' worth of names read as two rows
+  const modelTree = useMemo(() => groupByVendor(models), [models]);
   const efforts = useAgents((s) => s.info(agent)?.efforts) ?? NO_EFFORTS;
 
   // Grow to fit the content
@@ -83,7 +83,7 @@ export function Composer({ agent }: { agent: AgentId }) {
   const canSend = value.trim().length > 0 && !streaming && !blocked;
 
   return (
-    <div className="pointer-events-none sticky bottom-0 bg-gradient-to-t from-bg via-bg to-transparent pt-6">
+    <div className="pointer-events-none shrink-0 bg-bg pt-3">
       <div className="pointer-events-auto mx-auto w-full max-w-3xl px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <div className="rounded-2xl border border-line-strong bg-surface p-2 shadow-sm transition-colors focus-within:border-accent/50">
           <textarea
@@ -113,11 +113,9 @@ export function Composer({ agent }: { agent: AgentId }) {
               placeholder={t("Model")}
               value={model}
               options={models}
-              groups={modelGroups}
+              vendors={modelTree}
               onChange={(id) => void setModel(id)}
               title={t("Switch model (affects later messages only)")}
-              allowCustom
-              customPlaceholder="Custom model name — press Enter"
               disabled={!activeId || streaming}
             />
             <Picker

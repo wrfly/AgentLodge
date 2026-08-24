@@ -167,8 +167,14 @@ export function Chat({ agent }: { agent: AgentId }) {
         </div>
       )}
 
-      <div className="relative min-h-0 flex-1">
-        <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto">
+      {/*
+        The composer is a sibling of the scroll area, not the last thing inside it. Inside,
+        it could only be held down with `sticky`, and sticky does nothing until the container
+        overflows — so with a few messages on screen the box sat under the last one, halfway
+        up the page.
+      */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
           <div className={clsx('mx-auto w-full max-w-3xl', messages.length === 0 && 'h-full')}>
             {unavailable ? (
               <Unavailable agent={agent} reason={agentInfo?.availability.reason} />
@@ -186,8 +192,8 @@ export function Chat({ agent }: { agent: AgentId }) {
               </div>
             )}
           </div>
-          {!unavailable && <Composer agent={agent} />}
         </div>
+        {!unavailable && <Composer agent={agent} />}
 
         {showJump && (
           <button

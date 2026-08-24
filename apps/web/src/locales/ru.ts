@@ -87,7 +87,6 @@ export const ru: Record<string, string> = {
   'Message {agent}': 'Написать {agent}',
   Model: 'Модель',
   'Switch model (affects later messages only)': 'Сменить модель (только для последующих сообщений)',
-  'Custom model name — press Enter': 'Своё имя модели — нажмите Enter',
   Effort: 'Усилие',
   'Reasoning effort (affects later messages only)': 'Глубина рассуждений (только для последующих сообщений)',
   'Stop generating': 'Остановить генерацию',
@@ -470,8 +469,6 @@ export const ru: Record<string, string> = {
   'Hide the script': 'Скрыть скрипт',
   'Pull from the upstream': 'Получить с апстрима',
   'The upstream returned an empty list': 'Апстрим вернул пустой список',
-  'Fewer': 'Свернуть',
-  '{n} older': 'ещё {n} старых',
   'SendGrid API Key': 'Ключ API SendGrid',
   'Refresh the model list hourly': 'Обновлять список моделей каждый час',
   'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.': 'Раз в час спрашивает активный апстрим, какие у него модели, и перезаписывает список этого провайдера. Выключено — список остаётся таким, как введён. В любом случае кнопка «Получить с апстрима» продолжает работать.',
@@ -601,4 +598,6 @@ export const ru: Record<string, string> = {
   'Upstreams in use': 'Апстримов задействовано',
   'limit {n} each': 'по {n} на каждый',
   '{active} in flight · {queued} queued': '{active} в полёте · {queued} в очереди',
+  '{n} versions': '{n} версий',
+  'no longer offered': 'больше не предлагается',
 };

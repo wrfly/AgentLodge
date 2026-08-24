@@ -224,6 +224,53 @@ function commonPrefix(families: string[]): number {
   return n;
 }
 
+/** A vendor and the families it offers: the first level of the picker */
+export interface ModelVendor<T extends ModelLike = ModelLike> {
+  /** The leading segment of the names — `claude`, `deepseek`. Empty for the "Default" row. */
+  label: string;
+  families: Array<ModelGroup<T>>;
+  /** Everything under it, newest first within each family — for counting and for ticks */
+  models: T[];
+}
+
+/**
+ * Group by vendor, then by family, then by version.
+ *
+ * Names in use here all start with who made the model, and a deployment with two upstreams
+ * has enough of them that one flat list is not read. So the first level is that leading
+ * segment, and what a vendor has more than one of goes a level down.
+ *
+ * Order: vendors and families in the order they were configured, versions sorted, because
+ * an administrator's order carries a meaning we cannot see, while a version number does not.
+ */
+export function groupByVendor<T extends ModelLike>(models: T[]): Array<ModelVendor<T>> {
+  const out: Array<ModelVendor<T>> = [];
+  const byVendor = new Map<string, ModelVendor<T>>();
+
+  for (const m of models) {
+    // The "Default" row carries no name to parse and belongs above the vendors
+    const vendorLabel = m.id ? (m.id.split('-')[0] ?? m.id) : '';
+    let vendor = byVendor.get(vendorLabel);
+    if (!vendor) {
+      vendor = { label: vendorLabel, families: [], models: [] };
+      byVendor.set(vendorLabel, vendor);
+      out.push(vendor);
+    }
+    vendor.models.push(m);
+  }
+
+  for (const vendor of out) {
+    // Inside a vendor the leading segment is the same for everything, so it is dropped from
+    // the family labels: under `claude`, the families read `opus` and `sonnet`
+    vendor.families = groupModels(vendor.models).map((g) => ({
+      ...g,
+      label: g.label.startsWith(`${vendor.label}-`) ? g.label.slice(vendor.label.length + 1) : g.label,
+    }));
+    vendor.models = vendor.families.flatMap((g) => g.models);
+  }
+  return out;
+}
+
 /**
  * Group by family, newest first inside each, families in the order they were configured.
  *
