@@ -87,4 +87,5 @@ export const ru: Record<string, string> = {
   'Missing key': 'Не указан ключ',
   'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'Учётные данные {id} для апстрима «{name}» сейчас недоступны — обратитесь к администратору',
   'Upstream "{name}" has no credential configured; ask an administrator': 'Для апстрима «{name}» не настроены учётные данные — обратитесь к администратору',
+  'No such model': 'Такой модели нет',
 };

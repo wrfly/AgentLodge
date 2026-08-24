@@ -11,7 +11,6 @@ import * as convRepo from '../core/db/conversations.js';
 import * as usageRepo from '../core/db/usage.js';
 import * as memory from './memory.js';
 import * as quota from '../core/quota.js';
-import * as providersRepo from '../core/db/providers.js';
 import * as usersRepo from '../core/db/users.js';
 import * as mail from './mail.js';
 import { getString } from '../core/db/settings.js';
@@ -207,7 +206,9 @@ export async function startTurn(
       resumeSessionId,
       // No model on the conversation, then the active provider's default, then the
       // environment, then whatever the CLI decides
-      model: conv.model || providersRepo.active()?.defaultModel || config.model || undefined,
+      // The conversation's own choice, then the default configured for this agent, then
+      // whatever the CLI would use on its own
+      model: conv.model || getString(`agent.${conv.agent}.defaultModel`) || config.model || undefined,
       effort: conv.effort || undefined,
       runtimeToken,
       onEvent: (e) => publish(conversationId, e),

@@ -62,20 +62,37 @@ DeepSeek API Key    随便填（网关只要求非空）
 `GET http://127.0.0.1:9998/__stats` 能看到假上游侧记录的**真实峰值并发** ——
 用来验证「同时最多 3 个打到上游」这条到底有没有生效。
 
-## 上游 provider
+## 上游与模型
 
-网关往哪儿转发是**存库可配的**，后台增删改切，不用改代码也不用重启。
+配置的时候以供应商为中心，用的时候以模型为中心。后台有两张卡：**上游**说的是「怎么连上去」，
+**模型**说的是「用户能选什么、每个模型走哪条上游」。请求带哪个模型名，就由那一行决定发给谁。
 
-| kind | 用途 | 需要 key |
+上游有四种 kind：
+
+| kind | 用途 | 需要凭据 |
 |---|---|---|
 | `anthropic-native` | 原生说 Anthropic Messages 的端点：**官方 Anthropic**、DeepSeek 兼容层、自建 LLM 网关 | ✓ |
 | `openai-chat` | 只会 `/chat/completions` 的端点：Ollama / LM Studio / vLLM / 多数第三方 | 视端点 |
 | `mock` | **内置假上游**，不出网不花钱，切过去就能测全链路 | — |
 | `local-agent` | 宿主机上的 CLI，**只出文本**，仅供冒烟测试 | — |
 
-同一时刻只有一条生效。key 用 AES-256-GCM 加密存库，接口只返回 `hasKey`，生效中的那条不允许删除。
+多条上游同时生效，没有「当前上游」这个开关了。模型那张卡里一行是（模型名，上游）：
 
-### 凭据只有一个家：credential-manager
+- **同一个模型可以挂多条上游**。A 和 B 都提供 `deepseek-v4-pro` 就配两行，价格各配各的，
+  `priority` 小的先用。
+- **上游那边名字不同**就填「上游那边的名字」，发出去时改写，账仍然记在用户选的那个名字上。
+- **关掉一行**等于告诉网关别往这条上游发这个模型，也不作为备选。
+- **从上游拉取**会问那条上游有哪些模型，把缺的加进来；只加不删、不重排，关掉的仍然是关的。
+  打开「每小时刷新模型清单」就是自动做这件事。
+
+用户没选模型时用哪个，由两个设置决定：`Claude 的默认模型` 和 `Codex 的默认模型`。
+
+计价按（模型名，上游）：`provider_id` 留空的价格行适用于任何上游，配了具体上游的优先。用量表
+每行也记下这次是谁服务的，所以同一个模型在两条上游价格不同时账分得开。
+
+并发闸门按上游分池，每条上游各自 3 路在途（默认值可改），互不影响。
+
+## 凭据只有一个家：credential-manager
 
 上游的 key 不存在数据库里，也不经过浏览器。`upstream_providers` 只存一个**凭据名字**
 （`credential_id`），值放在 `credential-manager/` 这个单独的服务里，网关每次发请求前
@@ -170,15 +187,11 @@ access token，把它放进库里、让它经过浏览器，等于把订阅本�
 模型名**原样透传**，网关不做映射：DeepSeek 兼容层自己会把 Claude 的模型名映射过去，
 接官方 Anthropic 时透传本来就是对的。只有 `openai-chat` 那类端点不认 `claude-*` 的名字。
 
-### 模型清单归 provider
+### 模型名什么时候会被改写
 
-每条 provider 自己带一份**模型清单**和**默认模型** —— 模型名是端点的属性，
-换上游就是换一套名字。前端的模型选择器直接用生效中那条的清单；留空则退回 agent 的内置默认
-（Claude 的 `opus`/`sonnet`/`haiku` 别名、Codex 的 `models.json`）。
-
-> 早先这是两个全局设置项（`agent.claude.models` / `agent.codex.models`）。全局配的问题是
-> 切回上一个上游还得把清单再改一遍，而且切换的那一瞬间清单和端点是对不上的。
-> 存量配置由启动时的一次性迁移搬到当时 active 的那条 provider 上（两个 agent 的清单取并集）。
+只有一种情况：模型那一行填了「上游那边的名字」。其余一律原样透传 —— DeepSeek 兼容层自己会把
+Claude 的模型名映射过去，接官方 Anthropic 时透传本来就是对的。`openai-chat` 那类端点不认
+`claude-*` 的名字，给它配模型时填上游自己的名字即可。
 
 ### openai-chat 是怎么通的
 
@@ -305,7 +318,7 @@ PATCH /api/admin/providers/<id>  {"baseUrl":"https://api.zhipu.cn/anthropic"}
 | 位置 | 拦什么 |
 |---|---|
 | 后台 `activate` | 切到没配代理的出网上游 → 400 |
-| 后台 `patch` | 把生效中那条的代理清空 → 400（否则先激活再清空就绕过去了） |
+| 后台 `patch` | 把上游的代理清空 → 400（每条上游都是生效的，保存就是把它放进链路） |
 | 网关 `handleProxy` | 前两道被绕过（比如直接改库）→ 503，且在**拿并发 slot 之前**拒 |
 
 开关关着的时候这三道全部让行 —— 判据的第一句就是「没启用就不需要代理」。
@@ -726,7 +739,7 @@ workspaces/<userId>/<convId>/AGENTS.md    上面这些渲染成一整份，给 c
 - 强度取值实测得到：Claude `low|medium|high|xhigh|max`；Codex 另有 `none|minimal`
 
 **后台可改，无需重启**
-- **上游 provider**：地址、API Key（直接填或**从文件读**）、模型清单、默认模型，增删改切。有一条 active 的就启用计量网关，
+- **上游与模型**：上游是地址、协议、凭据；模型是「名字 → 上游」，同名可挂多条。配了模型就启用计量网关，
   agent 从此只能经网关访问上游；一条都没有则沿用本机 CLI 自己的配置，用量退化为按轮次粗记
 - **审计代理**：启用开关（默认关）、上游白名单、保留策略
 - **并发闸门**：全局上限热调
@@ -857,7 +870,7 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 | `PERMISSION_MODE` | `bypassPermissions` | Claude Code，⚠️ 见下 |
 | `CODEX_SANDBOX` | `workspace-write` | Codex 原生沙箱 |
 | `SECRET_FILE_ROOTS` | `<DATA_DIR>/secrets:/run/secrets` | 允许「从文件读 key」的目录白名单，冒号分隔。app 和 gateway 要配同一份。写 `/` 等于不限制（想清楚再写，见「key 也可以放在文件里」）|
-| `DEEPSEEK_API_KEY` | — | 只在**首次启动**（provider 表为空）时用来播一条 DeepSeek 上游并激活。之后一切以 provider 表为准，网关启不启用只看有没有 active 的那条 |
+| `DEEPSEEK_API_KEY` | — | 只在**首次启动**（provider 表为空）时用来播一条 DeepSeek 上游，key 由网关搬进 credential-manager。之后一切以 provider 和 models 两张表为准 |
 | `GATEWAY_PORT` | `8788` | |
 | `ROLE` | `all` | `app` / `gateway` 只跑一半，compose 拆两个容器时用 |
 | `HOST` | `127.0.0.1` | 跑在容器里必须改成 `0.0.0.0`，否则反代进不来 |
@@ -1265,7 +1278,7 @@ app 和内网：那两个不在这张网上，所以 agent 的可达范围跟任
 1. 看 `podman compose -f docker/compose.yml logs app`，里面打印了 **bootstrap 管理员邀请码**
 2. 用它注册第一个账号（自动是 admin）
 3. 进 `/admin` → 系统设置 → **上游 provider**，给要用的那条填 Base URL 和 API Key 再激活 ——
-   有一条 active 的 provider 才会启用计量网关
+   配了模型才会启用计量网关
 4. 同一页把 **价格表**核对一遍（默认值是我填的占位数，按官网单价改）
 5. 需要邮件邀请就填 SendGrid，页面上有「发测试邮件」按钮
 

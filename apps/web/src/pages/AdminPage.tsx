@@ -26,6 +26,8 @@ import {
   type QuotaScope,
   type SettingView,
   type Provider,
+  type Model,
+  type ModelInput,
   type Credential,
   type StartedLogin,
   type KeyFileEntry,
@@ -299,8 +301,6 @@ interface ProviderDraft {
   baseUrl: string;
   /** The credential's id. Empty means this provider has no way to authenticate. */
   credential: string;
-  models: string;
-  defaultModel: string;
 }
 
 /* ---------------- Upstream credentials ---------------- */
@@ -732,10 +732,9 @@ function ProvidersCard() {
   const t = useT();
   const [rows, setRows] = useState<Provider[] | null>(null);
   const [kinds, setKinds] = useState<Record<string, string>>({});
-  const [autoRefresh, setAutoRefresh] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProviderDraft>({
-    name: '', kind: 'openai-chat', baseUrl: '', credential: '', models: '', defaultModel: '',
+    name: '', kind: 'openai-chat', baseUrl: '', credential: '',
   });
   /**
    * What the credential manager holds, for the picker in the form. Empty when no such
@@ -748,7 +747,7 @@ function ProvidersCard() {
   const load = () =>
     admin
       .providers()
-      .then((d) => { setRows(d.providers); setKinds(d.kinds); setAutoRefresh(d.autoRefreshModels); })
+      .then((d) => { setRows(d.providers); setKinds(d.kinds); })
       .catch(() => {});
 
   useEffect(() => { void load(); }, []);
@@ -782,19 +781,11 @@ function ProvidersCard() {
       kind: p?.kind ?? 'openai-chat',
       baseUrl: p?.baseUrl ?? '',
       credential: p?.credentialId ?? '',
-      models: (p?.models ?? []).join('\n'),
-      defaultModel: p?.defaultModel ?? '',
     });
   };
 
   const save = () => {
-    const payload = {
-      name: draft.name,
-      kind: draft.kind,
-      baseUrl: draft.baseUrl,
-      models: draft.models.split('\n').map((m) => m.trim()).filter(Boolean),
-      defaultModel: draft.defaultModel.trim(),
-    };
+    const payload = { name: draft.name, kind: draft.kind, baseUrl: draft.baseUrl };
 
     // Absent would leave it alone; the form always knows what it should be, so it is
     // always sent — an empty string clears it, and the console then shows the provider
@@ -811,7 +802,7 @@ function ProvidersCard() {
   return (
     <Card
       title={t('Upstream providers')}
-      description={t('Where the gateway forwards requests. Exactly one is active; switching applies from the next call.')}
+      description={t('How to reach each upstream: address, protocol, credential. Which one serves a request follows from the model it asks for — see Models below.')}
     >
       {err && <Banner tone="error">{err}</Banner>}
 
@@ -819,26 +810,12 @@ function ProvidersCard() {
         {rows.map((p) => (
           <div key={p.id} className="rounded-lg border border-line p-2.5">
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => void run(() => admin.activateProvider(p.id))}
-                disabled={busy || p.active}
-                title={t(p.active ? 'Currently active' : 'Switch to this one')}
-                className={clsx(
-                  'size-3.5 shrink-0 rounded-full border-2 transition',
-                  p.active ? 'border-accent bg-accent' : 'border-line hover:border-muted',
-                )}
-              />
               <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
-                  <span className="truncate text-[13px] font-medium">{p.name}</span>
-                  {p.active && <span className="shrink-0 text-[11px] text-accent">{t('active')}</span>}
-                </div>
+                <div className="truncate text-[13px] font-medium">{p.name}</div>
                 <div className="truncate text-[11.5px] text-faint">
                   {t(kinds[p.kind] ?? p.kind)}
                   {p.baseUrl && ` · ${p.baseUrl}`}
                   {p.credentialId && ` · ${t('credential {id}', { id: p.credentialId })}`}
-                  {p.models.length > 0 && ` · ${t('{n} models', { n: p.models.length })}`}
-                  {p.defaultModel && ` · ${t('default {model}', { model: p.defaultModel })}`}
                 </div>
                 {p.credentialMissing && (
                   <div className="truncate text-[11px] text-danger">
@@ -849,8 +826,8 @@ function ProvidersCard() {
               <Button variant="ghost" onClick={() => startEdit(p)}>{t('Edit')}</Button>
               <Button
                 variant="ghost"
-                disabled={p.active || busy}
-                title={t(p.active ? 'The active one cannot be deleted — switch first' : 'Delete')}
+                disabled={busy}
+                title={t('Deleting an upstream deletes the models pointed at it')}
                 onClick={() => void run(() => admin.deleteProvider(p.id))}
               >
                 {t('Delete')}
@@ -864,7 +841,6 @@ function ProvidersCard() {
                 kinds={kinds}
                 onSave={save}
                 busy={busy}
-                providerId={p.id}
                 credentials={credentials}
               />
             )}
@@ -882,7 +858,6 @@ function ProvidersCard() {
         </Button>
       )}
 
-      <AutoRefreshModels on={autoRefresh} reload={load} />
     </Card>
   );
 }
@@ -895,17 +870,22 @@ function ProvidersCard() {
  * is traffic and key exposure for nothing. It lives here rather than in the generic settings
  * list so it sits next to the list it overwrites.
  */
-function AutoRefreshModels({ on, reload }: { on: boolean; reload: () => Promise<void> | void }) {
+function AutoRefreshModels() {
   const t = useT();
+  const [on, setOn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    admin.providers().then((d) => setOn(d.autoRefreshModels)).catch(() => {});
+  }, []);
 
   const toggle = async (next: boolean) => {
     setBusy(true);
     setErr(null);
     try {
       await admin.saveSettings({ 'agents.autoRefreshModels': String(next) });
-      await reload();
+      setOn(next);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -920,7 +900,7 @@ function AutoRefreshModels({ on, reload }: { on: boolean; reload: () => Promise<
         <div className="min-w-0 flex-1">
           <div className="text-[13px]">{t('Refresh the model list hourly')}</div>
           <div className="mt-0.5 text-[11.5px] leading-relaxed text-faint">
-            {t('Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.')}
+            {t('Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the manual "Pull from the upstream" button still works.')}
           </div>
         </div>
         <Toggle checked={on} disabled={busy} onChange={(v) => void toggle(v)} />
@@ -931,7 +911,7 @@ function AutoRefreshModels({ on, reload }: { on: boolean; reload: () => Promise<
 
 
 function ProviderForm({
-  draft, setDraft, kinds, onSave, busy, providerId, credentials = [],
+  draft, setDraft, kinds, onSave, busy, credentials = [],
 }: {
   draft: ProviderDraft;
   setDraft: (d: ProviderDraft) => void;
@@ -940,8 +920,6 @@ function ProviderForm({
   busy: boolean;
   /** What the credential manager holds. Empty means there is none, and that source is not offered. */
   credentials?: Credential[];
-  /** Absent while adding one: the key has not been saved yet, so there is nothing to ask with */
-  providerId?: string;
 }) {
   const t = useT();
   // The two built-in kinds never leave the machine, so no address and no credential
@@ -981,32 +959,6 @@ function ProviderForm({
           </Field>
         </>
       )}
-      <Field
-        label={t('Model list')}
-        hint={t('One per line; the model picker uses it directly. Leave empty to fall back to each agent\'s own defaults (Claude\'s opus/sonnet/haiku aliases, Codex\'s models.json).')}
-      >
-        <textarea
-          value={draft.models}
-          onChange={(e) => setDraft({ ...draft, models: e.target.value })}
-          rows={Math.max(2, draft.models.split('\n').length)}
-          spellCheck={false}
-          placeholder={'deepseek-v4-flash\ndeepseek-v4-pro'}
-          className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 font-mono text-[12.5px] outline-none focus:border-line-strong"
-        />
-        {providerId && (
-          <PullModels
-            id={providerId}
-            onPull={(models) => setDraft({ ...draft, models: models.join('\n') })}
-          />
-        )}
-      </Field>
-      <Field label={t('Default model')} hint={t('Used when a conversation picks none. Leave empty and the CLI decides.')}>
-        <Input
-          value={draft.defaultModel}
-          onChange={(e) => setDraft({ ...draft, defaultModel: e.target.value })}
-          placeholder={draft.models.split('\n')[0]?.trim() || t('empty = unspecified')}
-        />
-      </Field>
       <div className="flex gap-2">
         <Button onClick={onSave} disabled={busy || !draft.name.trim()}>{t('Save')}</Button>
       </div>
@@ -1014,45 +966,214 @@ function ProviderForm({
   );
 }
 
+/* ---------------- Models ---------------- */
+
 /**
- * Fills the list from the upstream itself.
+ * The model catalogue.
  *
- * Only offered on a saved provider: the request is made with that provider's stored key, and
- * a key still being typed into the form has not been saved anywhere the gateway can read.
- *
- * A failure is shown rather than swallowed — a compatibility layer that stops at
- * /v1/messages answers 404 here, and an empty box would read as "no models".
+ * This is the routing table users see. A row makes a name pickable, and the upstream on
+ * that row is where a request carrying the name goes. The same name can appear more than
+ * once — one model offered by two upstreams, at two prices — and the lowest priority is
+ * the one that gets used; the rest are what a failover would reach for.
  */
-function PullModels({ id, onPull }: { id: string; onPull: (models: string[]) => void }) {
+function ModelsCard() {
   const t = useT();
+  const [rows, setRows] = useState<Model[] | null>(null);
+  const [providers, setProviders] = useState<Array<{ id: string; name: string; kind: string }>>([]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState<ModelInput>({});
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  const pull = async () => {
+  const load = () =>
+    admin.models().then((d) => { setRows(d.models); setProviders(d.providers); }).catch(() => {});
+
+  useEffect(() => { void load(); }, []);
+
+  const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
-    setNote(null);
+    setErr(null);
     try {
-      const r = await admin.providerModels(id);
-      if (r.models.length) {
-        onPull(r.models);
-        setNote(t('{n} models', { n: r.models.length }));
-      } else {
-        setNote(r.error ?? t('The upstream returned an empty list'));
-      }
+      await fn();
+      await load();
+      setEditing(null);
     } catch (e) {
-      setNote(e instanceof Error ? e.message : String(e));
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
 
+  const pull = async (providerId: string) => {
+    setBusy(true);
+    setErr(null);
+    setNote(null);
+    try {
+      const r = await admin.pullModels(providerId);
+      setRows(r.models);
+      setNote(
+        r.added > 0
+          ? t('{n} added', { n: r.added })
+          : t('nothing new — the upstream offers {n}', { n: r.offered.length }),
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!rows) return null;
+
+  const providerName = (id: string): string => providers.find((p) => p.id === id)?.name ?? id;
+  /** A name with more than one row is served by more than one upstream */
+  const shared = new Set(
+    rows.map((m) => m.name).filter((name, i, all) => all.indexOf(name) !== i),
+  );
+
+  const startEdit = (m?: Model) => {
+    setEditing(m?.id ?? 'new');
+    setDraft(
+      m
+        ? { name: m.name, providerId: m.providerId, upstreamName: m.upstreamName, priority: m.priority, note: m.note }
+        : { name: '', providerId: providers[0]?.id ?? '', upstreamName: '', priority: 0 },
+    );
+  };
+
   return (
-    <div className="mt-1.5 flex items-center gap-2">
-      <Button variant="ghost" onClick={() => void pull()} disabled={busy}>
-        <RefreshCw size={13} className={clsx(busy && 'animate-spin')} />
-        {t('Pull from the upstream')}
-      </Button>
-      {note && <span className="text-[11.5px] text-muted">{note}</span>}
+    <Card
+      title={t('Models')}
+      description={t('What users can pick. A request carrying one of these names goes to the upstream on its row; the same name on two upstreams is two rows, lowest priority first.')}
+    >
+      {err && <Banner tone="error">{err}</Banner>}
+
+      {providers.length === 0 ? (
+        <div className="text-[12px] text-faint">{t('Add an upstream first — a model has to name one.')}</div>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {rows.length === 0 && <div className="text-[12px] text-faint">{t('Nothing here yet.')}</div>}
+            {rows.map((m) => (
+              <div key={m.id} className="rounded-lg border border-line p-2.5">
+                <div className="flex items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className={clsx('truncate text-[13px]', m.enabled ? 'font-medium' : 'text-faint line-through')}>
+                        {m.name}
+                      </span>
+                      {shared.has(m.name) && (
+                        <span className="shrink-0 text-[11px] text-faint">{t('priority {n}', { n: m.priority })}</span>
+                      )}
+                    </div>
+                    <div className="truncate text-[11.5px] text-faint">
+                      {providerName(m.providerId)}
+                      {m.upstreamName && ` · ${t('sent as {name}', { name: m.upstreamName })}`}
+                      {m.note && ` · ${m.note}`}
+                    </div>
+                  </div>
+                  <Toggle
+                    checked={m.enabled}
+                    disabled={busy}
+                    onChange={(v) => void run(() => admin.updateModel(m.id, { enabled: v }))}
+                  />
+                  <Button variant="ghost" onClick={() => startEdit(m)}>{t('Edit')}</Button>
+                  <Button variant="ghost" disabled={busy} onClick={() => void run(() => admin.deleteModel(m.id))}>
+                    {t('Delete')}
+                  </Button>
+                </div>
+
+                {editing === m.id && (
+                  <ModelForm
+                    draft={draft}
+                    setDraft={setDraft}
+                    providers={providers}
+                    busy={busy}
+                    onSave={() => void run(() => admin.updateModel(m.id, draft))}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+
+          {editing === 'new' ? (
+            <div className="mt-2 rounded-lg border border-line p-2.5">
+              <ModelForm
+                draft={draft}
+                setDraft={setDraft}
+                providers={providers}
+                busy={busy}
+                onSave={() => void run(() => admin.createModel(draft))}
+              />
+            </div>
+          ) : (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button variant="ghost" onClick={() => startEdit()}>{t('+ Add model')}</Button>
+              {providers.map((p) => (
+                <Button key={p.id} variant="ghost" disabled={busy} onClick={() => void pull(p.id)}>
+                  <RefreshCw size={13} className={clsx(busy && 'animate-spin')} />
+                  {t('Pull from {name}', { name: p.name })}
+                </Button>
+              ))}
+              {note && <span className="text-[11.5px] text-muted">{note}</span>}
+            </div>
+          )}
+          <AutoRefreshModels />
+        </>
+      )}
+    </Card>
+  );
+}
+
+function ModelForm({
+  draft, setDraft, providers, busy, onSave,
+}: {
+  draft: ModelInput;
+  setDraft: (d: ModelInput) => void;
+  providers: Array<{ id: string; name: string; kind: string }>;
+  busy: boolean;
+  onSave: () => void;
+}) {
+  const t = useT();
+  return (
+    <div className="mt-2.5 space-y-2 border-t border-line pt-2.5">
+      <Field label={t('Name')} hint={t('What users pick, and what the price table and every report are keyed by.')}>
+        <Input
+          value={draft.name ?? ''}
+          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+          placeholder="deepseek-v4-pro"
+          spellCheck={false}
+        />
+      </Field>
+      <Field label={t('Upstream')}>
+        <Select value={draft.providerId ?? ''} onChange={(e) => setDraft({ ...draft, providerId: e.target.value })}>
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field label={t('Name upstream')} hint={t('Only when the upstream calls it something else. Empty means the two match.')}>
+        <Input
+          value={draft.upstreamName ?? ''}
+          onChange={(e) => setDraft({ ...draft, upstreamName: e.target.value })}
+          placeholder={draft.name ?? ''}
+          spellCheck={false}
+        />
+      </Field>
+      <Field label={t('Priority')} hint={t('Lowest first among the upstreams offering this name.')}>
+        <Input
+          value={String(draft.priority ?? 0)}
+          onChange={(e) => setDraft({ ...draft, priority: Number(e.target.value.replace(/[^\d]/g, '')) || 0 })}
+          inputMode="numeric"
+          className="w-24"
+        />
+      </Field>
+      <Field label={t('Note')}>
+        <Input value={draft.note ?? ''} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder={t('optional')} />
+      </Field>
+      <div className="flex gap-2">
+        <Button onClick={onSave} disabled={busy || !draft.name?.trim() || !draft.providerId}>{t('Save')}</Button>
+      </div>
     </div>
   );
 }
@@ -1300,15 +1421,24 @@ function GateCard() {
     }
   };
 
-  const throttled = gate.effectiveMax < gate.max;
+  // One pool per upstream, so a busy one cannot make the others queue. The totals are the
+  // sum across them, which is what "how loaded is this deployment" means.
+  const pools = gate.pools ?? [];
+  const active = pools.reduce((n, p) => n + p.active, 0);
+  const queued = pools.reduce((n, p) => n + p.queued, 0);
+  const granted = pools.reduce((n, p) => n + p.totalGranted, 0);
+  const throttledCount = pools.reduce((n, p) => n + p.totalThrottled, 0);
+  const narrowed = pools.filter((p) => p.effectiveMax < p.max);
+  const waitP95 = pools.length ? Math.max(...pools.map((p) => p.waitMsP95)) : 0;
+  const waitP50 = pools.length ? Math.max(...pools.map((p) => p.waitMsP50)) : 0;
 
   return (
     <Card
       title={t('Metering gateway')}
       description={
         gate.enabled
-          ? t('Every agent request upstream goes through it: per-call accounting, a hard quota gate, and global rate limiting')
-          : t('No upstream provider is active, so agents fall back to their own configuration and usage can only be counted per turn')
+          ? t('Every agent request upstream goes through it: per-call accounting, a hard quota gate, and a rate limit per upstream')
+          : t('No model is configured, so agents fall back to their own configuration and usage can only be counted per turn')
       }
       actions={
         <div className="flex items-center gap-1.5">
@@ -1326,32 +1456,44 @@ function GateCard() {
       }
     >
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label={t('In flight')} value={`${gate.active} / ${gate.effectiveMax}`} tone="accent" />
-        <Stat label={t('Queued')} value={String(gate.queued)} tone={gate.queued > 0 ? 'danger' : undefined} />
+        <Stat label={t('In flight')} value={String(active)} tone="accent" />
+        <Stat label={t('Queued')} value={String(queued)} tone={queued > 0 ? 'danger' : undefined} />
         <Stat
-          label={t('Effective concurrency')}
-          value={String(gate.effectiveMax)}
-          sub={
-            throttled
-              ? t('throttled upstream — reduced from {n}', { n: gate.max })
-              : t('limit {n}', { n: gate.max })
-          }
-          tone={throttled ? 'danger' : undefined}
+          label={t('Upstreams in use')}
+          value={String(pools.length)}
+          sub={t('limit {n} each', { n: gate.max })}
+          tone={narrowed.length ? 'danger' : undefined}
         />
         <Stat
           label={t('Wait p95')}
-          value={gate.waitMsP95 > 0 ? `${(gate.waitMsP95 / 1000).toFixed(1)}s` : '0'}
-          sub={`p50 ${(gate.waitMsP50 / 1000).toFixed(1)}s`}
+          value={waitP95 > 0 ? `${(waitP95 / 1000).toFixed(1)}s` : '0'}
+          sub={`p50 ${(waitP50 / 1000).toFixed(1)}s`}
         />
       </div>
+
+      {pools.length > 0 && (
+        <div className="mt-3 divide-y divide-line overflow-hidden rounded-lg border border-line">
+          {pools.map((p) => (
+            <div key={p.providerId} className="flex items-baseline gap-2 px-2.5 py-1.5 text-[11.5px]">
+              <span className="truncate">{p.name ?? p.providerId}</span>
+              <span className="ml-auto shrink-0 text-faint">
+                {t('{active} in flight · {queued} queued', { active: p.active, queued: p.queued })}
+                {p.effectiveMax < p.max
+                  ? ` · ${t('throttled upstream — reduced from {n}', { n: p.max })}`
+                  : ` · ${t('limit {n}', { n: p.effectiveMax })}`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="mt-3 space-y-1.5 text-[12px] text-faint">
         <div className="flex items-center gap-1.5">
           <Gauge size={12} />
           {t('{granted} admitted in total · throttled upstream {throttled} times', {
-            granted: gate.totalGranted.toLocaleString(),
-            throttled: gate.totalThrottled,
+            granted: granted.toLocaleString(),
+            throttled: throttledCount,
           })}
-          {throttled && ` · ${t('recovers automatically after 20 consecutive successes')}`}
+          {narrowed.length > 0 && ` · ${t('recovers automatically after 20 consecutive successes')}`}
         </div>
         <div className="flex items-center gap-1.5">
           <ShieldCheck size={12} className={gate.containers?.ok ? 'text-emerald-500' : ''} />
@@ -2279,6 +2421,7 @@ function SettingsTab() {
       <AgentsCard />
       <CredentialsCard />
       <ProvidersCard />
+      <ModelsCard />
       <AuditProxyCard />
       <GateCard />
 

@@ -7,7 +7,7 @@ import type { MessageBlock, ToolBlock, TurnUsage } from '../../core/protocol.js'
 import { probeBin } from './probe.js';
 import { codexProviderArgs } from './provider.js';
 import { launch } from './launch.js';
-import * as providers from '../../core/db/providers.js';
+import * as models from '../../core/db/models.js';
 import type {
   AgentAdapter,
   EffortOption,
@@ -336,9 +336,9 @@ function runTurn(o: RunOptions): RunningTurn {
 
 /** codex ships its own model list (model_catalog_json in config.toml); read it directly */
 async function codexModels(): Promise<ModelOption[]> {
-  // As with claude: the list belongs to the active provider, then the environment, then
-  // codex's own models.json
-  const configured = providers.active()?.models ?? [];
+  // As with claude: the configured models first, then the environment, then codex's own
+  // models.json
+  const configured = models.names();
   if (configured.length) return configured.map((id) => ({ id, label: id }));
   if (config.codexModels.length) {
     return config.codexModels.map((id) => ({ id, label: id }));

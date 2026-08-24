@@ -18,12 +18,15 @@ export function register(app: FastifyInstance): void {
       priceCacheRead?: number;
       priceCacheWrite?: number;
       priceOutput?: number;
+      /** Which upstream this price is for. Empty applies to any of them. */
+      providerId?: string;
       note?: string;
     };
     if (!body.model?.trim()) return reply.code(400).send({ error: tr(req, 'Missing model name') });
     const yuan = (v: unknown) => Math.round(Number(v ?? 0) * pricing.MICRO);
     const row = pricing.add({
       model: body.model,
+      providerId: body.providerId,
       currency: body.currency,
       priceInput: yuan(body.priceInput),
       priceCacheRead: yuan(body.priceCacheRead),

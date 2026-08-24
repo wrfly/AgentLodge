@@ -87,4 +87,5 @@ export const zh: Record<string, string> = {
   'Missing key': '缺少 key',
   'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': '上游「{name}」的凭据 {id} 现在用不了，请找管理员',
   'Upstream "{name}" has no credential configured; ask an administrator': '上游「{name}」没有配置凭据，请找管理员',
+  'No such model': '没有这个模型',
 };

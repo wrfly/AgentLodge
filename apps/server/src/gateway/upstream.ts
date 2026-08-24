@@ -1,11 +1,16 @@
 import { spawn } from 'node:child_process';
 import { config } from '../core/config.js';
+import * as models from '../core/db/models.js';
 import * as providers from '../core/db/providers.js';
 import type { Wire } from './usage-parser.js';
 
 /**
- * Resolving the upstream: turning the active provider into where this request goes and
+ * Resolving the upstream: turning the model a request asks for into where it goes and
  * whether it needs translating.
+ *
+ * The model decides, not a global switch. A name selects a row in the models table, that
+ * row names a provider, and the provider says how to connect. Two upstreams offering the
+ * same model are two rows; the one with the lowest priority wins.
  *
  * The gateway knows no vendor names, only four kinds. Adding a new third-party API is a
  * row in the console, not a code change.
@@ -20,12 +25,42 @@ export interface Resolved {
   translate: boolean;
   apiKey: string;
   provider: providers.Provider;
+  /**
+   * The name to put in the outgoing body, when the upstream calls this model something
+   * else. Undefined leaves what the client sent alone.
+   */
+  upstreamModel?: string;
 }
 
-export async function resolveUpstream(wire: Wire, originalUrl: string): Promise<Resolved | undefined> {
-  const p = providers.active();
+/**
+ * Which row serves this request.
+ *
+ * An exact name is routed by its row. Anything else — no model at all, an alias the CLI
+ * expands on its own, a name nobody configured — falls back to the first enabled row,
+ * forwarded with the name the client sent. That fallback is what keeps a deployment
+ * working when a CLI asks for `sonnet` and the model list is written in full names.
+ */
+function route(model?: string): { model?: models.Model; rename: boolean } | undefined {
+  const name = (model ?? '').trim();
+  if (name) {
+    const [match] = models.candidates(name);
+    if (match) return { model: match, rename: Boolean(match.upstreamName) };
+  }
+  const [fallback] = models.candidates(models.names()[0] ?? '');
+  return fallback ? { model: fallback, rename: false } : undefined;
+}
+
+export async function resolveUpstream(
+  wire: Wire,
+  originalUrl: string,
+  model?: string,
+): Promise<Resolved | undefined> {
+  const chosen = route(model);
+  if (!chosen?.model) return undefined;
+  const p = providers.findById(chosen.model.providerId);
   if (!p) return undefined;
 
+  const upstreamModel = chosen.rename ? chosen.model.upstreamName : undefined;
   const base = p.baseUrl.replace(/\/+$/, '');
   // Awaited because a credential may live in the credential manager, one socket call
   // away (core/db/providers.ts). A key in the database or in a file answers without
@@ -34,12 +69,12 @@ export async function resolveUpstream(wire: Wire, originalUrl: string): Promise<
 
   // An upstream that only speaks chat: requests from both CLIs need translating
   if (p.kind === 'openai-chat') {
-    return { url: `${base}/chat/completions`, wire: 'chat', translate: wire !== 'chat', apiKey, provider: p };
+    return { url: `${base}/chat/completions`, wire: 'chat', translate: wire !== 'chat', apiKey, provider: p, upstreamModel };
   }
 
   // The mock upstream and the local agent never use HTTP; the URL is a placeholder
   if (p.kind === 'mock' || p.kind === 'local-agent') {
-    return { url: `internal:${p.kind}`, wire, translate: false, apiKey, provider: p };
+    return { url: `internal:${p.kind}`, wire, translate: false, apiKey, provider: p, upstreamModel };
   }
 
   /*
@@ -62,12 +97,12 @@ export async function resolveUpstream(wire: Wire, originalUrl: string): Promise<
   if (wire === 'anthropic') {
     const qs = originalUrl.includes('?') ? originalUrl.slice(originalUrl.indexOf('?')) : '';
     const path = originalUrl.split('?')[0] ?? '/v1/messages';
-    return { url: `${base}${path}${qs}`, wire, translate: false, apiKey, provider: p };
+    return { url: `${base}${path}${qs}`, wire, translate: false, apiKey, provider: p, upstreamModel };
   }
   if (wire === 'chat') {
-    return { url: `${root}/chat/completions`, wire, translate: false, apiKey, provider: p };
+    return { url: `${root}/chat/completions`, wire, translate: false, apiKey, provider: p, upstreamModel };
   }
-  return { url: `${root}/responses`, wire, translate: false, apiKey, provider: p };
+  return { url: `${root}/responses`, wire, translate: false, apiKey, provider: p, upstreamModel };
 }
 
 /* ---------------- The built-in mock upstream ---------------- */

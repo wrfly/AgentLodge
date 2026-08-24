@@ -179,6 +179,9 @@ create table if not exists usage_records (
   turn_id               text,
   agent                 text not null,
   model                 text,
+  -- Which upstream served it. Two providers can offer the same model at different prices,
+  -- so the bill cannot be reconstructed from the model name alone.
+  provider_id           text,
   effort                text,
   input_tokens          integer not null default 0,
   cache_read_tokens     integer not null default 0,
@@ -213,6 +216,10 @@ create table if not exists model_pricing (
   id                integer primary key autoincrement,
   -- A model name or prefix (deepseek-v4 matches deepseek-v4-pro); '*' is the catch-all
   model             text not null,
+  -- Which upstream this price is for. Null means any: the same model served by two
+  -- upstreams can cost two different amounts, and a row without a provider is the
+  -- fallback for whichever of them has no price of its own.
+  provider_id       text,
   currency          text not null default 'CNY',
   price_input       integer not null,   -- input that missed the cache
   price_cache_read  integer not null,   -- input that hit it, usually an order of magnitude cheaper
@@ -222,18 +229,19 @@ create table if not exists model_pricing (
   note              text,
   created_at        text not null
 );
-create index if not exists idx_pricing_model on model_pricing(model, effective_from desc);
+create index if not exists idx_pricing_model on model_pricing(model, provider_id, effective_from desc);
 
-/* ---------------- Upstream providers ---------------- */
+/* ---------------- Upstream providers and models ---------------- */
 
--- Where the gateway forwards. Several rows, exactly one active at a time.
+-- Where the gateway can forward. Several rows, all usable at once: which one serves a
+-- request is decided by the model that request asks for (see the models table below).
 -- kind decides how the protocol is handled:
 --   anthropic-native  speaks Messages natively; Claude to /anthropic, Codex to /responses,
 --                     both relayed as-is
 --   openai-chat       only /chat/completions (Ollama, LM Studio, vLLM, most third parties)
 --                     so the gateway translates
---   mock              the built-in fake upstream: no network, no cost, for exercising the path
---   local-agent       a CLI on the host — text only, no tool calls — for testing
+--   mock              built-in, no network
+--   local-agent       a CLI on the host, text only
 create table if not exists upstream_providers (
   id          text primary key,
   name        text not null,
@@ -243,16 +251,33 @@ create table if not exists upstream_providers (
   -- lives in the credential manager (credential-manager/), which hands the gateway an
   -- access token per request. Nothing usable upstream is stored here.
   credential_id text,
-  active      integer not null default 0,
   note        text,
-  -- The model list belongs to the provider, not to global settings: switching upstream
-  -- switches the whole set of names, so the two belong together
-  models        text not null default '',   -- comma-separated; empty uses the agent's own defaults
-  default_model text not null default '',   -- used when a conversation names no model
   created_at  text not null,
   updated_at  text not null
 );
-create index if not exists idx_upstream_active on upstream_providers(active);
+
+-- A model a user can pick, and the upstream that serves it.
+--
+-- The name is what everything else keys on: the picker in the interface, the model field
+-- in a request, the pricing table, a usage row. One name may have several rows — the same
+-- model offered by two upstreams, at two prices — and `priority` decides which is used
+-- (lowest first). The others are what a failover would reach for.
+--
+-- upstream_name covers the case where the name upstream is not the name here: an endpoint
+-- that calls it `deepseek-chat` while users pick `deepseek-v4-pro`. Empty means they match.
+create table if not exists models (
+  id            text primary key,
+  name          text not null,
+  provider_id   text not null references upstream_providers(id) on delete cascade,
+  upstream_name text not null default '',
+  enabled       integer not null default 1,
+  priority      integer not null default 0,
+  note          text,
+  created_at    text not null,
+  updated_at    text not null,
+  unique(name, provider_id)
+);
+create index if not exists idx_models_name on models(name, priority);
 
 /* ---------------- System settings and audit ---------------- */
 

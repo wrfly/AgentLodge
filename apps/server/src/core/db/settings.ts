@@ -214,6 +214,29 @@ export const SETTING_SPECS: SettingSpec[] = [
     hidden: true,
   },
   {
+    /**
+     * The model a conversation gets when nobody picks one, per agent.
+     *
+     * Per agent rather than global because the two CLIs are pointed at different models
+     * more often than not: a subscription-backed Claude and a cheap chat endpoint for
+     * Codex, say. Empty leaves it to the CLI's own default.
+     */
+    key: 'agent.claude.defaultModel',
+    label: 'Default model for Claude',
+    group: 'agents',
+    type: 'string',
+    default: '',
+    hint: 'Used when a conversation picks no model. It has to be one of the configured models. Empty leaves the choice to the CLI.',
+  },
+  {
+    key: 'agent.codex.defaultModel',
+    label: 'Default model for Codex',
+    group: 'agents',
+    type: 'string',
+    default: '',
+    hint: 'Used when a conversation picks no model. It has to be one of the configured models. Empty leaves the choice to the CLI.',
+  },
+  {
     /*
      * The model list itself stays on the provider — it is a property of an endpoint, and the
      * note at the top of this file explains why none of those live here. This only decides
@@ -232,7 +255,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     // sitting in a generic list of unrelated settings, is a switch nobody finds.
     hidden: true,
     default: 'false',
-    hint: 'Asks the active upstream what models it has, once an hour, and overwrites that provider\'s list. Off leaves the list exactly as typed. Either way the manual "Pull from the upstream" button still works.',
+    hint: 'Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the manual "Pull from the upstream" button still works.',
   },
   {
     /*

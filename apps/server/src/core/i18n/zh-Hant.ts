@@ -91,4 +91,5 @@ export const zhHant: Record<string, string> = {
   'Missing key': '缺少 key',
   'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': '上游「{name}」的憑證 {id} 現在用不了，請找管理員',
   'Upstream "{name}" has no credential configured; ask an administrator': '上游「{name}」沒有設定憑證，請找管理員',
+  'No such model': '沒有這個模型',
 };

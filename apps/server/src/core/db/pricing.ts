@@ -19,6 +19,8 @@ export interface Pricing {
   model: string;
   currency: string;
   /** Micro-units per million tokens */
+  /** Which upstream this price is for. Empty means any. */
+  providerId: string;
   priceInput: number;
   priceCacheRead: number;
   priceCacheWrite: number;
@@ -31,6 +33,7 @@ interface Row {
   id: number;
   model: string;
   currency: string;
+  provider_id: string | null;
   price_input: number;
   price_cache_read: number;
   price_cache_write: number;
@@ -44,6 +47,7 @@ const toPricing = (r: Row): Pricing => ({
   id: r.id,
   model: r.model,
   currency: r.currency,
+  providerId: r.provider_id ?? '',
   priceInput: r.price_input,
   priceCacheRead: r.price_cache_read,
   priceCacheWrite: r.price_cache_write,
@@ -58,6 +62,8 @@ export function list(): Pricing[] {
 
 export interface UpsertInput {
   model: string;
+  /** The upstream this price applies to. Empty means any of them. */
+  providerId?: string;
   currency?: string;
   priceInput: number;
   priceCacheRead: number;
@@ -71,10 +77,11 @@ export interface UpsertInput {
 export function add(input: UpsertInput): Pricing {
   run(
     `insert into model_pricing
-       (model, currency, price_input, price_cache_read, price_cache_write, price_output,
+       (model, provider_id, currency, price_input, price_cache_read, price_cache_write, price_output,
         effective_from, note, created_at)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.model.trim(),
+    (input.providerId ?? '').trim() || null,
     input.currency ?? getString('billing.currency', 'CNY'),
     Math.round(input.priceInput),
     Math.round(input.priceCacheRead),
@@ -92,12 +99,20 @@ export function remove(id: number): boolean {
 }
 
 /**
- * The price that applied to a model at a moment.
+ * The price that applied to a model at a moment, on the upstream that served it.
  *
- * Exact match first, then longest prefix, then the '*' catch-all — so a new model does
- * not need a price before it can be used.
+ * Rows for that upstream are considered first, and rows with no upstream after them: the
+ * same model offered by two providers can cost two different amounts, and a price without
+ * a provider is the one that applies to whichever of them has nothing more specific.
+ *
+ * Within each of those two passes: exact match, then longest prefix, then the '*'
+ * catch-all — so a new model does not need a price before it can be used.
  */
-export function resolve(model: string | null | undefined, at = nowIso()): Pricing | undefined {
+export function resolve(
+  model: string | null | undefined,
+  at = nowIso(),
+  providerId?: string | null,
+): Pricing | undefined {
   const m = (model ?? '').trim();
   const rows = all<Row>(
     'select * from model_pricing where effective_from <= ? order by effective_from desc',
@@ -105,16 +120,23 @@ export function resolve(model: string | null | undefined, at = nowIso()): Pricin
   ).map(toPricing);
   if (!rows.length) return undefined;
 
-  const exact = rows.find((r) => r.model === m);
-  if (exact) return exact;
+  const pass = (candidates: Pricing[]): Pricing | undefined => {
+    const exact = candidates.find((r) => r.model === m);
+    if (exact) return exact;
+    // Longest prefix wins: deepseek-v4-pro matches deepseek-v4, not deepseek
+    const prefixes = candidates
+      .filter((r) => r.model !== '*' && m.startsWith(r.model))
+      .sort((a, b) => b.model.length - a.model.length);
+    if (prefixes[0]) return prefixes[0];
+    return candidates.find((r) => r.model === '*');
+  };
 
-  // Longest prefix wins: deepseek-v4-pro matches deepseek-v4, not deepseek
-  const prefixes = rows
-    .filter((r) => r.model !== '*' && m.startsWith(r.model))
-    .sort((a, b) => b.model.length - a.model.length);
-  if (prefixes[0]) return prefixes[0];
-
-  return rows.find((r) => r.model === '*');
+  const provider = (providerId ?? '').trim();
+  if (provider) {
+    const mine = pass(rows.filter((r) => r.providerId === provider));
+    if (mine) return mine;
+  }
+  return pass(rows.filter((r) => !r.providerId));
 }
 
 export interface TokenCounts {
@@ -125,8 +147,13 @@ export interface TokenCounts {
 }
 
 /** Cost in micro-units. No matching price returns 0, and the interface says the model is unpriced. */
-export function costMicro(model: string | null | undefined, u: TokenCounts, at?: string): number {
-  const p = resolve(model, at);
+export function costMicro(
+  model: string | null | undefined,
+  u: TokenCounts,
+  at?: string,
+  providerId?: string | null,
+): number {
+  const p = resolve(model, at, providerId);
   if (!p) return 0;
   const per = (tokens: number, price: number) => (tokens * price) / 1_000_000;
   return Math.round(

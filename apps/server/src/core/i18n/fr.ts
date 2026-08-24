@@ -87,4 +87,5 @@ export const fr: Record<string, string> = {
   'Missing key': 'Clé manquante',
   'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'Les identifiants {id} de l\\\'amont « {name} » sont inutilisables pour le moment ; contactez un administrateur',
   'Upstream "{name}" has no credential configured; ask an administrator': 'Aucun identifiant configuré pour l\\\'amont « {name} » ; contactez un administrateur',
+  'No such model': 'Modèle introuvable',
 };

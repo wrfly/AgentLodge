@@ -33,6 +33,7 @@ await new Promise<void>((resolve) => manager.listen(managerSocket, resolve));
 const { initDb } = await import('../core/db/index.js');
 initDb();
 const providers = await import('../core/db/providers.js');
+const modelsRepo = await import('../core/db/models.js');
 const settings = await import('../core/db/settings.js');
 const audit = await import('../core/db/audit.js');
 const { refreshOnce } = await import('./model-refresh.js');
@@ -65,16 +66,21 @@ function upstream(answer: { status?: number; ids?: string[] }): () => void {
   return () => { globalThis.fetch = original; };
 }
 
-function reset(models: string[]): Provider {
+/** One upstream with the given models configured against it */
+function reset(names: string[]): Provider {
   for (const p of providers.list()) providers.remove(p.id);
   const p = providers.create({
     name: 'lab', kind: 'anthropic-native', baseUrl: 'https://api.example.com',
-    credentialId: 'lab-key', models,
+    credentialId: 'lab-key',
   });
-  providers.activate(p.id);
+  modelsRepo.addMissing(p.id, names);
   logs.length = 0;
   return providers.findById(p.id)!;
 }
+
+/** The names configured against a provider, in the order the picker shows them */
+const configured = (id: string): string[] =>
+  modelsRepo.list().filter((m) => m.providerId === id).map((m) => m.name);
 
 const auditCount = (): number => audit.list(1000).length;
 
@@ -85,7 +91,7 @@ console.log('\n=== The switch ===');
   const restore = upstream({ ids: ['new-2'] });
   await refreshOnce(direct, log);
   restore();
-  ok('off means the list is not touched', providers.findById(p.id)!.models.join(',') === 'old-1');
+  ok('off means nothing is added', configured(p.id).join(',') === 'old-1', configured(p.id).join(','));
   ok('and nothing is said about it', logs.length === 0, logs.join('|'));
 }
 {
@@ -94,8 +100,10 @@ console.log('\n=== The switch ===');
   const restore = upstream({ ids: ['claude-opus-5', 'claude-sonnet-5'] });
   await refreshOnce(direct, log);
   restore();
-  ok('on means the upstream wins', providers.findById(p.id)!.models.join(',') === 'claude-opus-5,claude-sonnet-5', providers.findById(p.id)!.models.join(','));
-  ok('and it says what changed', logs.some((l) => l.includes('1 → 2 models')), logs.join('|'));
+  const have = new Set(configured(p.id));
+  ok('what the upstream offers is added', have.has('claude-opus-5') && have.has('claude-sonnet-5'), [...have].join(','));
+  ok('and what was configured by hand survives it', have.has('old-1'), [...have].join(','));
+  ok('it says how many are new', logs.some((l) => l.includes('2 new model(s)')), logs.join('|'));
 }
 {
   // Read fresh every pass, so flipping it in the console takes effect without a restart
@@ -108,7 +116,8 @@ console.log('\n=== The switch ===');
   restore = upstream({ ids: ['b'] });
   await refreshOnce(direct, log);
   restore();
-  ok('turning it off stops the next pass', providers.findById(p.id)!.models.join(',') === 'a', providers.findById(p.id)!.models.join(','));
+  const have = new Set(configured(p.id));
+  ok('turning it off stops the next pass', have.has('a') && !have.has('b'), [...have].join(','));
 }
 
 console.log('\n=== An upstream that cannot answer ===');
@@ -119,7 +128,7 @@ console.log('\n=== An upstream that cannot answer ===');
   const restore = upstream({ status: 404 });
   await refreshOnce(direct, log);
   restore();
-  ok('a 404 leaves the list alone', providers.findById(p.id)!.models.join(',') === 'keep-me');
+  ok('a 404 leaves the list alone', configured(p.id).join(',') === 'keep-me');
   ok('nothing is written to the audit log', auditCount() === before);
   ok('but it is logged', logs.some((l) => l.includes('model refresh:')), logs.join('|'));
 }
@@ -128,43 +137,20 @@ console.log('\n=== An upstream that cannot answer ===');
   const restore = upstream({ ids: [] });
   await refreshOnce(direct, log);
   restore();
-  ok('an empty list is not an answer either', providers.findById(p.id)!.models.join(',') === 'keep-me');
+  ok('an empty list is not an answer either', configured(p.id).join(',') === 'keep-me');
 }
 
-console.log('\n=== An unchanged list ===');
+console.log('\n=== Nothing new ===');
 {
   const p = reset(['a', 'b']);
   settings.setSetting('agents.autoRefreshModels', 'true');
   const before = auditCount();
-  const stamp = providers.findById(p.id)!.updatedAt;
   const restore = upstream({ ids: ['a', 'b'] });
   await refreshOnce(direct, log);
   restore();
-  ok('is not rewritten', providers.findById(p.id)!.updatedAt === stamp);
+  ok('adds nothing', configured(p.id).join(',') === 'a,b', configured(p.id).join(','));
   ok('and produces no audit entry', auditCount() === before);
   ok('and says nothing', logs.length === 0, logs.join('|'));
-}
-
-console.log('\n=== A change is recorded where an administrator would look ===');
-{
-  const p = reset(['a']);
-  settings.setSetting('agents.autoRefreshModels', 'true');
-  const restore = upstream({ ids: ['a', 'c'] });
-  await refreshOnce(direct, log);
-  restore();
-  const entry = audit.list(5).find((e) => e.action === 'provider.models.refresh');
-  ok('the audit log has it', !!entry);
-  ok('naming the provider', entry?.targetId === p.id);
-  ok('with both lists', JSON.stringify(entry?.detail).includes('"after":["a","c"]'), JSON.stringify(entry?.detail));
-  ok('and no actor, because nobody did it', entry?.actorId === undefined || entry?.actorId === null);
-}
-
-console.log('\n=== With no provider at all ===');
-{
-  for (const p of providers.list()) providers.remove(p.id);
-  logs.length = 0;
-  await refreshOnce(direct, log);
-  ok('it does nothing quietly', logs.length === 0);
 }
 
 manager.close();

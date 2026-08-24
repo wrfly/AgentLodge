@@ -6,7 +6,7 @@ import { claudeEnv } from './provider.js';
 import { launch } from './launch.js';
 import * as memory from '../memory.js';
 import { getString } from '../../core/db/settings.js';
-import * as providers from '../../core/db/providers.js';
+import * as models from '../../core/db/models.js';
 import type {
   AgentAdapter,
   EffortOption,
@@ -357,10 +357,10 @@ function runTurn(o: RunOptions): RunningTurn {
  * CLAUDE_MODELS, or type a name in the interface, when something exact is needed.
  */
 async function claudeModels(): Promise<ModelOption[]> {
-  // Order of preference: the active provider, then the environment, then the built-in
-  // defaults. The list follows the provider, because a model name is a property of the
-  // endpoint and switching upstream switches the whole set.
-  const configured = providers.active()?.models ?? [];
+  // Order of preference: what an administrator configured, then the environment, then the
+  // built-in aliases. The list is the models table, which is also what routing reads — so
+  // a name that can be picked here is a name that has an upstream behind it.
+  const configured = models.names();
   if (configured.length) return configured.map((id) => ({ id, label: id }));
   if (config.claudeModels.length) {
     return config.claudeModels.map((id) => ({ id, label: id }));
