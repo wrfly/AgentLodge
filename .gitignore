@@ -19,4 +19,7 @@ trace-proxy/package.json
 data.backup-*/
 log/
 
+# Compiled authkey-sync binary (go build drops it next to main.go).
+authkey-sync/authkey-sync
+
 notes.md

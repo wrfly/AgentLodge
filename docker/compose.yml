@@ -172,7 +172,7 @@ services:
         source: *data-dir
         target: /data
         bind: { create_host_path: true }
-      # The Claude token authkey-sync writes; see that service below.
+      # The Claude token the auther publishes; see that service below.
       # A **subdirectory**, not /data/secrets itself — mounting the parent hides every key
       # file already sitting in DATA_DIR/secrets, and they vanish from the console's dropdown.
       # The path to type into "read from a file" is /data/secrets/authkey/auth.key
@@ -193,20 +193,22 @@ services:
     depends_on: [audit]
     restart: unless-stopped
 
-  # ── Claude credential sync ──────────────────────────────────────────────
+  # ── Credential authority (auther) ───────────────────────────────────────
   #
-  # Pulls accessToken out of ~/.claude/.credentials.json and writes it as a single-line
-  # auth.key on a shared volume — the secret sidecar the gateway's comment above describes.
+  # The only process that holds upstream subscription refresh tokens. It pre-refreshes the
+  # access token and makes it available two ways: over a Unix socket (AUTHER_SOCKET, for
+  # credential-proxy) and as a single-line file drop (AUTH_KEY_FILE, for the app-gateway
+  # here, whose core/secret-file.ts reads a key from a file).
   #
   # Why the credentials file cannot simply be named in the console: that field wants **the key
   # itself**, and the credentials file is JSON. core/secret-file.ts refuses anything with a
-  # newline in it, and its error message calls out this exact mistake. This step is what turns
-  # the JSON into a single-line token.
+  # newline in it, and its error message calls out this exact mistake. The file drop is what
+  # turns the JSON token into a single-line value.
   #
-  # Rotation needs no attention: when the CLI refreshes its token the sidecar writes the new
-  # value within two seconds, and the gateway reads the file per request — so the next request
-  # already uses it. No restart, no browser, and it never touches the database.
-  authkey-sync:
+  # Rotation needs no attention: the auther pre-refreshes before expiry and republishes, so
+  # the next request already uses the new token. No restart, no browser, and it never touches
+  # the database.
+  auther:
     # Its own directory with its own go.mod and Dockerfile, so it does not use the
     # docker/*.Dockerfile + context: .. arrangement — that is for services sharing the
     # monorepo's source.
@@ -218,8 +220,16 @@ services:
       # refreshed on the host and the container goes on reading the value from the moment it
       # started, forever, without a single error to show for it.
       - ${CLAUDE_CREDENTIALS_DIR:-${HOME}/.claude}:/input:ro
+      # The socket credential-proxy dials (AUTHER_SOCKET below).
+      - type: bind
+        source: ${AUTHER_SOCKET_DIR:-/run/agentlodge}
+        target: /run/agentlodge
+        bind: { create_host_path: true }
       - agentlodge-authkey:/data/secrets
     environment:
+      CLAUDE_CREDENTIALS_FILE: /input/.credentials.json
+      AUTHER_SOCKET: /run/agentlodge/auther.sock
+      AUTH_KEY_FILE: /data/secrets/auth.key
       # Who owns the key that comes out. 10001 is the uid the gateway runs as in
       # compose.docker.yml, so a 0600 file is readable by the gateway and by nobody else.
       # (Under rootless podman the gateway is root inside the container and can read it
@@ -341,7 +351,7 @@ volumes:
   # Audit data. It holds every user's complete prompts; treat backups and access to it as your
   # compliance requirements demand.
   agentlodge-audit:
-  # Written by authkey-sync, read-only for the gateway. A volume of its own rather than
+  # Published by the auther, read-only for the gateway. A volume of its own rather than
   # writing straight into DATA_DIR/secrets: that would give the sidecar write access to the
   # entire data directory — database file, workspaces and all — when what it needs is to place
   # one file.

@@ -3,22 +3,16 @@ FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY *.go ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/authkey-sync .
-
-# Ship the mountpoint inside the image so a fresh named volume inherits this
-# ownership and mode instead of whatever Docker would invent.
-RUN install -d -m 0755 /skel/data/secrets
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/auther .
 
 FROM scratch
 
-COPY --from=build /out/authkey-sync /usr/local/bin/authkey-sync
-COPY --from=build /skel/data /data
+COPY --from=build /out/auther /usr/local/bin/auther
 
-# Reads /input/.credentials.json and writes /data/secrets/auth.key unless told
-# otherwise, so mounting is the only setup step.
-#
-# Runs as root on purpose: the credentials file it reads is typically mode 0600
-# owned by the host user, and the key it writes has to end up owned by whichever
-# uid the consuming containers run as. compose.yml drops every capability except
-# the two that requires. See README.md for running unprivileged instead.
-ENTRYPOINT ["/usr/local/bin/authkey-sync"]
+# The auther is the credential authority: it holds upstream subscription
+# refresh tokens and serves short-lived access tokens to the gateway over a
+# Unix domain socket. It binds /run/agentlodge/auther.sock (AUTHER_SOCKET) and
+# reads the host's `claude login` / `codex login` credentials from the mounted
+# directories. It writes no secrets to plain files — persisted token state, when
+# AUTHER_STATE_FILE is set, is AES-256-GCM encrypted.
+ENTRYPOINT ["/usr/local/bin/auther"]

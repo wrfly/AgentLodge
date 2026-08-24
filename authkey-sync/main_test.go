@@ -1,343 +1,377 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestExtractToken(t *testing.T) {
-	path := strings.Split(defaultJSONPath, ".")
+// ---------------------------------------------------------------------------
+// provider: parse + refresh
+// ---------------------------------------------------------------------------
 
-	tests := []struct {
-		name    string
-		raw     string
-		want    string
-		wantErr string
-	}{
-		{
-			name: "documented shape",
-			raw:  `{"claudeAiOauth": {"accessToken": "abc"}}`,
-			want: "abc",
-		},
-		{
-			name: "ignores sibling fields",
-			raw:  `{"other": 1, "claudeAiOauth": {"refreshToken": "r", "accessToken": "abc", "expiresAt": 123}}`,
-			want: "abc",
-		},
-		{
-			name:    "missing leaf",
-			raw:     `{"claudeAiOauth": {"refreshToken": "r"}}`,
-			wantErr: `"claudeAiOauth.accessToken" not found`,
-		},
-		{
-			name:    "missing parent",
-			raw:     `{"other": {}}`,
-			wantErr: `"claudeAiOauth" not found`,
-		},
-		{
-			name:    "parent is not an object",
-			raw:     `{"claudeAiOauth": "nope"}`,
-			wantErr: `"claudeAiOauth" is not an object`,
-		},
-		{
-			name:    "leaf is not a string",
-			raw:     `{"claudeAiOauth": {"accessToken": 42}}`,
-			wantErr: `want a string`,
-		},
-		{
-			name:    "empty leaf",
-			raw:     `{"claudeAiOauth": {"accessToken": ""}}`,
-			wantErr: `is empty`,
-		},
-		{
-			name:    "invalid json",
-			raw:     `{`,
-			wantErr: `parse json`,
-		},
+func writeClaudeCreds(t *testing.T, dir string, content string) string {
+	t.Helper()
+	p := filepath.Join(dir, ".credentials.json")
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatalf("write creds: %v", err)
 	}
+	return p
+}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := extractToken([]byte(tc.raw), path)
-			if tc.wantErr != "" {
-				if err == nil {
-					t.Fatalf("got %q, want error containing %q", got, tc.wantErr)
-				}
-				if !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("got error %v, want it to contain %q", err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tc.want {
-				t.Fatalf("got %q, want %q", got, tc.want)
-			}
+func TestClaudeProviderParse(t *testing.T) {
+	dir := t.TempDir()
+	p := writeClaudeCreds(t, dir, `{
+		"claudeAiOauth": {
+			"accessToken": "AT",
+			"refreshToken": "RT",
+			"expiresAt": 1750000000000,
+			"refreshTokenExpiresAt": 1760000000000,
+			"scopes": ["user:profile", "user:inference"],
+			"clientId": "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+		}
+	}`)
+
+	c := &claudeProvider{credentialsFile: p}
+	pair, err := c.load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if pair.AccessToken != "AT" || pair.RefreshToken != "RT" {
+		t.Fatalf("got %+v", pair)
+	}
+	if pair.ExpiresAt != 1750000000000 {
+		t.Fatalf("expiresAt got %d", pair.ExpiresAt)
+	}
+	if len(pair.Scopes) != 2 || pair.Scopes[0] != "user:profile" {
+		t.Fatalf("scopes got %v", pair.Scopes)
+	}
+}
+
+func TestClaudeProviderRefresh(t *testing.T) {
+	dir := t.TempDir()
+	p := writeClaudeCreds(t, dir, `{"claudeAiOauth":{"accessToken":"OLD","refreshToken":"RT","expiresAt":1,"scopes":["user:profile"],"clientId":"CID"}}`)
+
+	var gotForm map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		gotForm = map[string]string{
+			"grant_type":    r.PostFormValue("grant_type"),
+			"refresh_token": r.PostFormValue("refresh_token"),
+			"client_id":     r.PostFormValue("client_id"),
+			"scope":         r.PostFormValue("scope"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token":             "NEW",
+			"refresh_token":            "RT2",
+			"expires_in":               3600,
+			"refresh_token_expires_in": 86400,
+			"scope":                    "user:profile user:inference",
 		})
-	}
-}
+	}))
+	defer srv.Close()
 
-func TestExtractTokenCustomPath(t *testing.T) {
-	got, err := extractToken([]byte(`{"a": {"b": {"c": "deep"}}}`), []string{"a", "b", "c"})
+	c := &claudeProvider{credentialsFile: p, tokenURL: srv.URL, timeout: 5 * time.Second}
+	pair, err := c.load()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("load: %v", err)
 	}
-	if got != "deep" {
-		t.Fatalf("got %q, want %q", got, "deep")
-	}
-}
-
-func newConfig(t *testing.T, dir string) config {
-	t.Helper()
-	return config{
-		source:   filepath.Join(dir, "credentials.json"),
-		target:   filepath.Join(dir, "secrets", "auth.key"),
-		jsonPath: strings.Split(defaultJSONPath, "."),
-		interval: defaultInterval,
-		mode:     defaultMode,
-		uid:      keepOwner,
-		gid:      keepOwner,
-	}
-}
-
-func writeSource(t *testing.T, cfg config, token string) {
-	t.Helper()
-	body := `{"claudeAiOauth": {"accessToken": "` + token + `"}}`
-	if err := os.WriteFile(cfg.source, []byte(body), 0o600); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-}
-
-func readTarget(t *testing.T, cfg config) string {
-	t.Helper()
-	got, err := os.ReadFile(cfg.target)
+	next, err := c.refresh(context.Background(), pair)
 	if err != nil {
-		t.Fatalf("read target: %v", err)
+		t.Fatalf("refresh: %v", err)
 	}
-	return string(got)
+	if next.AccessToken != "NEW" || next.RefreshToken != "RT2" {
+		t.Fatalf("got %+v", next)
+	}
+	if next.ExpiresAt <= time.Now().UnixMilli() {
+		t.Fatalf("expiresAt not advanced: %d", next.ExpiresAt)
+	}
+	if next.RefreshTokenExpiresAt == nil {
+		t.Fatal("refreshTokenExpiresAt should be set")
+	}
+	if gotForm["grant_type"] != "refresh_token" || gotForm["refresh_token"] != "RT" {
+		t.Fatalf("wrong form: %v", gotForm)
+	}
+	if gotForm["client_id"] != "CID" {
+		t.Fatalf("client_id got %q, want CID (from file)", gotForm["client_id"])
+	}
+	if gotForm["scope"] != "user:profile" {
+		t.Fatalf("scope got %q", gotForm["scope"])
+	}
 }
 
-func TestSyncOnce(t *testing.T) {
+func TestClaudeProviderRefreshInvalidGrant(t *testing.T) {
 	dir := t.TempDir()
-	cfg := newConfig(t, dir)
+	p := writeClaudeCreds(t, dir, `{"claudeAiOauth":{"accessToken":"OLD","refreshToken":"RT","expiresAt":1}}`)
 
-	// First run creates the target directory and file.
-	writeSource(t, cfg, "abc")
-	updated, err := syncOnce(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !updated {
-		t.Fatal("first sync reported no update")
-	}
-	if got := readTarget(t, cfg); got != "abc" {
-		t.Fatalf("got %q, want %q", got, "abc")
-	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
+	}))
+	defer srv.Close()
 
-	info, err := os.Stat(cfg.target)
-	if err != nil {
-		t.Fatalf("stat target: %v", err)
-	}
-	if info.Mode().Perm() != defaultMode {
-		t.Fatalf("got mode %o, want %o", info.Mode().Perm(), defaultMode)
-	}
-
-	// An unchanged source is a no-op.
-	updated, err = syncOnce(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if updated {
-		t.Fatal("second sync rewrote an unchanged key")
-	}
-
-	// A rotated token propagates.
-	writeSource(t, cfg, "xyz")
-	updated, err = syncOnce(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !updated {
-		t.Fatal("rotated token was not written")
-	}
-	if got := readTarget(t, cfg); got != "xyz" {
-		t.Fatalf("got %q, want %q", got, "xyz")
-	}
-
-	// A target deleted underneath us is restored.
-	if err := os.Remove(cfg.target); err != nil {
-		t.Fatalf("remove target: %v", err)
-	}
-	if _, err := syncOnce(cfg); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := readTarget(t, cfg); got != "xyz" {
-		t.Fatalf("got %q, want %q", got, "xyz")
+	c := &claudeProvider{credentialsFile: p, tokenURL: srv.URL, timeout: 5 * time.Second}
+	pair, _ := c.load()
+	if _, err := c.refresh(context.Background(), pair); err == nil {
+		t.Fatal("want an error for invalid_grant")
 	}
 }
 
-func TestSyncOnceKeepsLastGoodKey(t *testing.T) {
-	dir := t.TempDir()
-	cfg := newConfig(t, dir)
+// ---------------------------------------------------------------------------
+// auther: token caching / refresh decisions
+// ---------------------------------------------------------------------------
 
-	writeSource(t, cfg, "abc")
-	if _, err := syncOnce(cfg); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+type fakeProvider struct {
+	pair    *tokenPair
+	onRefresh func(pair *tokenPair) (*tokenPair, error)
+	loadErr error
+	calls   int
+}
+
+func (f *fakeProvider) name() string { return "fake" }
+func (f *fakeProvider) load() (*tokenPair, error) {
+	if f.loadErr != nil {
+		return nil, f.loadErr
+	}
+	return f.pair, nil
+}
+func (f *fakeProvider) refresh(_ context.Context, pair *tokenPair) (*tokenPair, error) {
+	f.calls++
+	if f.onRefresh != nil {
+		return f.onRefresh(pair)
+	}
+	return pair, nil
+}
+
+func TestAutherTokenServesFreshCache(t *testing.T) {
+	now := time.Now()
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "FRESH", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()},
+	}
+	a, err := newAuther(config{refreshLead: time.Minute}, map[string]provider{"fake": fp})
+	if err != nil {
+		t.Fatalf("newAuther: %v", err)
 	}
 
-	// A truncated or half-written source must not clobber a working key.
-	if err := os.WriteFile(cfg.source, []byte(`{"claudeAiOauth":`), 0o600); err != nil {
-		t.Fatalf("write source: %v", err)
+	pair, err := a.token(context.Background(), fp, false)
+	if err != nil {
+		t.Fatalf("token: %v", err)
 	}
-	if _, err := syncOnce(cfg); err == nil {
-		t.Fatal("want an error for malformed json")
+	if pair.AccessToken != "FRESH" {
+		t.Fatalf("got %q", pair.AccessToken)
 	}
-	if got := readTarget(t, cfg); got != "abc" {
-		t.Fatalf("got %q, want the previous key %q", got, "abc")
-	}
-
-	// So must a source that disappears.
-	if err := os.Remove(cfg.source); err != nil {
-		t.Fatalf("remove source: %v", err)
-	}
-	if _, err := syncOnce(cfg); err == nil {
-		t.Fatal("want an error for a missing source")
-	}
-	if got := readTarget(t, cfg); got != "abc" {
-		t.Fatalf("got %q, want the previous key %q", got, "abc")
+	if fp.calls != 0 {
+		t.Fatalf("refresh called %d times, want 0 (fresh)", fp.calls)
 	}
 }
 
-func TestLoadConfig(t *testing.T) {
-	// Nothing set: both paths come from the defaults, and the mounts decide
-	// what sits behind them.
-	cfg, err := loadConfig()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestAutherTokenRefreshesWhenExpired(t *testing.T) {
+	now := time.Now()
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "OLD", RefreshToken: "RT", ExpiresAt: now.Add(-time.Second).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			return &tokenPair{AccessToken: "NEW", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()}, nil
+		},
 	}
-	if cfg.source != defaultSource {
-		t.Fatalf("got source %q, want %q", cfg.source, defaultSource)
-	}
-	if cfg.target != defaultTarget {
-		t.Fatalf("got target %q, want %q", cfg.target, defaultTarget)
-	}
-	if strings.Join(cfg.jsonPath, ".") != defaultJSONPath {
-		t.Fatalf("got path %v, want %q", cfg.jsonPath, defaultJSONPath)
-	}
-	if cfg.interval != defaultInterval || cfg.mode != defaultMode {
-		t.Fatalf("got interval %s mode %o", cfg.interval, cfg.mode)
-	}
-	if cfg.uid != keepOwner || cfg.gid != keepOwner {
-		t.Fatalf("got owner %d:%d, want the file left alone", cfg.uid, cfg.gid)
-	}
+	a, _ := newAuther(config{refreshLead: time.Minute}, map[string]provider{"fake": fp})
 
-	t.Setenv("CREDENTIALS_FILE", "/elsewhere/creds.json")
-	t.Setenv("POLL_INTERVAL", "10s")
-	t.Setenv("AUTH_KEY_MODE", "640")
-	t.Setenv("TOKEN_JSON_PATH", "a.b")
-	cfg, err = loadConfig()
+	pair, err := a.token(context.Background(), fp, false)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("token: %v", err)
 	}
-	if cfg.source != "/elsewhere/creds.json" {
-		t.Fatalf("got source %q, want the override", cfg.source)
+	if pair.AccessToken != "NEW" {
+		t.Fatalf("got %q, want NEW", pair.AccessToken)
 	}
-	if cfg.interval.String() != "10s" {
-		t.Fatalf("got interval %s, want 10s", cfg.interval)
-	}
-	if cfg.mode != 0o640 {
-		t.Fatalf("got mode %o, want 640", cfg.mode)
-	}
-	if strings.Join(cfg.jsonPath, ".") != "a.b" {
-		t.Fatalf("got path %v, want a.b", cfg.jsonPath)
+	if fp.calls != 1 {
+		t.Fatalf("refresh called %d times, want 1", fp.calls)
 	}
 }
 
-func TestLoadConfigRejectsBadInput(t *testing.T) {
-	t.Run("bad interval", func(t *testing.T) {
-		t.Setenv("POLL_INTERVAL", "soon")
-		if _, err := loadConfig(); err == nil {
-			t.Fatal("want an error for an unparseable interval")
+func TestAutherTokenForceRefreshes(t *testing.T) {
+	now := time.Now()
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "OLD", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			return &tokenPair{AccessToken: "NEW", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()}, nil
+		},
+	}
+	a, _ := newAuther(config{refreshLead: time.Minute}, map[string]provider{"fake": fp})
+
+	pair, err := a.token(context.Background(), fp, true)
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	if pair.AccessToken != "NEW" {
+		t.Fatalf("got %q, want NEW (forced)", pair.AccessToken)
+	}
+}
+
+func TestAutherTokenKeepsValidTokenOnTransientRefreshFailure(t *testing.T) {
+	now := time.Now()
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "OLDSTILLVALID", RefreshToken: "RT", ExpiresAt: now.Add(30 * time.Second).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			return nil, os.ErrDeadlineExceeded
+		},
+	}
+	a, _ := newAuther(config{refreshLead: time.Minute}, map[string]provider{"fake": fp})
+
+	pair, err := a.token(context.Background(), fp, false)
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	if pair.AccessToken != "OLDSTILLVALID" {
+		t.Fatalf("got %q, want the still-valid token", pair.AccessToken)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// persistence
+// ---------------------------------------------------------------------------
+
+func TestPersistenceRoundtrip(t *testing.T) {
+	key, err := normalizeKey([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("key: %v", err)
+	}
+	pair := &tokenPair{AccessToken: "AT", RefreshToken: "RT", ExpiresAt: 12345, Scopes: []string{"a", "b"}}
+	state := &persistentState{Tokens: map[string]*tokenPair{"claude": pair}}
+
+	ct, err := encryptState(key, state)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if len(ct) == 0 {
+		t.Fatal("empty ciphertext")
+	}
+
+	back, err := decryptState(key, ct)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	if back.Tokens["claude"].RefreshToken != "RT" {
+		t.Fatalf("roundtrip mismatch: %+v", back.Tokens["claude"])
+	}
+
+	wrong, _ := normalizeKey([]byte("wrong-wrong-wrong-wrong-wrong-key!!"))
+	if _, err := decryptState(wrong, ct); err == nil {
+		t.Fatal("want an error for the wrong key")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UDS server
+// ---------------------------------------------------------------------------
+
+func dialUDS(t *testing.T, path string) *http.Client {
+	t.Helper()
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", path)
+			},
+		},
+	}
+}
+
+func TestUDSServerEndpoints(t *testing.T) {
+	now := time.Now()
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "FRESH", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			return &tokenPair{AccessToken: "NEW", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()}, nil
+		},
+	}
+
+	sock := filepath.Join(t.TempDir(), "auther.sock")
+	cfg := config{socketPath: sock, refreshLead: time.Minute}
+	a, err := newAuther(cfg, map[string]provider{"claude": fp})
+	if err != nil {
+		t.Fatalf("newAuther: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = a.run(ctx) }()
+
+	client := dialUDS(t, sock)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := client.Get("http://unix/health"); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	t.Run("health", func(t *testing.T) {
+		resp, err := client.Get("http://unix/health")
+		if err != nil {
+			t.Fatalf("health: %v", err)
+		}
+		defer resp.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		provs := body["providers"].(map[string]any)
+		claude := provs["claude"].(map[string]any)
+		if claude["ok"] != true {
+			t.Fatalf("health claude ok = %v", claude["ok"])
 		}
 	})
 
-	t.Run("bad owner", func(t *testing.T) {
-		t.Setenv("AUTH_KEY_OWNER", "claude:claude")
-		if _, err := loadConfig(); err == nil {
-			t.Fatal("want an error for a non-numeric owner")
+	t.Run("token returns access token, never refresh token", func(t *testing.T) {
+		resp, err := client.Get("http://unix/token?provider=claude")
+		if err != nil {
+			t.Fatalf("token: %v", err)
+		}
+		defer resp.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body["accessToken"] != "FRESH" {
+			t.Fatalf("accessToken = %v", body["accessToken"])
+		}
+		if _, leaked := body["refreshToken"]; leaked {
+			t.Fatal("refresh token must never be exposed over the socket")
 		}
 	})
 
-	t.Run("empty path segment", func(t *testing.T) {
-		t.Setenv("TOKEN_JSON_PATH", "a..b")
-		if _, err := loadConfig(); err == nil {
-			t.Fatal("want an error for an empty path segment")
+	t.Run("refresh forces a refresh", func(t *testing.T) {
+		resp, err := client.Post("http://unix/token/refresh", "application/json", strings.NewReader(`{"provider":"claude"}`))
+		if err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		defer resp.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body["accessToken"] != "NEW" {
+			t.Fatalf("accessToken = %v, want NEW", body["accessToken"])
 		}
 	})
-}
 
-func TestParseOwner(t *testing.T) {
-	tests := []struct {
-		spec     string
-		uid, gid int
-		wantErr  bool
-	}{
-		{spec: "10001:10001", uid: 10001, gid: 10001},
-		{spec: "10001", uid: 10001, gid: keepOwner},
-		{spec: "10001:", uid: 10001, gid: keepOwner},
-		{spec: ":10001", uid: keepOwner, gid: 10001},
-		{spec: "0:0", uid: 0, gid: 0},
-		{spec: "claude", wantErr: true},
-		{spec: "10001:claude", wantErr: true},
-		{spec: "-1", wantErr: true},
-		{spec: ":", wantErr: true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.spec, func(t *testing.T) {
-			uid, gid, err := parseOwner(tc.spec)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("got %d:%d, want an error", uid, gid)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if uid != tc.uid || gid != tc.gid {
-				t.Fatalf("got %d:%d, want %d:%d", uid, gid, tc.uid, tc.gid)
-			}
-		})
-	}
-}
-
-// A chown the process is not allowed to make must fail loudly rather than
-// leave a key nobody can read.
-func TestSyncOnceReportsChownFailure(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("running as root, where the chown would succeed")
-	}
-
-	dir := t.TempDir()
-	cfg := newConfig(t, dir)
-	cfg.uid, cfg.gid = 0, 0
-	writeSource(t, cfg, "abc")
-
-	if _, err := syncOnce(cfg); err == nil {
-		t.Fatal("want an error when the chown is not permitted")
-	}
-	if _, err := os.Stat(cfg.target); !os.IsNotExist(err) {
-		t.Fatalf("target should not exist, stat gave %v", err)
-	}
-	entries, err := os.ReadDir(filepath.Dir(cfg.target))
-	if err != nil {
-		t.Fatalf("read target dir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("temp files left behind: %v", entries)
-	}
+	t.Run("unknown provider", func(t *testing.T) {
+		resp, err := client.Get("http://unix/token?provider=bogus")
+		if err != nil {
+			t.Fatalf("token: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", resp.StatusCode)
+		}
+	})
 }

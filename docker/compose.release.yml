@@ -143,18 +143,26 @@ services:
 
   # Opt-in: `docker compose -f compose.release.yml --profile authkey up -d`.
   #
-  # Turns the accessToken out of a Claude credentials file into the single-line auth.key the
-  # gateway reads. Off by default, because most deployments type a key into the console
-  # instead and an unused syncer would only log about a file that is not there.
-  authkey-sync:
+  # The credential authority: pre-refreshes the Claude access token and publishes it both as a
+  # single-line auth.key file drop (what the gateway here reads) and over a Unix socket (for
+  # credential-proxy). Off by default, because most deployments type a key into the console
+  # instead and an unused auther would only log about a file that is not there.
+  auther:
     profiles: ["authkey"]
-    image: ${AGENTLODGE_NAMESPACE:-wrfly}/agentlodge-authkey-sync:${AGENTLODGE_TAG:-latest}
+    image: ${AGENTLODGE_NAMESPACE:-wrfly}/agentlodge-auther:${AGENTLODGE_TAG:-latest}
     volumes:
       # The directory, never the file: a credentials file is replaced by rename, and a
       # single-file bind mount pins the old inode for good
       - ${CLAUDE_CREDENTIALS_DIR:-${HOME}/.claude}:/input:ro
+      - type: bind
+        source: ${AUTHER_SOCKET_DIR:-/run/agentlodge}
+        target: /run/agentlodge
+        bind: { create_host_path: true }
       - agentlodge-authkey:/data/secrets
     environment:
+      CLAUDE_CREDENTIALS_FILE: /input/.credentials.json
+      AUTHER_SOCKET: /run/agentlodge/auther.sock
+      AUTH_KEY_FILE: /data/secrets/auth.key
       AUTH_KEY_OWNER: "10001:10001"
     read_only: true
     cap_drop: [ALL]

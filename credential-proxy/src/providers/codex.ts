@@ -1,23 +1,23 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import { forward } from '../proxy.js';
-import type { CodexCredentialStore } from '../credentials/codex.js';
+import type { AutherClient, InjectedToken } from '../auther.js';
 
 /**
  * Codex Responses: inject the host's ChatGPT subscription OAuth.
  *
- * Authentication injection and nothing else, same as the others: callers go upstream as
- * whoever they already were.
+ * The access token comes from the auther sidecar; the gateway holds no
+ * refresh token. A 401 forces a single refresh and retries once.
  */
 export async function forwardCodex(
   req: FastifyRequest,
   reply: FastifyReply,
   body: Buffer | null,
-  store: CodexCredentialStore,
+  auther: AutherClient,
 ): Promise<void> {
-  let creds;
+  let creds: InjectedToken;
   try {
-    creds = await store.get();
+    creds = await auther.token('codex');
   } catch (e) {
     await reply.code(503).send({ error: { message: (e as Error).message } });
     return;
@@ -28,7 +28,7 @@ export async function forwardCodex(
   // /v1/responses → <upstream>/responses
   const suffix = url.pathname.replace(/^\/v1/, '');
 
-  const auth = (c: { accessToken: string; accountId: string | null }): Record<string, string> => {
+  const auth = (c: InjectedToken): Record<string, string> => {
     const h: Record<string, string> = {
       authorization: `Bearer ${c.accessToken}`,
       'content-type': 'application/json',
@@ -41,7 +41,7 @@ export async function forwardCodex(
     provider: 'codex',
     upstreamUrl: base + suffix + url.search,
     authHeaders: auth(creds),
-    onUnauthorized: async () => auth(await store.get(true)),
+    onUnauthorized: async () => auth(await auther.refresh('codex')),
     body,
   });
 }

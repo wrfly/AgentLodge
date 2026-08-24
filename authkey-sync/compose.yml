@@ -1,48 +1,62 @@
-name: authkey-sync
+name: auther
 
 services:
-  authkey-sync:
+  auther:
     build: .
-    image: authkey-sync:latest
+    image: auther:latest
     restart: unless-stopped
     volumes:
-      # Whatever you mount here is what gets parsed. Mount the *directory*, not
-      # the file: credential writers replace the file by rename, and a
-      # single-file bind mount pins the original inode, so the container would
-      # never see an update.
-      - ${CREDENTIALS_DIR:-./example}:/input:ro
+      # Credential directories, one per provider. Mount the *directory*, not the
+      # file: `claude login` / `codex login` replace the file by rename, and a
+      # single-file bind mount pins the old inode so the container never sees
+      # the update. These are read-only — the auther holds the refresh token in
+      # memory (and, optionally, encrypted at rest), it does not write the
+      # source credential back.
+      - ${CLAUDE_CREDENTIALS_DIR:-${HOME}/.claude}:/claude:ro
+      - ${CODEX_CREDENTIALS_DIR:-${HOME}/.codex}:/codex:ro
+      # The Unix socket the gateway connects to.
+      - auther-run:/run/agentlodge
+      # Optional file drop, for consumers that read a key from a file rather
+      # than the socket (e.g. the AgentLodge app-gateway's key-file reader).
       - agent-secrets:/data/secrets
     environment:
-      # Hand the key to the uid the consumers run as, so a 0600 file is enough.
+      # Where the gateway finds the socket. Both sides need the same path.
+      AUTHER_SOCKET: /run/agentlodge/auther.sock
+      # Paths inside the container, matching the mounts above.
+      CLAUDE_CREDENTIALS_FILE: /claude/.credentials.json
+      CODEX_HOME: /codex
+      # Optional file drop: publish the current access token here as a
+      # single-line file, and hand it to the consumer's uid.
+      AUTH_KEY_FILE: /data/secrets/auth.key
       AUTH_KEY_OWNER: "10001:10001"
-      # Paths default to /input/.credentials.json and /data/secrets/auth.key;
-      # override only if you want to mount somewhere else.
-      # CREDENTIALS_FILE: /input/.credentials.json
-      # AUTH_KEY_FILE: /data/secrets/auth.key
-      # TOKEN_JSON_PATH: claudeAiOauth.accessToken
-      # POLL_INTERVAL: 2s
-      # AUTH_KEY_MODE: "0600"
+      # ---- Refresh & persistence (see README.md) ----
+      # REFRESH_LEAD_SECONDS: 60
+      # HTTP_TIMEOUT: 30s
+      # AUTHER_KEY: <32-byte key, hex/base64>   # encrypts AUTHER_STATE_FILE
+      # AUTHER_STATE_FILE: /data/secrets/auther.state
     read_only: true
     cap_drop:
       - ALL
     cap_add:
-      - DAC_READ_SEARCH  # read the 0600 credentials file owned by the host user
-      - CHOWN            # hand the written key to AUTH_KEY_OWNER
+      - DAC_READ_SEARCH  # read the host user's 0600 credential files
+      - CHOWN            # hand the published key to AUTH_KEY_OWNER
     security_opt:
       - no-new-privileges:true
 
-  # Example consumer: same uid as AUTH_KEY_OWNER, so the 0600 key is readable.
+  # Example consumer of the socket: curls the auther over the UDS and prints the
+  # access token, proving the gateway can reach it.
   consumer:
     image: alpine:3.22
     depends_on:
-      - authkey-sync
-    user: "10001:10001"
+      - auther
     command:
       - sh
       - -c
-      - 'while :; do echo "auth.key=$$(cat /data/secrets/auth.key 2>/dev/null || echo "<not ready>")"; sleep 10; done'
+      - 'while :; do echo "token=$(curl -s --unix-socket /run/agentlodge/auther.sock http://localhost/token?provider=claude)"; sleep 10; done'
     volumes:
-      - agent-secrets:/data/secrets:ro
+      - auther-run:/run/agentlodge:ro
+    user: "0:0"
 
 volumes:
+  auther-run:
   agent-secrets:

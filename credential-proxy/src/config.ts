@@ -1,5 +1,4 @@
 import path from 'node:path';
-import os from 'node:os';
 
 function str(k: string, d: string): string {
   const v = process.env[k];
@@ -22,21 +21,17 @@ export const config = {
   /** The subscription allowance is shared, so concurrency is capped */
   maxConcurrent: int('GATEWAY_MAX_CONCURRENT', 2),
 
+  /* ---- Auth: credentials live in the auther sidecar, not here ---- */
+  /** Unix socket path for the auther service (the only holder of refresh tokens). */
+  autherSocket: str('AUTHER_SOCKET', '/run/agentlodge/auther.sock'),
+
   /* ---- DeepSeek: passed straight through with your own API key ---- */
   deepseekUpstream: str('DEEPSEEK_UPSTREAM', 'https://api.deepseek.com'),
   deepseekApiKey: str('DEEPSEEK_API_KEY', ''),
 
-  /* ---- Anthropic: uses the host's Claude subscription credentials ---- */
+  /* ---- Anthropic / Codex upstreams (credentials come from the auther) ---- */
   anthropicUpstream: str('ANTHROPIC_UPSTREAM', 'https://api.anthropic.com'),
-  claudeCredentialsFile: str('CLAUDE_CREDENTIALS_FILE', ''),
-  claudeOauthClientId: str('CLAUDE_OAUTH_CLIENT_ID', '9d1c250a-e61b-44d9-88ed-5944d1962f5e'),
-  claudeOauthTokenUrl: str('CLAUDE_OAUTH_TOKEN_URL', 'https://platform.claude.com/v1/oauth/token'),
-
-  /* ---- Codex: uses the host's ChatGPT subscription credentials ---- */
   codexUpstream: str('CODEX_UPSTREAM', 'https://chatgpt.com/backend-api/codex'),
-  codexHome: str('CODEX_HOME', path.join(os.homedir(), '.codex')),
-  openaiOauthTokenUrl: str('OPENAI_OAUTH_TOKEN_URL', 'https://auth.openai.com/oauth/token'),
-  openaiOauthClientId: str('OPENAI_OAUTH_CLIENT_ID', 'app_EMoamEEZ73f0CkXaXp7hrann'),
 
   /* ---- Metering ---- */
   dataDir: str('GATEWAY_DATA_DIR', path.join(process.cwd(), 'data')),

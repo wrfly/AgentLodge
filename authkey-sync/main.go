@@ -1,13 +1,17 @@
-// Command authkey-sync keeps a plain-text auth key in sync with a JSON
-// credentials file.
+// Command auther is the credential authority for the AgentLodge gateway.
 //
-// Both paths are fixed by default -- /input/.credentials.json in, and
-// /data/secrets/auth.key out -- so the mounts decide which host file is read
-// and which volume the key lands on. It pulls a single string out of the source
-// (claudeAiOauth.accessToken by default) and writes just that string to the
-// target. The source is polled, so an update on the host -- including the
-// rewrite-and-rename dance most credential writers use -- propagates within one
-// poll interval.
+// It is the only process that holds upstream subscription refresh tokens for
+// the Claude (claude.ai) and Codex (ChatGPT) OAuth flows. It refreshes access
+// tokens proactively before they expire, persists the rotated tokens encrypted
+// at rest, and serves them to the gateway over a Unix domain socket.
+//
+// The gateway never sees a refresh token; it only ever receives a short-lived
+// access token from the endpoints below:
+//
+//	GET  /health            -> {status, providers:{claude:{ok,expiresAt},...}}
+//	GET  /token?provider=X  -> {provider, accessToken, expiresAt, accountId?}
+//	POST /token/refresh     -> same as /token but forces a refresh
+//	                            body: {"provider":"claude"}
 package main
 
 import (
@@ -16,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,69 +32,171 @@ import (
 )
 
 const (
-	defaultSource   = "/input/.credentials.json"
-	defaultTarget   = "/data/secrets/auth.key"
-	defaultJSONPath = "claudeAiOauth.accessToken"
-	defaultInterval = 2 * time.Second
-	defaultMode     = os.FileMode(0o600)
-	// keepOwner is the os.Chown convention for "leave this id alone".
-	keepOwner = -1
+	defaultSocketPath  = "/run/agentlodge/auther.sock"
+	defaultRefreshLead = 60 * time.Second
+	defaultHTTPTimeout = 30 * time.Second
+	providerClaude     = "claude"
+	providerCodex      = "codex"
+
+	// keepOwner is the chown convention for "leave this id alone".
+	keepOwner   = -1
+	defaultMode = os.FileMode(0o600)
 )
 
 type config struct {
-	source   string
-	target   string
-	jsonPath []string
-	interval time.Duration
-	mode     os.FileMode
-	uid, gid int
+	socketPath  string
+	refreshLead time.Duration
+	httpTimeout time.Duration
+
+	// claude
+	claudeCredentialsFile string
+	claudeOauthClientID   string
+	claudeOauthTokenURL   string
+	claudeOauthScopes     []string
+
+	// codex
+	codexHome          string
+	codexOauthTokenURL string
+	codexOauthClientID string
+
+	// persistence
+	stateFile string
+	authKey   []byte // encryption key for at-rest token persistence
+
+	// optional file drop: publish the current access token as a single-line
+	// file, for consumers (e.g. the AgentLodge app-gateway's key-file reader)
+	// that read a key from a file rather than from the socket.
+	authKeyFile string
+	authKeyMode os.FileMode
+	authKeyUID  int
+	authKeyGID  int
 }
 
-func loadConfig() (config, error) {
+// tokenPair is a credential held by the auther. The refresh token is stored
+// here (encrypted when persisted) but never leaves the auther process.
+type tokenPair struct {
+	AccessToken           string   `json:"accessToken"`
+	RefreshToken          string   `json:"refreshToken,omitempty"`
+	ExpiresAt             int64    `json:"expiresAt,omitempty"`              // unix ms
+	RefreshTokenExpiresAt *int64   `json:"refreshTokenExpiresAt,omitempty"`  // unix ms
+	Scopes                []string `json:"scopes,omitempty"`
+	ClientID              string   `json:"clientId,omitempty"`
+	AccountID             string   `json:"accountId,omitempty"` // codex only
+}
+
+// provider is a single upstream credential source that can mint an access
+// token from a refresh token (or, failing that, load a fresh one from disk).
+type provider interface {
+	name() string
+	// load reads the current credential from its backing store (file/keychain).
+	load() (*tokenPair, error)
+	// refresh exchanges the refresh token for a new access token.
+	refresh(ctx context.Context, pair *tokenPair) (*tokenPair, error)
+}
+
+func main() {
+	log.SetFlags(log.LstdFlags | log.LUTC)
+
+	cfg, provs, err := loadConfig()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	svc, err := newAuther(cfg, provs)
+	if err != nil {
+		log.Fatalf("init: %v", err)
+	}
+
+	if err := svc.run(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func loadConfig() (config, map[string]provider, error) {
+	home := os.Getenv("HOME")
+
 	cfg := config{
-		source:   envOr("CREDENTIALS_FILE", defaultSource),
-		target:   envOr("AUTH_KEY_FILE", defaultTarget),
-		jsonPath: strings.Split(envOr("TOKEN_JSON_PATH", defaultJSONPath), "."),
-		interval: defaultInterval,
-		mode:     defaultMode,
-		uid:      keepOwner,
-		gid:      keepOwner,
+		socketPath:  envOr("AUTHER_SOCKET", defaultSocketPath),
+		refreshLead: defaultRefreshLead,
+		httpTimeout: defaultHTTPTimeout,
+		stateFile:   envOr("AUTHER_STATE_FILE", ""),
+
+		claudeCredentialsFile: envOr("CLAUDE_CREDENTIALS_FILE", filepath.Join(home, ".claude", ".credentials.json")),
+		claudeOauthClientID:   envOr("CLAUDE_OAUTH_CLIENT_ID", "9d1c250a-e61b-44d9-88ed-5944d1962f5e"),
+		claudeOauthTokenURL:   envOr("CLAUDE_OAUTH_TOKEN_URL", "https://platform.claude.com/v1/oauth/token"),
+		claudeOauthScopes:     splitScopes(envOr("CLAUDE_OAUTH_SCOPES", "")),
+
+		codexHome:          envOr("CODEX_HOME", filepath.Join(home, ".codex")),
+		codexOauthTokenURL: envOr("OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.com/oauth/token"),
+		codexOauthClientID: envOr("OPENAI_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann"),
 	}
 
-	if v := os.Getenv("POLL_INTERVAL"); v != "" {
+	if v := os.Getenv("REFRESH_LEAD_SECONDS"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return cfg, nil, fmt.Errorf("REFRESH_LEAD_SECONDS %q: want a non-negative integer", v)
+		}
+		cfg.refreshLead = time.Duration(n) * time.Second
+	}
+	if v := os.Getenv("HTTP_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return cfg, nil, fmt.Errorf("HTTP_TIMEOUT %q: want a positive duration", v)
+		}
+		cfg.httpTimeout = d
+	}
+
+	// Optional file drop for key-file consumers.
+	cfg.authKeyFile = envOr("AUTH_KEY_FILE", "")
+	cfg.authKeyMode = defaultMode
+	if cfg.authKeyFile != "" {
+		cfg.authKeyUID, cfg.authKeyGID = keepOwner, keepOwner
+		if v := os.Getenv("AUTH_KEY_MODE"); v != "" {
+			m, err := strconv.ParseUint(v, 8, 32)
+			if err != nil {
+				return cfg, nil, fmt.Errorf("AUTH_KEY_MODE %q: want an octal mode like 0640", v)
+			}
+			cfg.authKeyMode = os.FileMode(m)
+		}
+		if v := os.Getenv("AUTH_KEY_OWNER"); v != "" {
+			uid, gid, err := parseOwner(v)
+			if err != nil {
+				return cfg, nil, fmt.Errorf("AUTH_KEY_OWNER %q: %w", v, err)
+			}
+			cfg.authKeyUID, cfg.authKeyGID = uid, gid
+		}
+	}
+
+	// The encryption key is only needed when persisting state. When no state
+	// file is configured, skip key derivation entirely (the auther still works
+	// fine loading credentials from disk each start).
+	if cfg.stateFile != "" {
+		key, err := loadAuthKey()
 		if err != nil {
-			return cfg, fmt.Errorf("POLL_INTERVAL %q: %w", v, err)
+			return cfg, nil, err
 		}
-		if d <= 0 {
-			return cfg, fmt.Errorf("POLL_INTERVAL %q must be positive", v)
-		}
-		cfg.interval = d
+		cfg.authKey = key
 	}
 
-	if v := os.Getenv("AUTH_KEY_MODE"); v != "" {
-		m, err := strconv.ParseUint(v, 8, 32)
-		if err != nil {
-			return cfg, fmt.Errorf("AUTH_KEY_MODE %q: want an octal mode like 0640: %w", v, err)
-		}
-		cfg.mode = os.FileMode(m)
+	provs := map[string]provider{
+		providerClaude: &claudeProvider{
+			credentialsFile: cfg.claudeCredentialsFile,
+			clientID:        cfg.claudeOauthClientID,
+			tokenURL:        cfg.claudeOauthTokenURL,
+			scopes:          cfg.claudeOauthScopes,
+			timeout:         cfg.httpTimeout,
+		},
+		providerCodex: &codexProvider{
+			authFile: filepath.Join(cfg.codexHome, "auth.json"),
+			clientID: cfg.codexOauthClientID,
+			tokenURL: cfg.codexOauthTokenURL,
+			timeout:  cfg.httpTimeout,
+		},
 	}
-
-	if v := os.Getenv("AUTH_KEY_OWNER"); v != "" {
-		uid, gid, err := parseOwner(v)
-		if err != nil {
-			return cfg, fmt.Errorf("AUTH_KEY_OWNER %q: %w", v, err)
-		}
-		cfg.uid, cfg.gid = uid, gid
-	}
-
-	for _, key := range cfg.jsonPath {
-		if key == "" {
-			return cfg, fmt.Errorf("TOKEN_JSON_PATH %q has an empty segment", strings.Join(cfg.jsonPath, "."))
-		}
-	}
-
-	return cfg, nil
+	return cfg, provs, nil
 }
 
 func envOr(key, fallback string) string {
@@ -98,182 +206,250 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// parseOwner reads a numeric "uid", "uid:gid" or ":gid" spec. Names are not
-// accepted: the consumer's user does not exist in this image's (empty) passwd
-// database, so only ids are meaningful here.
-func parseOwner(spec string) (uid, gid int, err error) {
-	uid, gid = keepOwner, keepOwner
+func splitScopes(s string) []string {
+	var out []string
+	for _, part := range strings.Fields(s) {
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
 
-	rawUID, rawGID, hasGID := strings.Cut(spec, ":")
-	parse := func(s string) (int, error) {
-		n, err := strconv.Atoi(s)
+// auther manages cached/refreshed tokens and serves them over a UDS.
+type auther struct {
+	cfg    config
+	provs  map[string]provider
+	cached map[string]*tokenPair
+	mu     chan struct{} // mutex: buffered channel of size 1
+}
+
+func newAuther(cfg config, provs map[string]provider) (*auther, error) {
+	a := &auther{
+		cfg:    cfg,
+		provs:  provs,
+		cached: make(map[string]*tokenPair),
+		mu:     make(chan struct{}, 1),
+	}
+	if cfg.stateFile != "" {
+		if err := a.restore(); err != nil {
+			log.Printf("auther: restore ignored: %v", err)
+		}
+	}
+	// Prime from disk for anything not already restored.
+	for name, p := range provs {
+		if a.cached[name] != nil {
+			continue
+		}
+		if pair, err := p.load(); err == nil {
+			a.cached[name] = pair
+		} else {
+			log.Printf("auther: %s: initial load failed: %v", name, err)
+		}
+	}
+	return a, nil
+}
+
+func (a *auther) lock()   { a.mu <- struct{}{} }
+func (a *auther) unlock() { <-a.mu }
+
+// token returns a valid access token for provider p, refreshing lazily if the
+// cached one has expired. force forces a refresh regardless of expiry.
+func (a *auther) token(ctx context.Context, p provider, force bool) (*tokenPair, error) {
+	a.lock()
+	defer a.unlock()
+
+	pair := a.cached[p.name()]
+	if pair == nil {
+		loaded, err := p.load()
 		if err != nil {
-			return 0, fmt.Errorf("want numeric ids like 10001:10001, got %q", s)
+			return nil, err
 		}
-		if n < 0 {
-			return 0, fmt.Errorf("id %d is negative", n)
-		}
-		return n, nil
+		pair = loaded
+		a.cached[p.name()] = pair
+		a.publish()
 	}
 
-	if rawUID != "" {
-		if uid, err = parse(rawUID); err != nil {
-			return keepOwner, keepOwner, err
+	if force || expired(pair, a.cfg.refreshLead) {
+		refreshed, err := p.refresh(ctx, pair)
+		if err != nil {
+			// Transient failure: if the current token is still valid, keep it.
+			if pair.AccessToken != "" && !expired(pair, 0) {
+				return pair, nil
+			}
+			return nil, err
 		}
+		a.cached[p.name()] = refreshed
+		a.persist()
+		a.publish()
+		return refreshed, nil
 	}
-	if hasGID && rawGID != "" {
-		if gid, err = parse(rawGID); err != nil {
-			return keepOwner, keepOwner, err
-		}
-	}
-	if uid == keepOwner && gid == keepOwner {
-		return keepOwner, keepOwner, errors.New("no id given")
-	}
-	return uid, gid, nil
+	return pair, nil
 }
 
-// extractToken walks a dotted path through the decoded JSON and returns the
-// string found at the end of it.
-func extractToken(raw []byte, path []string) (string, error) {
-	var doc any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return "", fmt.Errorf("parse json: %w", err)
+func expired(pair *tokenPair, lead time.Duration) bool {
+	if pair == nil || pair.ExpiresAt == 0 {
+		return false
 	}
-
-	cur := doc
-	for i, key := range path {
-		obj, ok := cur.(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("%q is not an object", strings.Join(path[:i], "."))
-		}
-		cur, ok = obj[key]
-		if !ok {
-			return "", fmt.Errorf("%q not found", strings.Join(path[:i+1], "."))
-		}
-	}
-
-	token, ok := cur.(string)
-	if !ok {
-		return "", fmt.Errorf("%q is %T, want a string", strings.Join(path, "."), cur)
-	}
-	if token == "" {
-		return "", fmt.Errorf("%q is empty", strings.Join(path, "."))
-	}
-	return token, nil
+	return time.Now().Add(lead).After(time.UnixMilli(pair.ExpiresAt))
 }
 
-// writeAtomic replaces target in a single rename, so a reader never observes a
-// half-written key, nor one that is briefly world-readable or owned by the
-// wrong user.
-func writeAtomic(cfg config, data []byte) error {
-	dir := filepath.Dir(cfg.target)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".auth.key-*")
+func (a *auther) run(ctx context.Context) error {
+	ln, err := listen(a.cfg.socketPath)
 	if err != nil {
-		return fmt.Errorf("create temp file in %s: %w", dir, err)
+		return err
 	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
+	defer ln.Close()
 
-	if err := tmp.Chmod(cfg.mode); err != nil {
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-	if cfg.uid != keepOwner || cfg.gid != keepOwner {
-		if err := tmp.Chown(cfg.uid, cfg.gid); err != nil {
-			return fmt.Errorf("chown temp file to %d:%d (only root may do this): %w", cfg.uid, cfg.gid, err)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", a.handleHealth)
+	mux.HandleFunc("/token", a.handleToken)
+	mux.HandleFunc("/token/refresh", a.handleRefresh)
+
+	srv := &http.Server{Handler: mux}
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				a.preRefresh(ctx)
+			}
 		}
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("sync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), cfg.target); err != nil {
-		return fmt.Errorf("rename onto %s: %w", cfg.target, err)
+	}()
+
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+
+	log.Printf("auther listening on %s", a.cfg.socketPath)
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve: %w", err)
 	}
 	return nil
 }
 
-// syncOnce reads the source and refreshes the target if it drifted. It reports
-// whether the target was rewritten.
-func syncOnce(cfg config) (bool, error) {
-	raw, err := os.ReadFile(cfg.source)
-	if err != nil {
-		return false, fmt.Errorf("read %s: %w", cfg.source, err)
-	}
-
-	token, err := extractToken(raw, cfg.jsonPath)
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", cfg.source, err)
-	}
-
-	// Compare against what is on disk rather than against a cached value, so a
-	// recreated volume or an outside edit of the target is repaired too.
-	if current, err := os.ReadFile(cfg.target); err == nil && string(current) == token {
-		return false, nil
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("read %s: %w", cfg.target, err)
-	}
-
-	if err := writeAtomic(cfg, []byte(token)); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func run(ctx context.Context, cfg config) error {
-	log.Printf("watching %s (%s) -> %s every %s",
-		cfg.source, strings.Join(cfg.jsonPath, "."), cfg.target, cfg.interval)
-
-	ticker := time.NewTicker(cfg.interval)
-	defer ticker.Stop()
-
-	// lastErr keeps a missing or malformed source file from filling the log
-	// with the same line every tick.
-	var lastErr string
-	for {
-		updated, err := syncOnce(cfg)
-		switch {
-		case err != nil:
-			if msg := err.Error(); msg != lastErr {
-				log.Printf("sync failed: %v", err)
-				lastErr = msg
-			}
-		case updated:
-			log.Printf("wrote %s", cfg.target)
-			lastErr = ""
-		default:
-			lastErr = ""
+// preRefresh refreshes any provider whose token is within the refresh lead so
+// gateway /token requests almost always hit the cache with no upstream call.
+func (a *auther) preRefresh(ctx context.Context) {
+	for name, p := range a.provs {
+		a.lock()
+		pair := a.cached[name]
+		a.unlock()
+		if pair == nil || !expired(pair, a.cfg.refreshLead) {
+			continue
 		}
-
-		select {
-		case <-ctx.Done():
-			log.Print("shutting down")
-			return nil
-		case <-ticker.C:
+		if _, err := a.token(ctx, p, true); err != nil {
+			log.Printf("auther: pre-refresh %s: %v", name, err)
 		}
 	}
 }
 
-func main() {
-	log.SetFlags(log.LstdFlags | log.LUTC)
+func (a *auther) providerByName(name string) (provider, bool) {
+	p, ok := a.provs[name]
+	return p, ok
+}
 
-	cfg, err := loadConfig()
+func (a *auther) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	providers := map[string]any{}
+	ready := false
+	for name := range a.provs {
+		a.lock()
+		pair := a.cached[name]
+		a.unlock()
+		if pair != nil && pair.AccessToken != "" {
+			providers[name] = map[string]any{"ok": true, "expiresAt": pair.ExpiresAt}
+			ready = true
+		} else {
+			providers[name] = map[string]any{"ok": false}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "ready": ready, "providers": providers})
+}
+
+func (a *auther) handleToken(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("provider")
+	if name == "" {
+		name = providerClaude
+	}
+	p, ok := a.providerByName(name)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown provider: " + name})
+		return
+	}
+	pair, err := a.token(r.Context(), p, false)
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+		return
 	}
+	writeJSON(w, http.StatusOK, publicToken(pair, name))
+}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	if err := run(ctx, cfg); err != nil {
-		log.Fatal(err)
+func (a *auther) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"`
 	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	name := req.Provider
+	if name == "" {
+		name = providerClaude
+	}
+	p, ok := a.providerByName(name)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown provider: " + name})
+		return
+	}
+	pair, err := a.token(r.Context(), p, true)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, publicToken(pair, name))
+}
+
+// publicToken is the shape handed to the gateway — an access token and its
+// expiry, never the refresh token.
+func publicToken(pair *tokenPair, name string) map[string]any {
+	out := map[string]any{
+		"provider":    name,
+		"accessToken": pair.AccessToken,
+	}
+	if pair.ExpiresAt != 0 {
+		out["expiresAt"] = pair.ExpiresAt
+	}
+	if pair.AccountID != "" {
+		out["accountId"] = pair.AccountID
+	}
+	return out
+}
+
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// listen binds a mode-0600 unix socket, removing any stale socket first.
+func listen(path string) (net.Listener, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir socket dir: %w", err)
+	}
+	if info, err := os.Stat(path); err == nil && info.Mode()&os.ModeSocket != 0 {
+		if err := os.Remove(path); err != nil {
+			return nil, fmt.Errorf("remove stale socket: %w", err)
+		}
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("listen: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("chmod socket: %w", err)
+	}
+	return ln, nil
 }

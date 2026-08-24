@@ -12,7 +12,8 @@ A TypeScript rewrite of `llm-auth-gateway` (Python/FastAPI).
 ## What it is for
 
 Callers — including CLIs inside containers — **hold no upstream key at all**, only a
-`GATEWAY_TOKEN`. The real credentials exist solely in the gateway process on the host:
+`GATEWAY_TOKEN`. The real credentials exist solely in the **auther** sidecar, never in this
+process; this gateway receives only short-lived access tokens over a Unix socket:
 
 ```
 container / caller ──GATEWAY_TOKEN──▶ credential-proxy ──▶ upstream
@@ -20,15 +21,16 @@ container / caller ──GATEWAY_TOKEN──▶ credential-proxy ──▶ upstr
                           ┌─────────────────┼─────────────────┐
                           ▼                 ▼                 ▼
                     DeepSeek           Anthropic            Codex
-                  your API key     `claude login` creds  `codex login` creds
+                  your API key       auther (claude)    auther (codex)
+                                       over UDS            over UDS
 ```
 
 ## Routing
 
 | Path | Goes to | Credential source |
 |---|---|---|
-| `/v1/messages*`, `/v1/complete` | `api.anthropic.com` | `~/.claude/.credentials.json` → Keychain → environment |
-| `/v1/responses*` | `chatgpt.com/backend-api/codex` | `~/.codex/auth.json` |
+| `/v1/messages*`, `/v1/complete` | `api.anthropic.com` | auther `/token?provider=claude` |
+| `/v1/responses*` | `chatgpt.com/backend-api/codex` | auther `/token?provider=codex` |
 | everything else under `/v1/*` | `api.deepseek.com` | `DEEPSEEK_API_KEY` |
 
 An `x-gateway-provider: deepseek\|anthropic\|codex` header overrides the inference.
@@ -57,19 +59,20 @@ rewritten request bodies, no forged identity headers.
 Running the real Claude Code or Codex CLI inside a container is unaffected: those headers come
 from the CLI itself, and the gateway passes them through as they are.
 
-**Everything else is unchanged**: the three-step credential fallback, the automatic refresh and
-retry on a 401, re-reading storage when a refresh fails (the host CLI may have refreshed it
-already), writing refreshed tokens back to the file or Keychain, the concurrency semaphore, and
-accepting the token in any of three headers.
+**What changed from the old single-process design**: the credential stores (file →
+Keychain → env fallback, refresh-on-401) moved out of this process into the auther. This
+gateway now calls the auther over a Unix socket, gets back an access token, and keeps the
+single retry-on-401. The concurrency semaphore and metering are unchanged.
 
 ## Running it
 
-Dependencies resolve upwards from the repository root's `node_modules`, so there is nothing
-separate to install.
+The auther must be reachable at `AUTHER_SOCKET` before this gateway can serve `/v1/messages`
+or `/v1/responses` (DeepSeek works without it). Dependencies resolve upwards from the
+repository root's `node_modules`, so there is nothing separate to install.
 
 ```bash
 cd credential-proxy
-cp .env.example .env    # at minimum, GATEWAY_TOKEN and DEEPSEEK_API_KEY
+cp .env.example .env    # at minimum, GATEWAY_TOKEN, DEEPSEEK_API_KEY, AUTHER_SOCKET
 npm start
 npm test                # usage-parsing unit tests, entirely offline
 npm run typecheck
@@ -94,7 +97,9 @@ experimental_bearer_token = "<GATEWAY_TOKEN>"
 ## Security
 
 - It **refuses to start** when `GATEWAY_HOST` is not a loopback address and `GATEWAY_TOKEN` is
-  empty. This process holds your subscription credentials.
+  empty.
+- It holds **no** refresh token — subscription credentials live in the auther, reachable only
+  over the mode-0600 `AUTHER_SOCKET`, so a compromise of this gateway cannot exfiltrate them.
 - Reach it remotely over an SSH port-forward, rather than listening publicly.
 - `GATEWAY_MAX_CONCURRENT` caps concurrency, so a shared subscription allowance cannot be
   drained by one burst.

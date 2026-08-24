@@ -1,113 +1,111 @@
-# authkey-sync
+# auther
 
-Watches a JSON credentials file and keeps `/data/secrets/auth.key` — on a
-volume shared with other containers — holding just the access token from it.
-When the source file changes, the key is rewritten within one poll interval.
+The credential authority for the AgentLodge gateway. It is the **only** process
+that holds upstream subscription refresh tokens (Claude / claude.ai and Codex /
+ChatGPT). It refreshes access tokens proactively before they expire, persists
+the rotated tokens encrypted at rest, and serves the current token to consumers.
 
-Both paths are fixed: it reads `/input/.credentials.json` and writes
-`/data/secrets/auth.key`. Mounting is the only setup step — what you put behind
-those two paths is your call.
+A consumer never sees a refresh token — it only ever receives a short-lived
+access token, over a Unix domain socket and/or as a single-line file drop.
+
+## Interfaces
 
 ```
-CREDENTIALS_FILE                          AUTH_KEY_FILE
-{"claudeAiOauth":{"accessToken":"abc"}} ──▶ abc      (no quotes, no trailing newline)
+Unix socket (AUTHER_SOCKET, mode 0600):
+  GET  /health              -> { status, ready, providers:{claude:{ok,expiresAt},...} }
+  GET  /token?provider=X    -> { provider, accessToken, expiresAt, accountId? }
+  POST /token/refresh       -> same shape, forces a refresh
+                               body: {"provider":"claude"}
+
+Optional file drop (AUTH_KEY_FILE), for consumers that read a key from a file
+(e.g. the AgentLodge app-gateway's core/secret-file.ts): the current claude
+access token, written atomically as a single line.
 ```
+
+The gateway (`credential-proxy`) calls the socket; the AgentLodge app-gateway
+can keep reading the file drop, so both integration styles work against the same
+authoritative token.
+
+## How it works
+
+On startup the auther loads each provider's credential from its backing store:
+
+- **claude** — `CLAUDE_CREDENTIALS_FILE` (`~/.claude/.credentials.json`), with a
+  fallback to the macOS Keychain (`Claude Code-credentials`). It reads the
+  `claudeAiOauth` block: `accessToken`, `refreshToken`, `expiresAt` (unix ms),
+  `refreshTokenExpiresAt`, `scopes`, `clientId`.
+- **codex** — `~/.codex/auth.json` (`CODEX_HOME`), reading `tokens.access_token`,
+  `tokens.refresh_token`, `tokens.account_id`.
+
+A background ticker pre-refreshes any token within `REFRESH_LEAD_SECONDS` of
+expiry, so `/token` almost always returns a cached, valid value with no upstream
+call. A 401 upstream causes the gateway to call `/token/refresh`, which forces a
+fresh mint before the single retry.
+
+The refresh token is treated as rotatable: when the token endpoint returns a new
+one it is kept, otherwise the old one is retained (matching the CLIs' own
+behaviour). A token endpoint `invalid_grant` means the refresh token is dead —
+the auther then fails to mint and the operator must re-run `claude login` /
+`codex login` on the host.
+
+## Persistence (encrypted at rest)
+
+When `AUTHER_STATE_FILE` is set, the rotated tokens (including refresh tokens,
+which is why encryption matters) are written there under AES-256-GCM. The key
+comes from, in order:
+
+1. `AUTHER_KEY` — a 32-byte key (raw, hex, or base64);
+2. `AUTHER_KEY_FILE` — a file containing that key;
+3. otherwise a generated seed at `~/.agentlodge/auther.key` (survives restarts
+   on the same host, but not container rebuilds — supply `AUTHER_KEY` for that).
+
+Without `AUTHER_STATE_FILE`, the auther re-reads the credential files on startup
+instead; the encryption machinery is still used to derive the key so the flag
+being absent degrades to "load from disk".
 
 ## Configuration
 
-| Variable           | Default                     | Meaning                                           |
-| ------------------ | --------------------------- | ------------------------------------------------- |
-| `CREDENTIALS_FILE` | `/input/.credentials.json`  | JSON file to watch                                 |
-| `AUTH_KEY_FILE`    | `/data/secrets/auth.key`    | File to write the token to                         |
-| `TOKEN_JSON_PATH`  | `claudeAiOauth.accessToken` | Dotted path to the string to extract               |
-| `POLL_INTERVAL`    | `2s`                        | How often the source is re-read (any Go duration)  |
-| `AUTH_KEY_MODE`    | `0600`                      | Octal mode of the written key                      |
-| `AUTH_KEY_OWNER`   | *(unset: leave as-is)*      | `uid:gid` to give the key, e.g. `10001:10001`      |
+| Variable                 | Default                                    | Meaning                                          |
+| ------------------------ | ------------------------------------------ | ------------------------------------------------ |
+| `AUTHER_SOCKET`          | `/run/agentlodge/auther.sock`              | Unix socket the gateway dials                    |
+| `CLAUDE_CREDENTIALS_FILE`| `~/.claude/.credentials.json`              | Claude credential source                         |
+| `CLAUDE_OAUTH_CLIENT_ID` | `9d1c250a-…`                               | client_id used when the file has none            |
+| `CLAUDE_OAUTH_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token`| Claude refresh endpoint                          |
+| `CLAUDE_OAUTH_SCOPES`    | *(file's scopes)*                          | fallback scopes when the file has none           |
+| `CODEX_HOME`             | `~/.codex`                                 | directory holding `auth.json`                    |
+| `OPENAI_OAUTH_TOKEN_URL` | `https://auth.openai.com/oauth/token`      | Codex refresh endpoint                           |
+| `OPENAI_OAUTH_CLIENT_ID` | `app_EMoamEEZ…`                            | Codex client id                                  |
+| `REFRESH_LEAD_SECONDS`   | `60`                                       | pre-refresh this many seconds before expiry      |
+| `HTTP_TIMEOUT`           | `30s`                                      | token endpoint timeout                           |
+| `AUTH_KEY_FILE`          | *(unset: no file drop)*                    | where to publish the access token as a file      |
+| `AUTH_KEY_MODE`          | `0600`                                     | mode of the published file                       |
+| `AUTH_KEY_OWNER`         | *(leave as-is)*                            | `uid:gid` for the published file                 |
+| `AUTHER_STATE_FILE`      | *(unset: no persistence)*                  | encrypted at-rest state path                     |
+| `AUTHER_KEY` / `AUTHER_KEY_FILE` | *(generated seed)*                  | encryption key                                   |
+
+## Security
+
+- The socket is mode `0600`, in a directory the container and the gateway share;
+  other host processes cannot connect.
+- The gateway (`credential-proxy`) receives only access tokens, never a refresh
+  token, so a compromise of the gateway cannot exfiltrate the long-lived
+  credential.
+- Persisted state is AES-256-GCM; without `AUTHER_KEY` it is keyed by a host
+  seed file.
+- In `docker/compose.yml` the container runs `read_only`, drops all capabilities
+  except `DAC_READ_SEARCH` (read the host user's 0600 credential file) and
+  `CHOWN` (hand the file drop to the consumer's uid), and has `network_mode:
+  none` — it holds a refresh token, so it can reach as little as possible.
 
 ## Run it
 
 ```sh
-CREDENTIALS_DIR=~/.claude docker compose up -d --build
+CLAUDE_CREDENTIALS_DIR=~/.claude docker compose up -d --build
 ```
 
-That mounts `~/.claude` at `/input`, so `~/.claude/.credentials.json` lands on
-the default source path with no configuration at all. To read a differently
-named file, mount its directory at `/input` and set `CREDENTIALS_FILE`.
-
-`compose.yml` declares the named volume `agent-secrets`, mounts it at
-`/data/secrets` in both the syncer and an example consumer, and hands the key
-to uid 10001. To use the key from your own service, mount the same volume
-read-only and run as the same uid:
-
-```yaml
-services:
-  your-service:
-    user: "10001:10001"
-    volumes:
-      - agent-secrets:/data/secrets:ro
-```
-
-## Wiring it into AgentLodge
-
-`docker/compose.yml` already has it. The shared volume `agentlodge-authkey` is written by this
-service and mounted read-only into the gateway at `/data/secrets/authkey`, so the path to type
-into the console's "upstream key → read from a file" field is:
-
-```
-/data/secrets/authkey/auth.key
-```
-
-A few decisions worth recording:
-
-- What is mounted is a **subdirectory** of `/data/secrets`, not `/data/secrets` itself —
-  mounting the parent would hide every key file already in `DATA_DIR/secrets`. The allowlist
-  matches by prefix (`inside()` in `core/secret-file.ts`), so a subdirectory is read just fine.
-- The volume goes to `gateway` only, not to `app`. `secret-file.ts` says why this is
-  deliberate: the gateway is what actually reads the key, and one fewer process able to see a
-  secret is better. The cost is that the console's dropdown cannot list the file, so the path
-  is typed by hand and the `io` warning on save is expected — it warns without blocking. Add
-  the same `:ro` mount to `app` if you would rather have the dropdown and the fingerprint.
-- The key is owned by uid 10001, which is the uid the gateway runs as in `compose.docker.yml`.
-- Temp files are named `.auth.key-*`, with a leading dot, so the console's directory listing
-  skips them instead of offering half-written keys in a dropdown.
-
-## Why it runs as root
-
-Two permission walls meet here, and root is the only thing that clears both:
-
-- The source is typically mode `0600` owned by *your* host user, so a container
-  running as any other uid gets `permission denied` reading it.
-- The key has to end up readable by the *consumer's* uid, which is a third uid
-  again.
-
-So the syncer runs as root, reads the source, and chowns the key to
-`AUTH_KEY_OWNER` before publishing it. `compose.yml` drops every Linux
-capability except the two this needs — `DAC_READ_SEARCH` to read the source and
-`CHOWN` to hand off the key — and adds `read_only: true` and
-`no-new-privileges`. The image is `scratch`: one static binary, no shell.
-
-To run unprivileged instead, set `user:` to the uid that owns the credentials
-file, drop `AUTH_KEY_OWNER` and `cap_add`, and set `AUTH_KEY_MODE=0644` so other
-uids can read the key. That trades secrecy of the key for not being root.
-
-## Things worth knowing
-
-- **Mount the directory, not the file.** `~/.claude/.credentials.json` is
-  replaced by rename, not edited in place. A single-file bind mount pins the
-  original inode, so the container would keep serving the token the file held
-  at startup, forever. `compose.yml` mounts the parent directory read-only for
-  this reason.
-- **A bad source never clobbers a good key.** If the file goes missing, is
-  half-written, or loses the token, the error is logged once and the previous
-  key is left in place. Repeated identical errors are not re-logged.
-- **Writes are atomic.** The key is written to a temp file in the same
-  directory, chmod-ed and chown-ed there, then renamed into place — so a
-  consumer reading concurrently sees either the old token or the new one, never
-  a truncated one or one with the wrong permissions.
-- **The target is compared against disk, not a cached value**, so a recreated
-  volume or an outside edit of `auth.key` is repaired on the next tick.
-- **Polling, not inotify.** inotify events do not cross the bind-mount boundary
-  reliably, and the file is small enough that re-reading it costs nothing.
+Mount the credential **directory**, never the file: `claude login` replaces the
+file by rename, and a single-file bind mount pins the old inode so the auther
+would keep serving the token from the moment it started.
 
 ## Development
 
@@ -115,5 +113,5 @@ uids can read the key. That trades secrecy of the key for not being root.
 go test ./...
 ```
 
-`example/.credentials.json` is a placeholder holding a fake token, used as the
-default source so `docker compose up` works with no setup.
+`example/.credentials.json` is a placeholder used by the default source so
+nothing has to be configured to see the auther start.
