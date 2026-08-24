@@ -23,7 +23,8 @@
 #     containers through the mounted socket, and their `-v` source paths are resolved by the
 #     engine *on the host*, where a named volume's /data does not exist.
 #   * JWT_SECRET is fixed and secret. Whoever holds it can forge an administrator, and
-#     changing it makes every key saved in the console permanently undecryptable.
+#     changing it makes the encrypted system settings permanently unreadable. Upstream
+#     credentials are not among them — those live in credential-manager, under its own key.
 
 # AGENTLODGE_TAG picks the channel: `latest` is the newest release, `master` is the rolling
 # build of the branch. `latest` exists only once a v* tag has been cut.
