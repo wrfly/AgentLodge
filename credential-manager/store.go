@@ -129,23 +129,36 @@ func decryptState(key, ciphertext []byte) (*persistentState, error) {
 
 // persist writes the store to the state file, encrypted. Called on every
 // change, so a restart comes back to what the console last saw.
-func (a *manager) persist() {
+//
+// Every failure is returned rather than swallowed: a full disk, a permission
+// change, or a rename failure means the console was just told a credential
+// "succeeded" while nothing (or a stale copy) is on disk. The whole point of
+// the service is durability, so that has to surface to the caller as an error,
+// not vanish.
+//
+// A missing state file or key is intentionally not an error: it is the
+// no-persistence configuration (nothing to write and nowhere to write it),
+// which is a deliberate, documented mode.
+func (a *manager) persist() error {
 	if a.cfg.stateFile == "" || len(a.cfg.authKey) == 0 {
-		return
+		return nil
 	}
 	state := &persistentState{Credentials: a.creds}
 	ct, err := encryptState(a.cfg.authKey, state)
 	if err != nil {
-		return
+		return fmt.Errorf("encrypt store: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(a.cfg.stateFile), 0o700); err != nil {
-		return
+		return fmt.Errorf("create state dir: %w", err)
 	}
 	tmp := a.cfg.stateFile + ".tmp"
 	if err := os.WriteFile(tmp, ct, 0o600); err != nil {
-		return
+		return fmt.Errorf("write state: %w", err)
 	}
-	_ = os.Rename(tmp, a.cfg.stateFile)
+	if err := os.Rename(tmp, a.cfg.stateFile); err != nil {
+		return fmt.Errorf("replace state: %w", err)
+	}
+	return nil
 }
 
 // restore loads a previously persisted store.

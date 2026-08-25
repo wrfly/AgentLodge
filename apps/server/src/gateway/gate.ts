@@ -255,8 +255,16 @@ export class UpstreamGate {
 
   setMaxConcurrency(n: number): void {
     this.cfg.maxConcurrency = Math.max(1, n);
-    this.effectiveMax = Math.min(this.effectiveMax, this.cfg.maxConcurrency);
-    if (this.effectiveMax < this.cfg.maxConcurrency) this.effectiveMax = this.cfg.maxConcurrency;
+    // Raising the ceiling must not wipe the AIMD backoff: the whole point of
+    // the gate is to climb back down when the upstream is throttling, and
+    // resetting effectiveMax here — the exact moment an admin is likely to be
+    // poking settings during an incident — would answer a 429 storm by pushing
+    // harder. The effective limit already rises on its own after a run of
+    // clean responses (reportUpstream), so this only clamps it when the new
+    // ceiling is *lower*, and otherwise leaves recovery to the AIMD timer.
+    if (this.effectiveMax > this.cfg.maxConcurrency) {
+      this.effectiveMax = this.cfg.maxConcurrency;
+    }
     this.schedule();
   }
 

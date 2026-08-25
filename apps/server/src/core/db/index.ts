@@ -258,11 +258,11 @@ export function get<T>(sql: string, ...params: Params): T | undefined {
   return row === undefined ? undefined : plain<T>(row);
 }
 
-export function run(sql: string, ...params: Params): { changes: number } {
+export function run(sql: string, ...params: Params): { changes: number; lastInsertRowid: number | bigint } {
   const r = getDb()
     .prepare(sql)
     .run(...params);
-  return { changes: Number(r.changes) };
+  return { changes: Number(r.changes), lastInsertRowid: r.lastInsertRowid };
 }
 
 /** Run a group of writes in one transaction; a throw rolls it back */

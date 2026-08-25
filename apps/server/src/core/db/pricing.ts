@@ -75,7 +75,7 @@ export interface UpsertInput {
 
 /** A price change inserts a row; past bills keep the price of their time and are never rewritten */
 export function add(input: UpsertInput): Pricing {
-  run(
+  const result = run(
     `insert into model_pricing
        (model, provider_id, currency, price_input, price_cache_read, price_cache_write, price_output,
         effective_from, note, created_at)
@@ -91,7 +91,11 @@ export function add(input: UpsertInput): Pricing {
     input.note ?? null,
     nowIso(),
   );
-  return list()[0]!;
+  // Return the row just written, not `list()[0]` — the list is ordered by
+  // (model, effective_from), so its first row is arbitrary with respect to this
+  // insert and any caller reading the returned `.id` got a wrong row.
+  const row = get<Row>('select * from model_pricing where id = ?', Number(result.lastInsertRowid));
+  return toPricing(row!);
 }
 
 export function remove(id: number): boolean {

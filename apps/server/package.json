@@ -14,6 +14,7 @@
     "test:routing": "tsx src/gateway/routing.test.ts",
     "test:routes": "tsx src/gateway/routes.test.ts",
     "test:providers": "tsx src/core/db/providers.test.ts",
+    "test:pricing": "tsx src/core/db/pricing.test.ts",
     "test:upstream": "tsx src/gateway/upstream.test.ts",
     "test:credential": "tsx src/core/credential.test.ts",
     "test:registry": "tsx src/app/agents/registry.test.ts",
