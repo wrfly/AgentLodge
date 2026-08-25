@@ -169,3 +169,7 @@ nothing to edit. The agent image's labels say which claude and codex versions ar
 |---|---|
 | [MANUAL.md](./MANUAL.md) | Running it, upstreams, the audit proxy, deployment, environment variables |
 | [DESIGN.md](./DESIGN.md) | Why it is built this way |
+
+## License
+
+[MIT](./LICENSE)

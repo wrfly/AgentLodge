@@ -143,3 +143,7 @@ agent 镜像的标签里写着里面装的是哪个版本的 claude 和 codex。
 |---|---|
 | [MANUAL.md](./MANUAL.md) | 运行方式、上游配置、审计代理、部署、环境变量 |
 | [DESIGN.md](./DESIGN.md) | 设计思路与取舍 |
+
+## 许可
+
+[MIT](./LICENSE)
