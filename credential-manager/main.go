@@ -483,7 +483,7 @@ func (a *manager) handleCredentials(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			c := &credential{ID: req.ID, Kind: kindKeyFile, Label: req.Label, Source: sourceFile, Path: path}
-			if err := a.put(c); err != nil {
+			if err := a.putDurable(c); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
@@ -509,7 +509,7 @@ func (a *manager) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c := &credential{ID: req.ID, Kind: kindAPIKey, Label: req.Label, Source: sourceTyped, APIKey: key}
-		if err := a.put(c); err != nil {
+		if err := a.putDurable(c); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}

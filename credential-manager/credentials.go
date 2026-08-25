@@ -205,25 +205,65 @@ func (a *manager) list() []map[string]any {
 	return out
 }
 
-// put stores a credential, replacing one with the same id. The creation time of
-// what was there is kept: an id is a stable thing the console points at, and
-// re-pasting a rotated key is an update, not a new credential.
+// put stores a credential, replacing one with the same id, and reports whether
+// the store reached disk.
 //
-// The returned error is the persist error: the in-memory store is updated
-// regardless, but the caller must tell the operator when that update will not
-// survive a restart rather than claim success.
+// The in-memory store is updated either way, which is what the irreversible
+// callers need: a spent OAuth code cannot be exchanged twice and a host file
+// that has already been read is already read, so they serve the credential and
+// let /health carry the degradation. A caller that turns the error into a
+// failed operation for the operator wants putDurable instead.
 func (a *manager) put(c *credential) error {
 	a.lock()
 	defer a.unlock()
 
+	a.storeLocked(c)
+	return a.persist()
+}
+
+// putDurable stores a credential only if the store reaches disk, undoing the
+// in-memory change when it does not. It is for the operations whose success
+// criterion *is* durable storage and that the operator can simply repeat —
+// pasting an API key, pointing at a key file.
+//
+// Without the rollback the 500 those handlers return is a lie: the credential
+// is live, listed and serving tokens, and on a re-paste the key it replaced is
+// already destroyed — the same "one action, three answers" that delete used to
+// have, from the other side.
+func (a *manager) putDurable(c *credential) error {
+	a.lock()
+	defer a.unlock()
+
+	prev, had := a.storeLocked(c)
+	if err := a.persist(); err != nil {
+		// The write never landed, so the file still holds what memory held
+		// before this call: putting that back leaves the two agreeing. storeErr
+		// stays set — the store is degraded whether or not this change was
+		// wanted, and /health has to keep saying so.
+		if had {
+			a.creds[c.ID] = prev
+		} else {
+			delete(a.creds, c.ID)
+		}
+		return err
+	}
+	return nil
+}
+
+// storeLocked puts c into the map, carrying over the creation time of whatever
+// it replaces — an id is a stable thing the console points at, and re-pasting a
+// rotated key is an update, not a new credential. Reports what was there, so a
+// caller can undo it. The caller holds a.mu.
+func (a *manager) storeLocked(c *credential) (prev *credential, had bool) {
 	now := time.Now().UnixMilli()
 	c.UpdatedAt = now
 	c.CreatedAt = now
-	if prev, ok := a.creds[c.ID]; ok {
+	prev, had = a.creds[c.ID]
+	if had {
 		c.CreatedAt = prev.CreatedAt
 	}
 	a.creds[c.ID] = c
-	return a.persist()
+	return prev, had
 }
 
 // remove deletes a credential. Reports whether there was one.

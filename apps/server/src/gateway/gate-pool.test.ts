@@ -133,5 +133,57 @@ console.log('\n=== Lower-then-raise must not punch through a backoff ===');
   ok('the backoff survives a lower-then-raise round trip', a.stats().effectiveMax === narrowed, JSON.stringify(a.stats()));
 }
 
+console.log('\n=== A ceiling change cannot destroy the backoff ===');
+{
+  // The round trip above dips the ceiling to exactly the backed-off value.
+  // Dipping it *below* has to survive too: clearing the throttle there means
+  // raising the ceiling back punches straight through into a live 429 storm,
+  // which is the same failure one step removed.
+  const pool = new GatePool({ ...cfg, maxConcurrency: 8 });
+  const a = pool.for('provider-a');
+
+  a.reportUpstream(429); // 8 -> 4
+  ok('a 429 narrows the gate', a.stats().effectiveMax === 4, JSON.stringify(a.stats()));
+
+  pool.setMaxConcurrency(2);
+  ok('a ceiling below the backoff clamps', a.stats().effectiveMax === 2, JSON.stringify(a.stats()));
+
+  // Nothing has recovered — no clean responses at all — so the upstream's
+  // limit is still 4 and that is what the gate must come back to.
+  pool.setMaxConcurrency(8);
+  ok(
+    'raising it back restores the backoff, not the ceiling',
+    a.stats().effectiveMax === 4,
+    JSON.stringify(a.stats()),
+  );
+}
+
+console.log('\n=== A backoff still lifts when the ceiling came down to meet it ===');
+{
+  // With the ceiling lowered onto the backed-off value there is no gap left for
+  // an "effectiveMax < ceiling" climb to run in, so a gate that keyed recovery
+  // on that guard stayed marked as throttled forever — and a raise made much
+  // later, on an upstream that had been healthy the whole time, was deferred to
+  // a climb that could never start.
+  const pool = new GatePool({ ...cfg, maxConcurrency: 8 });
+  const a = pool.for('provider-a');
+
+  a.reportUpstream(429); // 8 -> 4
+  pool.setMaxConcurrency(4); // the ceiling meets the backoff exactly
+  ok('the gate runs at the shared value', a.stats().effectiveMax === 4, JSON.stringify(a.stats()));
+
+  // The upstream is healthy again.
+  for (let i = 0; i < 20; i += 1) a.reportUpstream(200);
+  ok('a clean run leaves the gate at its ceiling', a.stats().effectiveMax === 4, JSON.stringify(a.stats()));
+
+  // With the backoff lifted, a raise is just a raise.
+  pool.setMaxConcurrency(16);
+  ok(
+    'and a later raise applies immediately',
+    a.stats().effectiveMax === 16,
+    JSON.stringify(a.stats()),
+  );
+}
+
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

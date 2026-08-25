@@ -726,8 +726,9 @@ func TestResolveServesARefreshedTokenThatCouldNotBePersisted(t *testing.T) {
 }
 
 // A persist failure must not be reported as success: putting a credential into a
-// store whose state file cannot be written has to come back as an error, so the
-// operator is not told "saved" when a restart will lose it.
+// store whose state file cannot be written has to come back as an error, which
+// is the signal every caller keys on — whether to fail the operation outright
+// (putDurable) or to serve the result and record the degradation.
 func TestPutSurfacesAPersistFailure(t *testing.T) {
 	// Make a regular file, then name the state file *under* it: MkdirAll on a path
 	// whose component is a file fails deterministically, which is the silent-loss
@@ -796,6 +797,62 @@ func TestRemoveSurfacesStoreDegradationInsteadOfFailing(t *testing.T) {
 	a.refreshMu.Unlock()
 	if kept {
 		t.Fatal("the per-credential refresh lock must be released on remove")
+	}
+}
+
+// put's error is advisory for the irreversible callers, but the console's
+// "store this key" handler turns it into a 500 — so it has to be true. A
+// credential the operator was told did not take must not be live, and the key
+// it would have replaced must still be there.
+func TestPutDurableRollsBackAStoreThatDidNotReachDisk(t *testing.T) {
+	dir := t.TempDir()
+	a, err := newManager(config{
+		stateFile:   filepath.Join(dir, "state.enc"),
+		authKey:     make([]byte, 32),
+		refreshLead: time.Minute,
+	}, map[string]provider{})
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+
+	original := &credential{ID: "paid", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-ant-api03-original"}
+	if err := a.putDurable(original); err != nil {
+		t.Fatalf("the first store must succeed: %v", err)
+	}
+
+	// Break the store, then re-paste a rotated key under the same id. Pointing
+	// the state file under a regular file makes MkdirAll fail deterministically,
+	// without depending on file permissions (a test run as root ignores those).
+	blocker := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	a.cfg.stateFile = filepath.Join(blocker, "sub", "state.enc")
+
+	rotated := &credential{ID: "paid", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-ant-api03-rotated"}
+	if err := a.putDurable(rotated); err == nil {
+		t.Fatal("putDurable on an unwritable store must return an error")
+	}
+
+	a.lock()
+	got, ok := a.creds["paid"]
+	a.unlock()
+	if !ok {
+		t.Fatal("a rolled-back replace must leave the previous credential in place")
+	}
+	if got.APIKey != "sk-ant-api03-original" {
+		t.Fatalf("credential is %q, want the original: a rejected write must not be live", got.APIKey)
+	}
+
+	// And a first-time store that fails leaves nothing behind at all.
+	if err := a.putDurable(&credential{ID: "new", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-ant-api03-new"}); err == nil {
+		t.Fatal("putDurable on an unwritable store must return an error")
+	}
+	a.lock()
+	_, ok = a.creds["new"]
+	a.unlock()
+	if ok {
+		t.Fatal("a rolled-back first store must leave no credential behind")
 	}
 }
 

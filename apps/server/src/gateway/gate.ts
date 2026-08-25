@@ -70,7 +70,6 @@ export interface GateStats {
 }
 
 export class UpstreamGate {
-  private effectiveMax: number;
   private readonly active = new Set<symbol>();
   /** userId to that user's queued requests */
   private readonly queues = new Map<string, Waiter[]>();
@@ -82,22 +81,31 @@ export class UpstreamGate {
   private consecutiveOk = 0;
   private cooldownUntil = 0;
   /**
-   * Whether the effective limit is currently below the ceiling *because the
-   * upstream throttled us*, as opposed to because an administrator lowered the
-   * ceiling. It is what `setMaxConcurrency` keys on: a raise must preserve an
-   * active backoff but apply immediately otherwise. Inferred from "effectiveMax
-   * vs ceiling" it breaks under a lower-then-raise pair, which aligns
-   * effectiveMax to the ceiling and makes a gate that is mid-backoff look full
-   * again — hence an explicit flag rather than deriving it from the numbers.
+   * The limit the *upstream* has imposed through AIMD, or null when no backoff
+   * is in effect. Held separately from the configured ceiling, which is the
+   * *administrator's* limit, because the two answer different questions and an
+   * admin can move theirs underneath ours at any moment.
+   *
+   * Neither "effectiveMax vs the ceiling" nor a boolean flag survives that.
+   * Lower the ceiling onto a backed-off value and the gate reads as recovered;
+   * lower it below and the AIMD climb — guarded on effectiveMax < ceiling —
+   * can never run again, so the backoff never lifts. Keeping the throttle as
+   * its own number makes ceiling changes pure: they clamp what is served
+   * without editing what the upstream told us.
    */
-  private backingOff = false;
+  private throttleLimit: number | null = null;
   private totalGranted = 0;
   private totalThrottled = 0;
   /** The last 200 wait times, for percentiles */
   private readonly waits: number[] = [];
 
-  constructor(private readonly cfg: GateConfig) {
-    this.effectiveMax = cfg.maxConcurrency;
+  constructor(private readonly cfg: GateConfig) {}
+
+  /** What the gate actually runs at: the lower of the two limits. */
+  private get effectiveMax(): number {
+    return this.throttleLimit === null
+      ? this.cfg.maxConcurrency
+      : Math.min(this.cfg.maxConcurrency, this.throttleLimit);
   }
 
   acquire(req: AcquireRequest): Promise<Lease> {
@@ -248,21 +256,22 @@ export class UpstreamGate {
    */
   reportUpstream(status: number, retryAfterMs?: number): void {
     if (status === 429 || status === 503 || status === 529) {
-      this.effectiveMax = Math.max(1, Math.floor(this.effectiveMax / 2));
-      this.backingOff = true;
+      this.throttleLimit = Math.max(1, Math.floor(this.effectiveMax / 2));
       this.consecutiveOk = 0;
       this.totalThrottled += 1;
       this.cooldownUntil = Date.now() + (retryAfterMs ?? 5000);
       setTimeout(() => this.schedule(), (retryAfterMs ?? 5000) + 50).unref();
     } else if (status < 400) {
       this.consecutiveOk += 1;
-      if (this.consecutiveOk >= 20 && this.effectiveMax < this.cfg.maxConcurrency) {
-        this.effectiveMax += 1;
+      if (this.consecutiveOk >= 20 && this.throttleLimit !== null) {
+        this.throttleLimit += 1;
         this.consecutiveOk = 0;
-        // Recovery is complete once the effective limit reaches the ceiling
-        // again — nothing is being held back any more.
-        if (this.effectiveMax >= this.cfg.maxConcurrency) {
-          this.backingOff = false;
+        // Recovery is complete once the throttle reaches the ceiling: nothing
+        // is being held back any more. This is reached whether the throttle
+        // climbed up to the ceiling or the ceiling came down to meet it — a
+        // gate the admin made smaller is a smaller gate, not a throttled one.
+        if (this.throttleLimit >= this.cfg.maxConcurrency) {
+          this.throttleLimit = null;
         }
         this.schedule();
       }
@@ -270,35 +279,14 @@ export class UpstreamGate {
   }
 
   setMaxConcurrency(n: number): void {
-    const previousCeiling = this.cfg.maxConcurrency;
-    const ceiling = Math.max(1, n);
-    this.cfg.maxConcurrency = ceiling;
-    // Three situations, keyed on an explicit backoff flag rather than inferred
-    // from how effectiveMax relates to the old ceiling.
-    //
-    // A gate that is actively backing off has its limit below the ceiling
-    // *because the upstream throttled us*. Raising the ceiling there — the
-    // exact moment an admin is likely to be poking settings during an incident
-    // — answers a 429 storm by pushing harder; recovery stays with the AIMD
-    // climb.
-    //
-    // A gate that is *not* backing off is at or below the ceiling only by the
-    // admin's own hand, and there a raise is just a raise: applying it
-    // immediately is what was asked for. Leaving it to the AIMD climb instead
-    // would report the new limit while nothing changed, for hundreds of
-    // requests.
-    //
-    // A lower ceiling clamps in both cases — that is the limit doing its job —
-    // and reaching it by lowering is a fresh start, not a backoff, so the flag
-    // clears.
-    if (this.backingOff) {
-      if (ceiling < this.effectiveMax) {
-        this.effectiveMax = ceiling;
-        this.backingOff = false;
-      }
-    } else if (this.effectiveMax > ceiling || this.effectiveMax === previousCeiling) {
-      this.effectiveMax = ceiling;
-    }
+    // The whole method. The effective limit is derived from this and the
+    // throttle, so every case falls out on its own: a raise applies at once on
+    // a gate that is not backing off; a raise during a backoff keeps serving
+    // the backoff until AIMD lifts it, rather than answering a 429 storm by
+    // pushing harder; and a lower ceiling clamps either way without destroying
+    // what the upstream told us, so raising it back restores the backoff
+    // instead of punching through it.
+    this.cfg.maxConcurrency = Math.max(1, n);
     this.schedule();
   }
 
