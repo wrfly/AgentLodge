@@ -135,12 +135,13 @@ async function create(userId: string): Promise<void> {
     // install packages and look things up. app and caddy are not on this network, so an
     // agent cannot reach the internal services.
     //
-    // Make sure the network exists before naming it. Compose owns this network, but an
-    // agent container is not compose's, so nothing deletes it when `compose down -v` (or
-    // a `network prune`) tears the named network away: the container survives and later
-    // fails with "network ... not found". Creating here means a fresh container never
-    // depends on what an earlier lifecycle left behind.
-    await ensureNetwork(config.agentNetwork);
+    // ⚠️ Deliberately **not** created here when it is missing. What makes this work is not
+    // the name but the gateway being attached to *this network object*: an agent finds the
+    // gateway by DNS — GATEWAY_URL is `http://gateway:8788` — and that name resolves only
+    // on a network the gateway container is on. Creating one on a miss would satisfy
+    // `--network` and hand back a container that starts, reports healthy, and cannot reach
+    // its upstream at all. Compose owns this network, so missing means compose has not
+    // created it, and the loud `network ... not found` is the right answer.
     args.push('--network', config.agentNetwork);
   }
   // Unset means the default network, where a container reaches a gateway on the host
@@ -151,19 +152,17 @@ async function create(userId: string): Promise<void> {
 }
 
 /**
- * Make sure a network exists, creating it if it does not.
+ * Whether a `start` failed because the network the container was created on is gone.
  *
- * Idempotent and self-healing: `network create` fails when the network is already there,
- * so probe with `inspect` first and create only on a miss. Doing this in `create()` — not
- * at deploy time — keeps the app the single owner of its agent containers' network and
- * removes the manual `docker network create` step a fresh host would otherwise need.
+ * Matched on the message: neither podman nor docker gives this a distinct exit code, and
+ * the wording differs between them (`network <name> not found`, `no such network`). The
+ * cost of a miss is only that a container which could have been rebuilt reports its error
+ * instead, which is the safe direction.
  */
-async function ensureNetwork(name: string): Promise<void> {
-  try {
-    await podman(['network', 'inspect', name], 15_000);
-  } catch {
-    await podman(['network', 'create', name], 15_000);
-  }
+function isMissingNetwork(e: unknown): boolean {
+  const err = e as { stderr?: string; message?: string };
+  const text = `${err?.stderr ?? ''} ${err?.message ?? ''}`;
+  return /network\b.*\bnot found/i.test(text) || /no such network/i.test(text);
 }
 
 /** Make sure this user's container is running, and return its name */
@@ -176,15 +175,21 @@ export async function ensure(userId: string): Promise<string> {
     const status = await exists(name);
     if (status === 'absent') await create(userId);
     else if (status === 'stopped') {
-      // A stopped container still remembers the network it was created on. If that
-      // network has since been removed — `compose down -v`, a `network prune`, a daemon
-      // reset — `start` fails with "network ... not found" and there is no way to reattach
-      // it. The container itself holds no state (workspace and HOME are bind mounts), so
-      // the recovery is to drop it and let `create` build a fresh one on the live network.
       try {
         await podman(['start', name], 60_000);
-      } catch {
-        await podman(['rm', '-f', name], 30_000).catch(() => {});
+      } catch (e) {
+        // A stopped container remembers the network it was created on *by id*. Replace
+        // that network — `compose down -v` and then `up` builds a new one under the same
+        // name — and `start` fails with "network ... not found" with no way to reattach.
+        // Nothing a restart needs lives in the container (workspace and HOME are bind
+        // mounts), so the recovery is to drop it and let `create` build a fresh one.
+        //
+        // Only for that error. A busy daemon, a 60s timeout, a full disk are transient or
+        // want an operator, and rebuilding on those throws away whatever the agent
+        // installed outside HOME to fix nothing.
+        if (!isMissingNetwork(e)) throw e;
+        console.warn(`[containers] ${name}: the network it was created on is gone, rebuilding it`);
+        await podman(['rm', '-f', name], 30_000);
         await create(userId);
       }
     }
