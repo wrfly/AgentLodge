@@ -239,7 +239,7 @@ console.log(`  clock:           ${clock()}`);
 console.log(`  users ${usersRepo.count()} · invite codes ${invitesRepo.list().length}`);
 if (!config.jwtSecretFromEnv) {
   console.log(`  ⚠️  JWT_SECRET is unset; a random key is in use for this run`);
-  console.log(`      What that costs: encrypted settings (upstream and SendGrid keys) cannot`);
+  console.log(`      What that costs: encrypted settings (upstream and mail keys) cannot`);
   console.log(`      be decrypted and have to be entered again, and streaming requests in`);
   console.log(`      flight break at restart. Sessions are unaffected — a refresh token is a`);
   console.log(`      random string in the database, not a JWT, and resumes by itself.`);

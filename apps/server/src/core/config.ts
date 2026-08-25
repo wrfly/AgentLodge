@@ -57,8 +57,8 @@ export const config = {
 
   /**
    * The signing key, used in three places: access tokens, the gateway's runtime
-   * tokens, and deriving the AES key that encrypts system settings (the DeepSeek and
-   * SendGrid keys).
+   * tokens, and deriving the AES key that encrypts system settings (the upstream and
+   * mail keys).
    *
    * Unset it is generated at random, which means it changes on every restart and
    * anything already encrypted can no longer be decrypted. In a deployment it has to

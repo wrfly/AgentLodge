@@ -34,7 +34,7 @@ export function register(app: FastifyInstance): void {
     return listSettings();
   });
 
-  /** Clicked after saving the SendGrid configuration, to confirm mail actually goes out */
+  /** Clicked after saving the mail configuration, to confirm mail actually goes out */
   app.post('/api/admin/settings/test-mail', guard, async (req, reply) => {
     const body = (req.body ?? {}) as { to?: string };
     const user = usersRepo.findById(req.user!.id)!;
@@ -42,8 +42,8 @@ export function register(app: FastifyInstance): void {
     const result = await mail.send({
       to,
       subject: 'AgentLodge mail configuration test',
-      text: 'This is a test email. Receiving it means SendGrid is configured correctly.',
-      html: '<p style="font-size:14px;">This is a test email. Receiving it means SendGrid is configured correctly.</p>',
+      text: 'This is a test email. Receiving it means the mail provider is configured correctly.',
+      html: '<p style="font-size:14px;">This is a test email. Receiving it means the mail provider is configured correctly.</p>',
     });
     if (!result.sent) return reply.code(400).send({ error: result.error ?? tr(req, 'Sending failed') });
     return { ok: true, to };
