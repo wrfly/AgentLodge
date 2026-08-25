@@ -94,6 +94,7 @@ li b{color:var(--text);font-weight:600}
 pre.sh{background:var(--sidebar);border:1px solid var(--border);border-radius:11px;
   padding:15px 17px;overflow-x:auto;font-size:12.8px;line-height:1.85;color:var(--text)}
 pre.sh .c{color:var(--faint)}
+pre.sh.install{max-width:520px;margin:30px auto 0;text-align:left;font-size:14px}
 
 footer{border-top:1px solid var(--border);padding:30px 0 46px;color:var(--faint);font-size:13px;
   display:flex;gap:16px;flex-wrap:wrap;align-items:center}
@@ -119,10 +120,7 @@ footer a:hover{color:var(--text)}
     <span class="zh">高仿 Claude / Codex，隔离环境，完美支持 DeepSeek / Anthropic / OpenAI。</span>
     <span class="en">A close copy of Claude and Codex, an isolated environment per user, and DeepSeek, Anthropic or OpenAI behind it.</span>
   </p>
-  <div class="cta">
-    <a class="btn primary" href="#deploy"><span class="zh">自己部署</span><span class="en">Deploy it yourself</span></a>
-    <a class="btn" href="https://github.com/wrfly/AgentLodge" rel="noopener">GitHub</a>
-  </div>
+<pre class="sh install">curl -fsSL https://u.kfd.me/X7 | sh</pre>
 </div></header>
 
 <section><div class="wrap">
@@ -150,20 +148,6 @@ footer a:hover{color:var(--text)}
   </div>
 </div></section>
 
-<section id="deploy"><div class="wrap">
-  <h2><span class="zh">部署</span><span class="en">Deploying</span></h2>
-  <p class="sub"><span class="zh">一条命令。密钥自己生成，装完把地址和第一个管理员的邀请码打给你。</span>
-     <span class="en">One command. It generates its own secrets and prints the address and the first administrator's invite code when it is done.</span></p>
-<pre class="sh">curl -fsSL https://u.kfd.me/X7 | sh</pre>
-  <p class="sub" style="margin:16px 0 0">
-    <span class="zh">它会问地址和端口，默认 <code>localhost:8080</code>；填域名就自动签证书。不想被问就直接给：
-      <code>curl -fsSL https://u.kfd.me/X7 | SITE=lodge.example.com sh</code>。
-      想先看再跑：<code>curl -fsSL https://u.kfd.me/X7 -o install.sh</code>，读完 <code>sh install.sh</code>。</span>
-    <span class="en">It asks for the address and the port, defaulting to <code>localhost:8080</code>; give it a domain and it gets a certificate.
-      To answer up front: <code>curl -fsSL https://u.kfd.me/X7 | SITE=lodge.example.com sh</code>.
-      To read it first: <code>curl -fsSL https://u.kfd.me/X7 -o install.sh</code>, then <code>sh install.sh</code>.</span>
-  </p>
-</div></section>
 
 <section><div class="wrap">
   <h2><span class="zh">请求怎么走</span><span class="en">Where a request goes</span></h2>
