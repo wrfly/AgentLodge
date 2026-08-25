@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
   Ban,
   Check,
@@ -15,6 +15,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import clsx from 'clsx';
+import { factsFor, price, tokens } from '../lib/model-facts';
 import {
   admin,
   type AdminOverview,
@@ -1061,7 +1062,7 @@ function ModelsCard() {
   return (
     <Card
       title={t('Models')}
-      description={t('What users can pick. A request carrying one of these names goes to the upstream on its row; the same name on two upstreams is two rows, lowest priority first.')}
+      description={t('What users can pick. One name on two upstreams is two rows, lowest priority first.')}
     >
       {err && <Banner tone="error">{err}</Banner>}
 
@@ -1069,49 +1070,96 @@ function ModelsCard() {
         <div className="text-[12px] text-faint">{t('Add an upstream first — a model has to name one.')}</div>
       ) : (
         <>
-          <div className="space-y-2">
-            {rows.length === 0 && <div className="text-[12px] text-faint">{t('Nothing here yet.')}</div>}
-            {rows.map((m) => (
-              <div key={m.id} className="rounded-lg border border-line p-2.5">
-                <div className="flex items-center gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className={clsx('truncate text-[13px]', m.enabled ? 'font-medium' : 'text-faint line-through')}>
-                        {m.name}
-                      </span>
-                      {shared.has(m.name) && (
-                        <span className="shrink-0 text-[11px] text-faint">{t('priority {n}', { n: m.priority })}</span>
-                      )}
-                    </div>
-                    <div className="truncate text-[11.5px] text-faint">
-                      {providerName(m.providerId)}
-                      {m.upstreamName && ` · ${t('sent as {name}', { name: m.upstreamName })}`}
-                      {m.note && ` · ${m.note}`}
-                    </div>
-                  </div>
-                  <Toggle
-                    checked={m.enabled}
-                    disabled={busy}
-                    onChange={(v) => void run(() => admin.updateModel(m.id, { enabled: v }))}
-                  />
-                  <Button variant="ghost" onClick={() => startEdit(m)}>{t('Edit')}</Button>
-                  <Button variant="ghost" disabled={busy} onClick={() => void run(() => admin.deleteModel(m.id))}>
-                    {t('Delete')}
-                  </Button>
-                </div>
-
-                {editing === m.id && (
-                  <ModelForm
-                    draft={draft}
-                    setDraft={setDraft}
-                    providers={providers}
-                    busy={busy}
-                    onSave={() => void run(() => admin.updateModel(m.id, draft))}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
+          {rows.length === 0 ? (
+            <div className="text-[12px] text-faint">{t('Nothing here yet.')}</div>
+          ) : (
+            /* A table, because every column but the first is a number to compare down the
+               column. What the vendor publishes about a name is in lib/model-facts. */
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="border-b border-line text-left text-[11px] font-normal text-faint">
+                    <th className="py-1.5 pr-3 font-normal">{t('Model')}</th>
+                    <th className="py-1.5 pr-3 font-normal">{t('Upstream')}</th>
+                    <th className="py-1.5 pr-3 text-right font-normal">{t('Context')}</th>
+                    <th className="py-1.5 pr-3 text-right font-normal">{t('Max output')}</th>
+                    <th className="py-1.5 pr-3 text-right font-normal">{t('In / out per MTok')}</th>
+                    <th className="py-1.5 pr-3 text-right font-normal">{t('SWE-bench')}</th>
+                    <th className="py-1.5 font-normal" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {rows.map((m) => {
+                    const f = factsFor(m.name);
+                    return (
+                      <Fragment key={m.id}>
+                        <tr>
+                          <td className="py-1.5 pr-3">
+                            <span className={clsx(m.enabled ? 'font-medium' : 'text-faint line-through')}>
+                              {m.name}
+                            </span>
+                            {shared.has(m.name) && (
+                              <span className="ml-1.5 text-[11px] text-faint">
+                                {t('priority {n}', { n: m.priority })}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-1.5 pr-3 text-faint">
+                            {providerName(m.providerId)}
+                            {m.upstreamName && ` · ${t('sent as {name}', { name: m.upstreamName })}`}
+                            {m.note && ` · ${m.note}`}
+                          </td>
+                          <td className="py-1.5 pr-3 text-right tabular-nums text-faint">
+                            {f ? tokens(f.context) : '—'}
+                          </td>
+                          <td className="py-1.5 pr-3 text-right tabular-nums text-faint">
+                            {f?.maxOutput ? tokens(f.maxOutput) : '—'}
+                          </td>
+                          <td className="py-1.5 pr-3 text-right tabular-nums text-faint">
+                            {f?.inPrice !== undefined && f.outPrice !== undefined
+                              ? `${price(f.inPrice)} / ${price(f.outPrice)}`
+                              : '—'}
+                          </td>
+                          <td className="py-1.5 pr-3 text-right tabular-nums text-faint">
+                            {f?.swe !== undefined ? `${f.swe}%` : '—'}
+                          </td>
+                          <td className="py-1.5">
+                            <div className="flex items-center justify-end gap-1">
+                              <Toggle
+                                checked={m.enabled}
+                                disabled={busy}
+                                onChange={(v) => void run(() => admin.updateModel(m.id, { enabled: v }))}
+                              />
+                              <Button variant="ghost" onClick={() => startEdit(m)}>{t('Edit')}</Button>
+                              <Button variant="ghost" disabled={busy} onClick={() => void run(() => admin.deleteModel(m.id))}>
+                                {t('Delete')}
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                        {editing === m.id && (
+                          <tr>
+                            <td colSpan={7} className="pb-2">
+                              <ModelForm
+                                draft={draft}
+                                setDraft={setDraft}
+                                providers={providers}
+                                busy={busy}
+                                onSave={() => void run(() => admin.updateModel(m.id, draft))}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <p className="mt-1.5 text-[11px] text-faint">
+                {t('Vendor figures, not what this deployment bills.')}
+              </p>
+            </div>
+          )}
 
           {editing === 'new' ? (
             <div className="mt-2 rounded-lg border border-line p-2.5">
@@ -2271,6 +2319,18 @@ function TraceDetailView({ d }: { d: TraceDetail }) {
   );
 }
 
+/*
+ * Tailwind needs the class in the source, so the spans are a map rather than a template.
+ * Six columns, and a field that declares none takes the row.
+ */
+const SPAN: Record<number, string> = {
+  1: 'sm:col-span-1',
+  2: 'sm:col-span-2',
+  3: 'sm:col-span-3',
+  4: 'sm:col-span-4',
+  6: 'sm:col-span-6',
+};
+
 const GROUP_LABELS: Record<SettingView['group'], string> = {
   // The site address belongs in this group: all three of its uses build links in emails
   mail: 'Email and site address',
@@ -2327,22 +2387,22 @@ function AgentsCard() {
   return (
     <Card
       title={t('Agents')}
-      description={t('Which agents this deployment offers. Turning one off hides it everywhere; conversations already on it are kept but become unreachable.')}
+      description={t('Which agents this deployment offers.')}
     >
       {err && <Banner tone="error">{err}</Banner>}
       <div className="divide-y divide-line">
         {agents.map((a) => (
-          <div key={a.id} className="flex items-center gap-3 py-2.5">
-            <div className="min-w-0 flex-1">
-              <div className="text-[13.5px]">{a.displayName}</div>
-              <div className="mt-0.5 text-[11.5px] text-faint">
-                {a.enabled
-                  ? a.availability.available
-                    ? (a.availability.version ?? t('CLI found'))
-                    : (a.availability.reason ?? t('CLI not found'))
-                  : t('Off — not offered to users')}
-              </div>
-            </div>
+          /* Name, state and switch on one line: the state is a few words and had a line
+             of its own under a name that was already short */
+          <div key={a.id} className="flex items-center gap-2 py-1.5">
+            <span className="shrink-0 text-[13.5px]">{a.displayName}</span>
+            <span className="min-w-0 flex-1 truncate text-[11.5px] text-faint">
+              {a.enabled
+                ? a.availability.available
+                  ? (a.availability.version ?? t('CLI found'))
+                  : (a.availability.reason ?? t('CLI not found'))
+                : t('Off — not offered to users')}
+            </span>
             <Toggle
               checked={a.enabled}
               disabled={busy || (a.enabled && enabled.length < 2)}
@@ -2351,9 +2411,6 @@ function AgentsCard() {
           </div>
         ))}
       </div>
-      <p className="mt-2 text-[11.5px] text-faint">
-        {t('At least one has to stay on, so the last one cannot be switched off.')}
-      </p>
     </Card>
   );
 }
@@ -2455,7 +2512,8 @@ function SettingsTab() {
             ) : undefined
           }
         >
-          {settings
+          <div className="grid grid-cols-1 gap-x-3 gap-y-3.5 sm:grid-cols-6">
+            {settings
             .filter((s) => s.group === g)
             /*
              * A field that belongs to another choice is not there at all, rather than
@@ -2471,8 +2529,10 @@ function SettingsTab() {
             .map((s) => {
               const value = draft[s.key] ?? s.value;
               return (
+                /* The label is the only child here, so its own bottom margin collapses
+                   and the grid's gap is what separates the rows */
+                <div key={s.key} className={SPAN[s.span ?? 6]}>
                 <Field
-                  key={s.key}
                   label={t(s.label)}
                   hint={
                     s.hint
@@ -2521,8 +2581,10 @@ function SettingsTab() {
                     />
                   )}
                 </Field>
+                </div>
               );
             })}
+          </div>
         </Card>
       ))}
 

@@ -66,6 +66,13 @@ export interface SettingSpec {
    */
   options?: string[];
   /**
+   * How many of the console's six columns this field takes, when the viewport has room.
+   *
+   * Left out it takes the row. A reset hour and a weight are three characters wide and
+   * had a row each, which turned six numbers into six screens of scrolling.
+   */
+  span?: number;
+  /**
    * Only shown while another setting holds one of these values.
    *
    * Display only: the value is stored, read and env-overridden exactly as any other, and
@@ -119,6 +126,7 @@ export const SETTING_SPECS: SettingSpec[] = [
   // Email
   {
     key: 'mail.provider',
+    span: 2,
     label: 'Mail provider',
     group: 'mail',
     type: 'select',
@@ -130,43 +138,47 @@ export const SETTING_SPECS: SettingSpec[] = [
   },
   {
     key: 'mail.apiKey',
+    span: 4,
     label: 'API key',
     group: 'mail',
     type: 'secret',
     envFallback: 'MAIL_API_KEY',
     showWhen: { key: 'mail.provider', is: ['resend', 'brevo'] },
-    hint: 'Without it email degrades: invite and reset links are printed to the server log',
+    hint: 'Without it, links go to the server log instead.',
   },
   {
     key: 'mail.smtpHost',
+    span: 4,
     label: 'SMTP host',
     group: 'mail',
     type: 'string',
     envFallback: 'SMTP_HOST',
     showWhen: { key: 'mail.provider', is: ['smtp'] },
-    hint: 'The relay to hand the message to',
   },
   {
     key: 'mail.smtpPort',
+    span: 2,
     label: 'SMTP port',
     group: 'mail',
     type: 'number',
     default: '587',
     envFallback: 'SMTP_PORT',
     showWhen: { key: 'mail.provider', is: ['smtp'] },
-    hint: '587 and 25 start in the clear and upgrade with STARTTLS; 465 is TLS from the first byte',
+    hint: '465 is TLS; 587 and 25 use STARTTLS.',
   },
   {
     key: 'mail.smtpUser',
+    span: 2,
     label: 'SMTP username',
     group: 'mail',
     type: 'string',
     envFallback: 'SMTP_USER',
     showWhen: { key: 'mail.provider', is: ['smtp'] },
-    hint: 'Empty for a relay that authenticates by address rather than by login',
+    hint: 'Empty if the relay needs no login.',
   },
   {
     key: 'mail.smtpPassword',
+    span: 2,
     label: 'SMTP password',
     group: 'mail',
     type: 'secret',
@@ -175,17 +187,19 @@ export const SETTING_SPECS: SettingSpec[] = [
   },
   {
     key: 'mail.from',
+    span: 2,
     label: 'From address',
     group: 'mail',
     type: 'string',
     envFallback: 'MAIL_FROM',
-    hint: 'The address mail is sent as. The provider has to have verified it, or it is rejected or filed as spam',
+    hint: 'Must be verified at the provider.',
   },
-  { key: 'mail.fromName', label: 'From name', group: 'mail', type: 'string', default: 'AgentLodge' },
+  { key: 'mail.fromName', label: 'From name', group: 'mail', type: 'string', span: 2, default: 'AgentLodge' },
   {
     // Three uses: the invite link, the password-reset link, and the link in a quota
     // warning email — all email, hence this group
     key: 'app.baseUrl',
+    span: 2,
     label: 'Site address',
     group: 'mail',
     type: 'string',
@@ -216,23 +230,26 @@ export const SETTING_SPECS: SettingSpec[] = [
   // Quota
   {
     key: 'quota.defaultTokenLimit',
+    span: 2,
     label: 'Default quota for new users',
     group: 'quota',
     type: 'number',
     scale: 1_000_000,
     unit: 'M',
-    hint: 'Millions of billable tokens per period. Empty means unlimited.',
+    hint: 'Millions of billable tokens per period; empty is unlimited.',
   },
   {
     key: 'quota.anchorDayOfMonth',
+    span: 2,
     label: 'Monthly reset day',
     group: 'quota',
     type: 'number',
     default: '1',
-    hint: '1–31. A billing period need not start on the 1st; a month without that day falls back to its last (e.g. the 31st in February).',
+    hint: '1–31. A month without that day uses its last.',
   },
   {
     key: 'quota.anchorDayOfWeek',
+    span: 2,
     label: 'Weekly reset day',
     group: 'quota',
     type: 'number',
@@ -241,27 +258,30 @@ export const SETTING_SPECS: SettingSpec[] = [
   },
   {
     key: 'quota.anchorHour',
+    span: 2,
     label: 'Reset hour',
     group: 'quota',
     type: 'number',
     default: '0',
-    hint: '0–23, in the server\'s local timezone. Used by the daily, weekly and monthly periods alike.',
+    hint: '0–23, server time.',
   },
   {
     key: 'quota.weightCacheRead',
+    span: 2,
     label: 'Cache-hit weight',
     group: 'quota',
     type: 'number',
     default: '0.1',
-    hint: 'Cache reads cost less than ordinary input; this is the conversion factor',
+    hint: 'Multiplier for cache reads.',
   },
   {
     key: 'quota.weightOutput',
+    span: 2,
     label: 'Output weight',
     group: 'quota',
     type: 'number',
     default: '1.5',
-    hint: 'Output tokens cost more than input; this is the conversion factor',
+    hint: 'Multiplier for output tokens.',
   },
 
   // agent
@@ -287,19 +307,21 @@ export const SETTING_SPECS: SettingSpec[] = [
      * Codex, say. Empty leaves it to the CLI's own default.
      */
     key: 'agent.claude.defaultModel',
+    span: 3,
     label: 'Default model for Claude',
     group: 'agents',
     type: 'string',
     default: '',
-    hint: 'Used when a conversation picks no model. It has to be one of the configured models. Empty leaves the choice to the CLI.',
+    hint: 'Empty leaves it to the CLI.',
   },
   {
     key: 'agent.codex.defaultModel',
+    span: 3,
     label: 'Default model for Codex',
     group: 'agents',
     type: 'string',
     default: '',
-    hint: 'Used when a conversation picks no model. It has to be one of the configured models. Empty leaves the choice to the CLI.',
+    hint: 'Empty leaves it to the CLI.',
   },
   {
     /*
