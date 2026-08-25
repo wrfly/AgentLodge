@@ -938,9 +938,19 @@ export const admin = {
   /**
    * Credentials the credential manager holds. `configured: false` means no such service
    * is running for this deployment, and the console offers only a typed key or a file.
+   *
+   * `store.ok === false` means that service cannot write its own state file: the
+   * credentials below still work, and a restart comes back without whatever changed
+   * since. It is reloaded after every change made here, so it is also how a delete or a
+   * sign-in reports that it did not reach disk.
    */
   credentials: () =>
-    request<{ configured: boolean; credentials: Credential[]; error?: string }>('/api/admin/credentials'),
+    request<{
+      configured: boolean;
+      credentials: Credential[];
+      error?: string;
+      store?: { ok: boolean; error?: string };
+    }>('/api/admin/credentials'),
   /** Key files the credential manager can read; passing a path also checks that one */
   credentialFiles: (path?: string) =>
     request<KeyFileListing>(

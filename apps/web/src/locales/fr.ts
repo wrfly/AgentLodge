@@ -538,6 +538,7 @@ export const fr: Record<string, string> = {
   '{id} is not in the credential manager any more, so requests are refused': "{id} n'est plus dans le credential-manager : les requêtes sont refusées",
   'read from a file': 'lu depuis un fichier',
   'The credential manager is not running, so no upstream can authenticate. Start that service and its credentials appear here.': 'Le credential-manager ne tourne pas, aucun amont ne peut donc s\'authentifier. Démarrez ce service et ses identifiants apparaîtront ici.',
+  'The credential manager cannot write its store, so anything changed here lives only in memory and a restart loses it. {error}': 'Le credential-manager ne peut pas écrire son stockage : ce qui est modifié ici ne vit qu\'en mémoire et sera perdu au redémarrage. {error}',
   'Read a key from a file': 'Lire une clé depuis un fichier',
   'Path': 'Chemin',
   'Readable directories: {roots}. Set CREDENTIAL_FILE_ROOTS on the credential manager to add others.': 'Répertoires lisibles : {roots}. Pour en ajouter, réglez CREDENTIAL_FILE_ROOTS sur le credential-manager.',

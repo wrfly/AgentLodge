@@ -565,6 +565,7 @@ export const ja: Record<string, string> = {
   '{id} is not in the credential manager any more, so requests are refused': 'credential-manager に {id} はもうありません。リクエストは拒否されます',
   'read from a file': 'ファイルから読み取り',
   'The credential manager is not running, so no upstream can authenticate. Start that service and its credentials appear here.': 'credential-manager が動いていないため、どのアップストリームも認証できません。このサービスを起動すると認証情報がここに表示されます。',
+  'The credential manager cannot write its store, so anything changed here lives only in memory and a restart loses it. {error}': 'credential-manager が自身のストアに書き込めません。ここでの変更はメモリ上にしか残らず、再起動すると失われます。{error}',
   'Read a key from a file': 'ファイルから key を読む',
   'Path': 'パス',
   'Readable directories: {roots}. Set CREDENTIAL_FILE_ROOTS on the credential manager to add others.': '読み取り可能なディレクトリ：{roots}。他を追加するには credential-manager の CREDENTIAL_FILE_ROOTS を設定します。',

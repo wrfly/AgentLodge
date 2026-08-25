@@ -347,7 +347,12 @@ function credentialSource(source: string, t: ReturnType<typeof useT>): string {
  */
 function CredentialsCard() {
   const t = useT();
-  const [state, setState] = useState<{ configured: boolean; rows: Credential[]; error?: string } | null>(null);
+  const [state, setState] = useState<{
+    configured: boolean;
+    rows: Credential[];
+    error?: string;
+    store?: { ok: boolean; error?: string };
+  } | null>(null);
   const [panel, setPanel] = useState<'login' | 'key' | 'file' | 'import' | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -355,7 +360,7 @@ function CredentialsCard() {
   const load = () =>
     admin
       .credentials()
-      .then((d) => setState({ configured: d.configured, rows: d.credentials, error: d.error }))
+      .then((d) => setState({ configured: d.configured, rows: d.credentials, error: d.error, store: d.store }))
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
 
   useEffect(() => { void load(); }, []);
@@ -383,6 +388,18 @@ function CredentialsCard() {
     >
       {err && <Banner tone="error">{err}</Banner>}
       {state.error && <Banner tone="error">{state.error}</Banner>}
+      {/*
+        Not an error: everything below works. What stopped working is durability,
+        and the only moment anyone would notice is right after making a change —
+        which is when this list is reloaded.
+      */}
+      {state.store?.ok === false && (
+        <Banner tone="warn">
+          {t('The credential manager cannot write its store, so anything changed here lives only in memory and a restart loses it. {error}', {
+            error: state.store.error ?? '',
+          })}
+        </Banner>
+      )}
 
       {!state.configured ? (
         <div className="text-[12px] leading-relaxed text-faint">
