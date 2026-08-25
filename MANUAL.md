@@ -901,6 +901,12 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 > 但 `USE_CONTAINERS=false` 时 agent 直接跑在宿主机上，工作目录只是路径隔离而非安全隔离。
 > **公网部署必须开容器隔离**，见下。
 
+**Skill 工具是关掉的**（启动 CLI 时带 `--disallowedTools Skill`）。一个技能会把整个目录
+当作一条 tool_result 塞进当轮上下文——CLI 自带的 `claude-api` 是 65 个文件、约 25 万 token，
+按用户配额计费，而且那一轮多半直接以「Prompt is too long」结束。自带的十个技能都是在代码仓库里
+干活用的，网页对话的用户也没有装自己技能的入口。用自己 CLI 接进来的用户不受影响——那是他们的
+客户端，我们的启动参数管不着。
+
 ## 下一步
 
 | 里程碑 | 内容 |

@@ -379,6 +379,9 @@ const PASSTHROUGH_EXACT = new Set(['user-agent', 'x-app', 'x-claude-code-session
  */
 const CLI_USER_AGENT = 'claude-cli/2.1.224 (external, sdk-cli)';
 
+/** What an HTTP client calls itself when nobody has given it a name */
+const BARE_RUNTIME = /^(node|undici|node-fetch|got|axios)(\/|$)/i;
+
 /**
  * The SDK's description of itself, which Claude Code sends because it is built on that SDK.
  *
@@ -510,7 +513,10 @@ export function outboundHeaders(
      * gain. DeepSeek's compatibility layer, reached on this same wire, gets neither.
      */
     if (oauth) {
-      h['user-agent'] ??= CLI_USER_AGENT;
+      // `??=` is not enough for this one: Node's fetch puts `user-agent: node` on every
+      // request it makes, so our own callers arrive with the slot already filled by a
+      // runtime that is not a client. A real client's name is left alone.
+      if (!h['user-agent'] || BARE_RUNTIME.test(h['user-agent'])) h['user-agent'] = CLI_USER_AGENT;
       h['x-app'] ??= 'cli';
       h['x-claude-code-session-id'] ??= session || crypto.randomUUID();
       for (const [k, v] of Object.entries(STAINLESS)) h[k] ??= v;

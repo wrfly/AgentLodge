@@ -190,6 +190,23 @@ console.log('\n=== The questions a name is made from ===');
   ok('another user gets nothing', recap.questions(long, 'someone-else') === '');
 }
 
+console.log('\n=== A short question is still a question ===');
+{
+  const short = convs.create({ userId, agent: 'claude', title: '美国总统是谁' });
+  run(
+    `insert into messages (id, conversation_id, seq, role, blocks, aborted, created_at)
+     values (?, ?, 0, 'user', ?, 0, ?)`,
+    'm-short',
+    short.id,
+    JSON.stringify([{ kind: 'text', blockId: 0, text: '美国总统是谁' }]),
+    new Date().toISOString(),
+  );
+  ok('six characters are enough to name it from', recap.questions(short.id, userId) === '美国总统是谁');
+
+  const empty = convs.create({ userId, agent: 'claude', title: 'empty' });
+  ok('a conversation with nothing said in it is not', recap.questions(empty.id, userId) === '');
+}
+
 console.log('\n=== A title out of what the model answered ===');
 {
   ok('a decorated one is cleaned up', recap.cleanTitle('## "Container mount path".') === 'Container mount path');

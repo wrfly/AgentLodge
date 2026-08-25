@@ -89,7 +89,24 @@ function flattenToolResult(content: unknown): string {
   return JSON.stringify(content, null, 2);
 }
 
-function runTurn(o: RunOptions): RunningTurn {
+/**
+ * The command line for one turn.
+ *
+ * Its own function so the arguments can be read back in a test. The one that has to stay
+ * is `--disallowedTools Skill`: a skill loads its whole directory into the turn as one
+ * tool result, and the CLI's bundled `claude-api` is 65 files and about 250k tokens of
+ * them. That arrived once, billed against the user's quota, and then the turn failed on
+ * the CLI's own context check with "Prompt is too long".
+ *
+ * The ten skills it ships are for working inside a code repository — a security review of
+ * a branch, generating CLAUDE.md, a chart design system — and three of them do things a
+ * user of this service should not be doing at all: editing the harness settings, widening
+ * the permission allowlist, and running a prompt on a timer. Nobody chatting in the web
+ * app has a way to install one of their own, so the tool has nothing to offer here.
+ *
+ * Somebody's own CLI, pointed at the gateway, is their client and keeps its skills.
+ */
+export function turnArgs(o: RunOptions): string[] {
   const args = [
     '-p',
     o.prompt,
@@ -99,10 +116,17 @@ function runTurn(o: RunOptions): RunningTurn {
     '--verbose',
     '--permission-mode',
     config.permissionMode,
+    '--disallowedTools',
+    'Skill',
   ];
   if (o.model) args.push('--model', o.model);
   if (o.effort) args.push('--effort', o.effort);
   if (o.resumeSessionId) args.push('--resume', o.resumeSessionId);
+  return args;
+}
+
+function runTurn(o: RunOptions): RunningTurn {
+  const args = turnArgs(o);
 
   // Without this Claude Code derives its memory directory from the working directory,
   // which here is one per conversation — so every conversation would start blank. See memory.ts.
