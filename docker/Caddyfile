@@ -83,12 +83,25 @@
 	# application's HTML and a 200.
 	handle /landing/* {
 		root * /srv
+		header Cache-Control "no-cache"
 		file_server
 	}
 
 	# Everything else is frontend static assets, with the SPA as the fallback
 	handle {
 		root * /srv
+
+		# Caddy sends no Cache-Control of its own, and a browser given none guesses a
+		# freshness lifetime from how old the file is. That guess applies to index.html,
+		# which is the one file that must not be reused: it names the hashed asset files,
+		# so a held copy runs the whole previous build without asking the server. The
+		# assets themselves are the opposite case — the name changes when the contents do,
+		# so a copy is good for as long as it is kept.
+		@hashed path /assets/*
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+		@shell not path /assets/*
+		header @shell Cache-Control "no-cache"
+
 		file_server
 		try_files {path} /index.html
 	}

@@ -1208,6 +1208,11 @@ compose 没有别的理由知道这个镜像存在。`docker compose ps -a` 里�
 把 app / gateway 的 `user:` 和 `group_add:` 去掉即可）。五个服务全部默认启动，包括
 credential-manager。
 
+升级是 `docker compose pull` 之后再 `up -d`。前端不用清浏览器缓存：`index.html` 带
+`Cache-Control: no-cache`，每次打开都回源核对；`/assets/` 下的文件名带内容 hash，内容变了
+名字跟着变，所以按一年 `immutable` 缓存。这两个头都不发的话，浏览器会照文件的新旧自己猜一个
+过期时间，猜中了就继续用手上那份 `index.html`，而它指着哪几个 js，跑的就是哪一版前端。
+
 **fork 友好**：流水线用的 namespace 是 `github.repository_owner`，不是写死的 `wrfly`。
 fork 之后什么都不用改，镜像会发到你自己的账号下 —— 在仓库 Settings → Secrets 里配好
 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` 即可（**用访问令牌，不要用账号密码**：
