@@ -326,13 +326,33 @@ func (a *manager) refreshLock(id string) *sync.Mutex {
 }
 
 // releaseRefreshLock forgets the per-credential lock for an id, so the map does
-// not grow for every credential that ever existed. Safe against a resolve that
-// is mid-refresh: that goroutine already holds a reference to the *sync.Mutex
-// and releases it normally; only future callers would have created a new one.
+// not grow for every credential that ever existed.
+//
+// Only when nothing holds it. A resolve that is mid-refresh holds this exact
+// mutex, and deleting the entry there hands the next caller for the same id a
+// brand new one — after which two refreshes of one credential can run at once,
+// which is the single-flight guarantee this lock exists for.
+//
+// TryLock closes the wide window (a whole token-endpoint round trip) and not the
+// narrow one: a resolve that has taken the pointer but not yet locked it is
+// indistinguishable from an idle lock. What keeps that harmless is the pointer
+// check in resolve — a refresh whose credential was replaced discards its result
+// rather than storing it — so the cost is a redundant call upstream, not a
+// corrupted store.
+//
+// An entry kept here stays for the life of the process: the id is out of the
+// store, so no later remove reaches this function. That is one stranded mutex
+// per credential removed mid-refresh, which is the cheaper side of the trade.
 func (a *manager) releaseRefreshLock(id string) {
 	a.refreshMu.Lock()
+	defer a.refreshMu.Unlock()
+
+	l, ok := a.refreshLocks[id]
+	if !ok || !l.TryLock() {
+		return
+	}
+	l.Unlock()
 	delete(a.refreshLocks, id)
-	a.refreshMu.Unlock()
 }
 
 // storeBlock is what a response says about the store's durability, in the one

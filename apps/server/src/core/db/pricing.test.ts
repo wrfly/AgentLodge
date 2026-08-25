@@ -69,5 +69,6 @@ console.log('\n=== per-provider pricing resolves, unmatched falls to catch-all =
   ok('an unmatched provider falls to the global catch-all', generic?.model === '*', JSON.stringify(generic));
 }
 
+fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

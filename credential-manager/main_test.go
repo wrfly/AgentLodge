@@ -160,6 +160,14 @@ func (f *fakeProvider) refresh(_ context.Context, pair *tokenPair) (*tokenPair, 
 	return pair, nil
 }
 
+// stored is a.creds[id] read the way every non-test reader does it, under the
+// store lock. Reading the map bare is what the race detector is there to catch.
+func stored(a *manager, id string) *credential {
+	a.lock()
+	defer a.unlock()
+	return a.creds[id]
+}
+
 // resolveToken is the fake provider's credential, resolved. newManager seeds it
 // from the provider's load(), so "fake" is the id as much as it is the kind.
 func resolveToken(a *manager, force bool) (*tokenPair, error) {
@@ -434,9 +442,9 @@ func TestStoreKeepsPastedKeysAndForgetsThem(t *testing.T) {
 	}
 
 	// Re-pasting a rotated key is an update, not a second credential.
-	first := a.creds["paid"].CreatedAt
+	first := stored(a, "paid").CreatedAt
 	a.put(&credential{ID: "paid", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-ant-api03-rotated"})
-	if a.creds["paid"].CreatedAt != first {
+	if stored(a, "paid").CreatedAt != first {
 		t.Fatal("an update must keep the credential's creation time")
 	}
 	if len(a.list()) != 1 {
@@ -458,14 +466,14 @@ func TestSeedFromHostNeverOverwritesWhatIsStored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newManager: %v", err)
 	}
-	if got := a.creds["fake"].Source; got != sourceHostFile {
+	if got := stored(a, "fake").Source; got != sourceHostFile {
 		t.Fatalf("source = %q, want %q", got, sourceHostFile)
 	}
 
 	a.put(&credential{ID: "fake", Kind: "fake", Source: sourceLogin, Token: &tokenPair{AccessToken: "SIGNED-IN", RefreshToken: "RT2"}})
 	a.seedFromHost()
 
-	if got := a.creds["fake"].Token.AccessToken; got != "SIGNED-IN" {
+	if got := stored(a, "fake").Token.AccessToken; got != "SIGNED-IN" {
 		t.Fatalf("access token = %q, want the signed-in one", got)
 	}
 }
@@ -780,7 +788,7 @@ func TestRemoveSurfacesStoreDegradationInsteadOfFailing(t *testing.T) {
 	if !a.remove("gone") {
 		t.Fatal("remove must report true even when the store cannot be written")
 	}
-	if _, ok := a.creds["gone"]; ok {
+	if stored(a, "gone") != nil {
 		t.Fatal("the credential must be gone from memory")
 	}
 
@@ -914,6 +922,215 @@ func TestConsoleResponsesCarryTheStoreState(t *testing.T) {
 	}
 	if listed := store(http.MethodGet, "/credentials"); listed["ok"] != false {
 		t.Fatalf("the reload after it must report it too, got %v", listed)
+	}
+}
+
+// A subscription replaced by a pasted key while a refresh was in flight must
+// end up served as the key — never refreshed past its replacement. Two things
+// would otherwise go wrong, at two moments: a caller that re-reads after
+// waiting reports "holds no token; sign in or import it again" about what is
+// now a key needing neither; and the refresh that was already upstream grafts
+// the old subscription's tokens onto the new credential when it lands.
+func TestResolveServesAReplacementInsteadOfRefreshingPastIt(t *testing.T) {
+	now := time.Now()
+	inRefresh := make(chan struct{})
+	holdRefresh := make(chan struct{})
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "OLD", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			close(inRefresh)
+			<-holdRefresh // keep the first resolve upstream until the swap below
+			return &tokenPair{AccessToken: "NEW", RefreshToken: "RT2", ExpiresAt: now.Add(time.Hour).UnixMilli()}, nil
+		},
+	}
+	a, _ := newManager(config{refreshLead: time.Minute}, map[string]provider{"fake": fp})
+
+	type answer struct {
+		key   string // what secret() served, "" on error
+		isErr bool
+	}
+	resolve := func() <-chan answer {
+		out := make(chan answer, 1)
+		go func() {
+			c, err := a.resolve(context.Background(), "fake", true)
+			if err != nil {
+				out <- answer{isErr: true}
+				return
+			}
+			value, err := c.secret()
+			if err != nil {
+				out <- answer{isErr: true}
+				return
+			}
+			out <- answer{key: value}
+		}()
+		return out
+	}
+
+	first := resolve()
+	<-inRefresh // the first resolve holds the lock and is talking to the endpoint
+
+	second := resolve() // queues behind it, having captured the OLD token
+
+	// While both are in flight, replace the subscription with a pasted key.
+	if err := a.putDurable(&credential{ID: "fake", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-key"}); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	close(holdRefresh)
+
+	for _, r := range []struct {
+		name string
+		ch   <-chan answer
+	}{{"first (was upstream)", first}, {"second (was queued)", second}} {
+		got := <-r.ch
+		if got.isErr {
+			t.Fatalf("%s: resolve errored instead of serving the replacement", r.name)
+		}
+		if got.key != "sk-key" {
+			t.Fatalf("%s: served %q, want the pasted key", r.name, got.key)
+		}
+	}
+
+	// And nothing of the old subscription may have been grafted onto it.
+	a.lock()
+	stored := a.creds["fake"]
+	a.unlock()
+	if stored == nil || stored.Kind != kindAPIKey || stored.Token != nil {
+		t.Fatalf("stored credential is %+v, want an api-key with no token", stored)
+	}
+}
+
+// The queued half of the same race. The sibling test above covers the caller
+// that was already upstream; this one waits on the refresh lock, so it re-reads
+// the store *after* the swap — and without the kind check on that re-read it
+// falls straight through to the token path and reports "holds no token" about a
+// pasted key that needs none.
+//
+// Deterministic on purpose: the test holds the credential's refresh lock itself,
+// which is the one place a queued caller parks. Letting two resolves race for
+// that position leaves it to chance whether either reaches this branch.
+func TestResolveServesAReplacementToACallerThatQueued(t *testing.T) {
+	now := time.Now()
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "OLD", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			t.Error("a credential replaced by a pasted key must be served, not refreshed")
+			return pair, nil
+		},
+	}
+	a, _ := newManager(config{refreshLead: time.Minute}, map[string]provider{"fake": fp})
+
+	// Park a resolve exactly where one waiting behind an in-flight refresh sits:
+	// past the read that found the subscription, blocked on the refresh lock.
+	rl := a.refreshLock("fake")
+	rl.Lock()
+
+	served := make(chan string, 1)
+	failed := make(chan error, 1)
+	go func() {
+		c, err := a.resolve(context.Background(), "fake", true)
+		if err != nil {
+			failed <- err
+			return
+		}
+		value, err := c.secret()
+		if err != nil {
+			failed <- err
+			return
+		}
+		served <- value
+	}()
+	time.Sleep(50 * time.Millisecond) // long enough to be past the read and on the lock
+
+	// Replace the subscription with a pasted key, then let the queued call run.
+	if err := a.putDurable(&credential{ID: "fake", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-key"}); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	rl.Unlock()
+
+	select {
+	case err := <-failed:
+		t.Fatalf("resolve: %v", err)
+	case value := <-served:
+		if value != "sk-key" {
+			t.Fatalf("served %q, want the pasted key", value)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the queued resolve never returned")
+	}
+}
+
+// resolve promises a credential with a usable secret. publicToken leans on that
+// ("this cannot fail again for a credential it just returned") and answers 200
+// with an empty accessToken when it is not true — so the replacement path has to
+// hold to the promise as well, not just hand back whatever the store now holds.
+func TestResolveErrorsWhenTheReplacementHasNoUsableSecret(t *testing.T) {
+	now := time.Now()
+	inRefresh := make(chan struct{})
+	holdRefresh := make(chan struct{})
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "OLD", RefreshToken: "RT", ExpiresAt: now.Add(-time.Second).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			close(inRefresh)
+			<-holdRefresh
+			return &tokenPair{AccessToken: "NEW", RefreshToken: "RT2", ExpiresAt: now.Add(time.Hour).UnixMilli()}, nil
+		},
+	}
+	a, _ := newManager(config{refreshLead: time.Minute}, map[string]provider{"fake": fp})
+
+	failed := make(chan error, 1)
+	served := make(chan *credential, 1)
+	go func() {
+		c, err := a.resolve(context.Background(), "fake", false)
+		if err != nil {
+			failed <- err
+			return
+		}
+		served <- c
+	}()
+	<-inRefresh
+
+	// Replaced, while the token endpoint is answering, by something that holds
+	// nothing usable. An empty key reaches the store through any path that does
+	// not go past the handler's validation — a restored state file, a future
+	// caller of put.
+	if err := a.putDurable(&credential{ID: "fake", Kind: kindAPIKey, Source: sourceTyped, APIKey: ""}); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	close(holdRefresh)
+
+	select {
+	case <-failed: // what it must do
+	case c := <-served:
+		value, _ := c.secret()
+		t.Fatalf("resolve returned a credential whose secret is %q instead of an error", value)
+	case <-time.After(2 * time.Second):
+		t.Fatal("resolve never returned")
+	}
+}
+
+// Pruning the per-credential refresh lock must not take one out from under a
+// resolve that is using it: the next caller for that id would be handed a brand
+// new mutex, and two refreshes of one credential could then run at once — which
+// is the whole thing this lock prevents.
+func TestRemoveKeepsARefreshLockThatIsHeld(t *testing.T) {
+	a, err := newManager(config{refreshLead: time.Minute}, map[string]provider{})
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+	if err := a.put(&credential{ID: "busy", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-ant-api03-abcdef"}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	held := a.refreshLock("busy")
+	held.Lock() // stand-in for a resolve that is mid-refresh
+	defer held.Unlock()
+
+	if !a.remove("busy") {
+		t.Fatal("remove must report true")
+	}
+	if again := a.refreshLock("busy"); again != held {
+		t.Fatal("remove handed out a new refresh lock while the old one was still held")
 	}
 }
 
