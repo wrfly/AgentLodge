@@ -316,6 +316,26 @@ func dialUDS(t *testing.T, path string) *http.Client {
 	}
 }
 
+// tempSocket is a Unix socket path short enough to bind.
+//
+// Not t.TempDir(). A sockaddr_un path is capped — 104 bytes on macOS and the
+// BSDs, 108 on Linux — and on macOS the per-test temp directory spends almost
+// all of it before the filename: TMPDIR is a long /var/folders/... path and Go
+// appends the test's own name to it. Binding then fails with
+// "connect: invalid argument", which reads like a broken server rather than a
+// limit on the path, and made this suite look permanently red on macOS while
+// passing in CI. The shortest writable directory there is costs nothing.
+func tempSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "cm")
+	if err != nil {
+		// No /tmp, or nothing writable in it. Fall back and hope it fits.
+		return filepath.Join(t.TempDir(), "s.sock")
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "s.sock")
+}
+
 func TestUDSServerEndpoints(t *testing.T) {
 	now := time.Now()
 	fp := &fakeProvider{
@@ -325,7 +345,7 @@ func TestUDSServerEndpoints(t *testing.T) {
 		},
 	}
 
-	sock := filepath.Join(t.TempDir(), "credential-manager.sock")
+	sock := tempSocket(t)
 	cfg := config{socketPath: sock, refreshLead: time.Minute}
 	a, err := newManager(cfg, map[string]provider{"claude": fp})
 	if err != nil {
