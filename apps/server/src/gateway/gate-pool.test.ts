@@ -109,5 +109,29 @@ console.log('\n=== Ceiling changes must not defeat AIMD backoff ===');
   ok('a lower ceiling clamps the effective limit', a.stats().effectiveMax === 1, String(a.stats().effectiveMax));
 }
 
+console.log('\n=== Lower-then-raise must not punch through a backoff ===');
+{
+  // The trap an "effectiveMax vs ceiling" inference falls into: dip the ceiling
+  // to exactly where the backoff sits, so effectiveMax === ceiling, then raise
+  // it back. If the code keys on "equal to the old ceiling = not backing off",
+  // the raise resets the throttle. The flag must survive the round trip.
+  const pool = new GatePool({ ...cfg, maxConcurrency: 8 });
+  const a = pool.for('provider-a');
+
+  a.reportUpstream(429);
+  const narrowed = a.stats().effectiveMax; // 8 → 4
+  ok('a 429 narrows the gate', narrowed === 4, JSON.stringify(a.stats()));
+
+  // Dip to exactly the backed-off value.
+  pool.setMaxConcurrency(narrowed);
+  ok('lowering to the backoff value clamps', a.stats().effectiveMax === narrowed, JSON.stringify(a.stats()));
+
+  // Raise again. The backoff is still real — nothing has recovered — so the
+  // effective limit must stay put rather than jump to the raised ceiling.
+  pool.setMaxConcurrency(8);
+  ok('the ceiling is back up', a.stats().max === 8, String(a.stats().max));
+  ok('the backoff survives a lower-then-raise round trip', a.stats().effectiveMax === narrowed, JSON.stringify(a.stats()));
+}
+
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
