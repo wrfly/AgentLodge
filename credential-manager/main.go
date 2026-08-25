@@ -283,6 +283,12 @@ type manager struct {
 	// credentials, which is small and stable.
 	refreshMu    sync.Mutex
 	refreshLocks map[string]*sync.Mutex
+
+	// storeErr records the most recent persist failure, so /health can report
+	// that the on-disk store is degraded (changes live only in memory until the
+	// next successful persist). Written under a.mu by persist(); nil means the
+	// last write reached disk (or persistence is off by configuration).
+	storeErr error
 }
 
 func newManager(cfg config, provs map[string]provider) (*manager, error) {
@@ -317,6 +323,16 @@ func (a *manager) refreshLock(id string) *sync.Mutex {
 	l := &sync.Mutex{}
 	a.refreshLocks[id] = l
 	return l
+}
+
+// releaseRefreshLock forgets the per-credential lock for an id, so the map does
+// not grow for every credential that ever existed. Safe against a resolve that
+// is mid-refresh: that goroutine already holds a reference to the *sync.Mutex
+// and releases it normally; only future callers would have created a new one.
+func (a *manager) releaseRefreshLock(id string) {
+	a.refreshMu.Lock()
+	delete(a.refreshLocks, id)
+	a.refreshMu.Unlock()
 }
 
 // logf is every log line this service writes, so they all carry the same prefix.
@@ -408,7 +424,18 @@ func (a *manager) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			ready = true
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "ready": ready, "credentials": creds})
+	out := map[string]any{"status": "ok", "ready": ready, "credentials": creds}
+	// The store's durability is its own fact: "ready" says whether a credential
+	// is usable now, which a failed persist does not change. Say so separately.
+	a.lock()
+	storeErr := a.storeErr
+	a.unlock()
+	if storeErr != nil {
+		out["store"] = map[string]any{"ok": false, "error": storeErr.Error()}
+	} else {
+		out["store"] = map[string]any{"ok": true}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleCredentials lists, stores and forgets credentials.
@@ -491,12 +518,7 @@ func (a *manager) handleCredentials(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		removed, err := a.remove(id)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-		if !removed {
+		if !a.remove(id) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "no credential " + id})
 			return
 		}

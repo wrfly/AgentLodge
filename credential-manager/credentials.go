@@ -226,17 +226,28 @@ func (a *manager) put(c *credential) error {
 	return a.persist()
 }
 
-// remove deletes a credential. Reports whether there was one; a non-nil error
-// means the delete happened in memory but failed to reach disk.
-func (a *manager) remove(id string) (bool, error) {
+// remove deletes a credential. Reports whether there was one.
+//
+// The removal is in-memory and immediate: the credential stops being usable the
+// moment the map no longer holds it, which is the security-relevant effect and
+// what the operator asked for. A persist failure only means a restart could
+// bring it back, so instead of failing the call (there is nothing to retry
+// that would help), it is recorded for /health and logged.
+func (a *manager) remove(id string) bool {
 	a.lock()
 	defer a.unlock()
 
 	if _, ok := a.creds[id]; !ok {
-		return false, nil
+		return false
 	}
 	delete(a.creds, id)
-	return true, a.persist()
+	if err := a.persist(); err != nil {
+		logf("removed %s in memory, but the store could not be written: %v", id, err)
+	}
+	// The credential is gone, so its refresh lock is dead weight; drop it so the
+	// map does not grow for every id that ever existed.
+	a.releaseRefreshLock(id)
+	return true
 }
 
 func (a *manager) get(id string) (*credential, bool) {
@@ -256,27 +267,22 @@ func (a *manager) get(id string) (*credential, bool) {
 // refresh, and that comes back as an error the console can show.
 func (a *manager) resolve(ctx context.Context, id string, force bool) (*credential, error) {
 	a.lock()
-	c, ok := a.creds[id]
+	first, ok := a.creds[id]
 	a.unlock()
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", errNoCredential, id)
 	}
 
 	// Nothing to mint for these two: one carries the value, the other reads it.
-	if c.Kind == kindAPIKey || c.Kind == kindKeyFile {
-		if _, err := c.secret(); err != nil {
+	if first.Kind == kindAPIKey || first.Kind == kindKeyFile {
+		if _, err := first.secret(); err != nil {
 			return nil, fmt.Errorf("credential %q: %w", id, err)
 		}
-		return c, nil
+		return first, nil
 	}
 
-	if c.Token == nil {
+	if first.Token == nil {
 		return nil, fmt.Errorf("credential %q holds no token; sign in or import it again", id)
-	}
-
-	p, ok := a.provs[c.Kind]
-	if !ok {
-		return nil, fmt.Errorf("credential %q has kind %q, which this build cannot refresh", id, c.Kind)
 	}
 
 	// Serialise the refresh per credential. Without this, two concurrent calls
@@ -285,19 +291,21 @@ func (a *manager) resolve(ctx context.Context, id string, force bool) (*credenti
 	// endpoint, and — because the endpoint rotates the refresh token — the last
 	// one to swap stores a refresh token that the other already spent. That
 	// leaves the credential permanently broken with an "invalid_grant".
-	queued := c.Token
+	queued := first.Token
 	rl := a.refreshLock(id)
 	rl.Lock()
 	defer rl.Unlock()
 
 	// Re-read under the per-credential lock: another request may have refreshed
-	// while we queued behind it, and that fresh token must be answered as is.
-	// The store lock guards the map read itself.
+	// (or re-imported / re-signed-in) while we queued behind it. Everything from
+	// here on — the provider, the kind, the token — is taken from this current
+	// snapshot, not from whatever was in the store when the call began.
 	a.lock()
-	if cur, ok := a.creds[id]; ok && cur.Token != nil {
-		c = cur
-	}
+	c, ok := a.creds[id]
 	a.unlock()
+	if !ok {
+		return nil, fmt.Errorf("%w: %s (removed while it was being renewed)", errNoCredential, id)
+	}
 
 	// A token other than the one we queued with means the refresh we were
 	// waiting for has already landed, and that answers a force caller as well:
@@ -306,11 +314,23 @@ func (a *manager) resolve(ctx context.Context, id string, force bool) (*credenti
 	// instead of collapsing it — ten proxied requests that hit 401 together
 	// each rotate the refresh token in turn, and every rotation but the last
 	// is spent the moment the next one lands.
-	if c.Token != queued {
+	if c.Token != nil && c.Token != queued {
 		return c, nil
+	}
+	if c.Token == nil {
+		return nil, fmt.Errorf("credential %q holds no token; sign in or import it again", id)
 	}
 	if !force && !expired(c.Token, a.cfg.refreshLead) {
 		return c, nil
+	}
+
+	// The provider is bound to the credential's kind from *this* snapshot, not
+	// the one read before waiting on the lock — a re-import or re-sign-in that
+	// changed the kind while we queued must not send the refresh to the wrong
+	// endpoint.
+	p, ok := a.provs[c.Kind]
+	if !ok {
+		return nil, fmt.Errorf("credential %q has kind %q, which this build cannot refresh", id, c.Kind)
 	}
 
 	refreshed, err := p.refresh(ctx, c.Token)
@@ -371,6 +391,7 @@ func (a *manager) seedFromHost() {
 		}
 		if err := a.put(&credential{ID: kind, Kind: kind, Source: sourceHostFile, Token: pair}); err != nil {
 			logf("%s: seeded in memory but not persisted: %v", kind, err)
+			continue
 		}
 		logf("%s: seeded from the mounted credentials file", kind)
 	}
@@ -390,7 +411,12 @@ func (a *manager) importFromHost(kind, id, label string) (*credential, error) {
 	}
 	c := &credential{ID: id, Kind: kind, Label: label, Source: sourceImport, Token: pair}
 	if err := a.put(c); err != nil {
-		return nil, fmt.Errorf("import %s: persist: %w", id, err)
+		// The import itself succeeded: the host's file was read and the refresh
+		// token is now in memory. Failing here would tell the operator the import
+		// failed while a working credential sits in memory and the mounted file
+		// is unchanged — a retry would just repeat the same write. Recorded for
+		// /health (put sets storeErr) and logged; serve the credential.
+		logf("imported %s in memory, but the store could not be written: %v", id, err)
 	}
 	return c, nil
 }
