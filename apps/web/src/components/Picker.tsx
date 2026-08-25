@@ -23,7 +23,8 @@ interface PickerProps {
    * The same options, arranged vendor → family → version. When given, the menu walks that
    * tree instead of listing everything: two upstreams' worth of names is not a list anybody
    * reads. Levels with a single child are skipped, so a vendor offering one model, or a
-   * family with one version, is picked where it is shown.
+   * family with one version, is picked where it is shown — and a catalogue with one vendor
+   * opens inside it, since naming it once above a single row is not a choice.
    */
   vendors?: Array<ModelVendor<PickerOption>>;
 }
@@ -120,14 +121,25 @@ export function Picker({
     };
   }, [open, path]);
 
-  // Walking the tree only earns its place when there is more than one thing at the top
-  const tree = useMemo(
-    () => (vendors && vendors.length > 1 ? vendors : null),
-    [vendors],
-  );
+  /*
+   * The tree earns its place when it has more than one row to show at the top. Several
+   * vendors is one such case; a single vendor with several families is the other, and it is
+   * the common one — a deployment with only Claude behind it lists ten names, which is
+   * exactly the list the tree exists to fold. There the vendor is not a level: the menu
+   * opens inside it and reads opus / sonnet / haiku.
+   */
+  const tree = useMemo(() => {
+    if (!vendors?.length) return null;
+    if (vendors.length > 1) return vendors;
+    return (vendors[0]?.families.length ?? 0) > 1 ? vendors : null;
+  }, [vendors]);
 
-  const vendor = tree?.find((v) => v.label === path[0]) ?? null;
-  const family = vendor?.families.find((f) => f.label === path[1]) ?? null;
+  /** The level the menu opens at, which `path` is relative to */
+  const root = tree?.length === 1 ? [tree[0]!.label] : [];
+  const full = [...root, ...path];
+
+  const vendor = tree?.find((v) => v.label === full[0]) ?? null;
+  const family = vendor?.families.find((f) => f.label === full[1]) ?? null;
 
   /** Whether the current value is somewhere under this vendor or family */
   const holds = (node: { models: PickerOption[] }): boolean =>
@@ -183,7 +195,7 @@ export function Picker({
                     className="flex w-full items-center gap-1.5 border-b border-line px-3 py-1.5 text-left text-[11px] text-faint hover:bg-elevated hover:text-muted"
                   >
                     <ChevronLeft size={12} className="shrink-0" />
-                    <span className="truncate font-mono">{path.join(' / ')}</span>
+                    <span className="truncate font-mono">{full.join(' / ')}</span>
                   </button>
                 )}
 
@@ -204,7 +216,7 @@ export function Picker({
                             label={f.label}
                             sub={holds(f) ? value : t('{n} versions', { n: f.models.length })}
                             ticked={holds(f)}
-                            onOpen={() => setPath([vendor.label, f.label])}
+                            onOpen={() => setPath(root.length ? [f.label] : [vendor.label, f.label])}
                           />
                         ),
                       )
