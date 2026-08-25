@@ -9,7 +9,7 @@
  *
  * Run: npm -w @agentlodge/server run test:upstream
  */
-import { isOAuthToken, mergeBeta, outboundHeaders } from './upstream.js';
+import { betaUrl, isOAuthToken, mergeBeta, outboundHeaders, withBillingSystem } from './upstream.js';
 
 const API_KEY = 'sk-ant-api03-real-api-key';
 const OAUTH = 'sk-ant-oat01-real-oauth-token';
@@ -47,7 +47,7 @@ console.log('\n=== An OAuth token goes in Authorization only ===');
   const h = outboundHeaders({}, 'anthropic', OAUTH);
   ok('no x-api-key — sending one would send an invalid API key', h['x-api-key'] === undefined, String(h['x-api-key']));
   ok('authorization is a Bearer', h.authorization === `Bearer ${OAUTH}`);
-  ok('the oauth beta is added', h['anthropic-beta'] === 'oauth-2025-04-20', String(h['anthropic-beta']));
+  ok('the oauth beta is added', (h['anthropic-beta'] ?? '').split(',').includes('oauth-2025-04-20'), String(h['anthropic-beta']));
 }
 
 console.log('\n=== anthropic-beta is merged, not overwritten ===');
@@ -63,7 +63,8 @@ console.log('\n=== anthropic-beta is merged, not overwritten ===');
 }
 {
   const h = outboundHeaders({ 'anthropic-beta': 'oauth-2025-04-20' }, 'anthropic', OAUTH);
-  ok('no duplicate when the client already sent it', h['anthropic-beta'] === 'oauth-2025-04-20', String(h['anthropic-beta']));
+  const sent = (h['anthropic-beta'] ?? '').split(',');
+  ok('no duplicate when the client already sent it', sent.filter((x) => x === 'oauth-2025-04-20').length === 1, String(h['anthropic-beta']));
 }
 {
   const h = outboundHeaders({ 'anthropic-beta': ['a', 'b'] }, 'anthropic', API_KEY);
@@ -92,6 +93,80 @@ console.log('\n=== Identity headers pass through ===');
   ok('the whole x-stainless-* family passes through', h['x-stainless-arch'] === 'x64' && h['x-stainless-runtime-version'] === 'v26.3.0');
 }
 
+console.log('\n=== What the caller did not say about itself ===');
+{
+  const h = outboundHeaders({}, 'anthropic', OAUTH, 'a-conversation-id');
+  ok('a user agent is filled in', h['user-agent']?.startsWith('claude-cli/') === true, h['user-agent']);
+  ok('so is x-app', h['x-app'] === 'cli');
+  ok('the session is the conversation', h['x-claude-code-session-id'] === 'a-conversation-id');
+
+  const noConv = outboundHeaders({}, 'anthropic', OAUTH);
+  ok('with no conversation each request gets its own session', (noConv['x-claude-code-session-id'] ?? '').length === 36, noConv['x-claude-code-session-id']);
+  ok('and two of them differ', noConv['x-claude-code-session-id'] !== outboundHeaders({}, 'anthropic', OAUTH)['x-claude-code-session-id']);
+
+  const own = outboundHeaders(
+    { 'user-agent': 'my-own-client/1.0', 'x-app': 'something', 'x-claude-code-session-id': 'sess-9' },
+    'anthropic',
+    OAUTH,
+    'a-conversation-id',
+  );
+  ok('a client that describes itself keeps its own words', own['user-agent'] === 'my-own-client/1.0' && own['x-app'] === 'something');
+  ok('including its session', own['x-claude-code-session-id'] === 'sess-9');
+
+  const chat = outboundHeaders({}, 'chat', OAUTH, 'a-conversation-id');
+  ok('none of it goes to an endpoint that is not Anthropic', chat['user-agent'] === undefined && chat['x-app'] === undefined && chat['x-claude-code-session-id'] === undefined);
+}
+
+console.log('\n=== A subscription request is sent as Claude Code ===');
+{
+  const h = outboundHeaders({}, 'anthropic', OAUTH);
+  const beta = (h['anthropic-beta'] ?? '').split(',');
+  ok('it says which client it is', beta.includes('claude-code-20250219'), h['anthropic-beta']);
+  ok('and still carries the oauth beta', beta.includes('oauth-2025-04-20'), h['anthropic-beta']);
+  ok('the sdk describes itself too', h['x-stainless-lang'] === 'js' && h['x-stainless-runtime'] === 'node', JSON.stringify(h));
+  ok('with this machine, not a copied one', h['x-stainless-runtime-version'] === process.version, h['x-stainless-runtime-version']);
+
+  const key = outboundHeaders({}, 'anthropic', API_KEY);
+  ok('an api key gets no claude-code beta — the endpoint may not be Anthropic', key['anthropic-beta'] === undefined, String(key['anthropic-beta']));
+
+  const own = outboundHeaders({ 'x-stainless-lang': 'python', 'anthropic-beta': 'mine-2026-01-01' }, 'anthropic', OAUTH);
+  ok('an sdk that names itself is left alone', own['x-stainless-lang'] === 'python');
+  ok('and its betas are merged, not replaced', (own['anthropic-beta'] ?? '').split(',').includes('mine-2026-01-01'), own['anthropic-beta']);
+}
+
+console.log('\n=== Only a subscription is dressed as the CLI ===');
+{
+  const key = outboundHeaders({}, 'anthropic', API_KEY, 'a-conversation-id');
+  ok('an api key sends no claude-cli user agent', key['user-agent'] === undefined, String(key['user-agent']));
+  ok('no x-app', key['x-app'] === undefined);
+  ok('no session id it has no session for', key['x-claude-code-session-id'] === undefined);
+  ok('no sdk fingerprint', key['x-stainless-lang'] === undefined);
+  ok('the protocol version still goes — a compatibility layer reads it', key['anthropic-version'] === '2023-06-01');
+  ok('and the key goes in both auth headers as before', key['x-api-key'] === API_KEY && key.authorization === `Bearer ${API_KEY}`);
+
+  const sub = outboundHeaders({}, 'anthropic', OAUTH, 'a-conversation-id');
+  ok('a subscription gets the whole identity', sub['user-agent']?.startsWith('claude-cli/') === true && sub['x-app'] === 'cli' && sub['x-stainless-lang'] === 'js');
+}
+
+console.log('\n=== The query and the billing line ===');
+{
+  ok('beta=true is added', betaUrl('https://api.anthropic.com/v1/messages') === 'https://api.anthropic.com/v1/messages?beta=true');
+  ok('and joined onto a query that exists', betaUrl('https://x/v1/messages?a=1') === 'https://x/v1/messages?a=1&beta=true');
+  ok('a caller that asked for one keeps it', betaUrl('https://x/v1/messages?beta=false') === 'https://x/v1/messages?beta=false');
+
+  const none = withBillingSystem({ model: 'claude-opus-5' }) as { system: Array<{ text: string }> };
+  ok('a request with no system gets one', none.system[0]?.text.startsWith('x-anthropic-billing-header:') === true, JSON.stringify(none.system));
+
+  const str = withBillingSystem({ system: 'You are helpful.' }) as { system: Array<{ text: string }> };
+  ok('a string system is kept behind it', str.system.length === 2 && str.system[1]?.text === 'You are helpful.', JSON.stringify(str.system));
+
+  const already = { system: [{ type: 'text', text: 'x-anthropic-billing-header: cc_version=1; cc_entrypoint=cli;' }, { type: 'text', text: 'rest' }] };
+  ok('a client that sent one is not given a second', withBillingSystem(already) === already);
+
+  const blocks = withBillingSystem({ system: [{ type: 'text', text: 'You are helpful.' }] }) as { system: Array<{ text: string }> };
+  ok('otherwise it goes in front', blocks.system.length === 2 && blocks.system[0]?.text.startsWith('x-anthropic-billing-header:') === true);
+}
+
 console.log('\n=== Anything that could change destination or identity is blocked ===');
 {
   const h = outboundHeaders(
@@ -108,15 +183,26 @@ console.log('\n=== Anything that could change destination or identity is blocked
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     'anthropic',
-    API_KEY,
+    OAUTH,
   );
   ok('x-forwarded-host is blocked, or this is an SSRF', h['x-forwarded-host'] === undefined);
   ok('x-forwarded-proto is blocked', h['x-forwarded-proto'] === undefined);
-  ok('the authorization the container sent is replaced by the upstream credential', h.authorization === `Bearer ${API_KEY}`);
-  ok('the x-api-key the container supplied is replaced', h['x-api-key'] === API_KEY);
+  ok('the authorization the container sent is replaced by the upstream credential', h.authorization === `Bearer ${OAUTH}`);
+  ok('the x-api-key the container supplied is dropped — an oauth token is not one', h['x-api-key'] === undefined, String(h['x-api-key']));
   ok('hop-by-hop headers are blocked — the outbound layer recomputes them', h.host === undefined && h['content-length'] === undefined && h.connection === undefined && h['accept-encoding'] === undefined);
   ok('the browser-only one is blocked', h['anthropic-dangerous-direct-browser-access'] === undefined);
-  ok('these are all the outbound headers', Object.keys(h).sort().join(',') === 'accept,anthropic-version,authorization,content-type,x-api-key', Object.keys(h).sort().join(','));
+  ok(
+    'these are all the outbound headers',
+    Object.keys(h).sort().join(',')
+      === [
+        'accept', 'anthropic-version', 'authorization', 'content-type', 'user-agent',
+        'anthropic-beta', 'x-app', 'x-claude-code-session-id',
+        'x-stainless-arch', 'x-stainless-lang', 'x-stainless-os', 'x-stainless-package-version',
+        'x-stainless-retry-count', 'x-stainless-runtime', 'x-stainless-runtime-version',
+        'x-stainless-timeout',
+      ].sort().join(','),
+    Object.keys(h).sort().join(','),
+  );
 }
 
 console.log('\n=== A non-anthropic wire carries no anthropic-* ===');

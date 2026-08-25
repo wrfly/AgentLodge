@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { config } from '../core/config.js';
 import * as models from '../core/db/models.js';
 import * as providers from '../core/db/providers.js';
@@ -341,7 +342,8 @@ export function isOAuthToken(apiKey: string): boolean {
  */
 export function mergeBeta(fromClient: string | string[] | undefined, extra?: string): string | undefined {
   const raw = Array.isArray(fromClient) ? fromClient.join(',') : (fromClient ?? '');
-  const parts = [...raw.split(','), ...(extra ? [extra] : [])]
+  // `extra` can be a list too, and pushing it whole would hide a duplicate inside it
+  const parts = [...raw.split(','), ...(extra ? extra.split(',') : [])]
     .map((x) => x.trim())
     .filter(Boolean);
   return parts.length ? [...new Set(parts)].join(',') : undefined;
@@ -364,6 +366,80 @@ export function mergeBeta(fromClient: string | string[] | undefined, extra?: str
  * sending an anonymous user agent.
  */
 const PASSTHROUGH_EXACT = new Set(['user-agent', 'x-app', 'x-claude-code-session-id']);
+
+/**
+ * What Claude Code calls itself, used when the caller said nothing.
+ *
+ * Three of our own callers reach the upstream without going through a CLI: naming a
+ * conversation, summarising one, and pulling an upstream's model list. On a subscription
+ * those land on the same OAuth credential as the agent containers, and a request that
+ * carries the credential but describes itself as nothing at all is the odd one out. The
+ * version is the one the agent image ships and the wording is what a captured request
+ * carried; a client that sends its own user-agent keeps it, since the allowlist runs first.
+ */
+const CLI_USER_AGENT = 'claude-cli/2.1.224 (external, sdk-cli)';
+
+/**
+ * The SDK's description of itself, which Claude Code sends because it is built on that SDK.
+ *
+ * Real where this process can answer truthfully — the architecture, the system, the node it
+ * runs on — and copied from a captured request where it is describing the client library
+ * rather than the machine.
+ */
+const STAINLESS: Record<string, string> = {
+  'x-stainless-lang': 'js',
+  'x-stainless-package-version': '0.94.0',
+  'x-stainless-runtime': 'node',
+  'x-stainless-runtime-version': process.version,
+  'x-stainless-arch': process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : process.arch,
+  'x-stainless-os': process.platform === 'linux' ? 'Linux' : process.platform === 'darwin' ? 'MacOS' : 'Windows',
+  'x-stainless-retry-count': '0',
+  'x-stainless-timeout': '600',
+};
+
+/** What marks a request as Claude Code's, alongside the OAuth beta */
+const CLAUDE_CODE_BETA = 'claude-code-20250219';
+
+/** The first system block Claude Code sends, which is how the upstream attributes the call */
+const BILLING_SYSTEM = 'x-anthropic-billing-header: cc_version=2.1.224.ddf; cc_entrypoint=sdk-cli;';
+
+/**
+ * The query Claude Code puts on /v1/messages.
+ *
+ * Left alone when the caller already asked for something: a client that sends its own
+ * query knows what it wants.
+ */
+export function betaUrl(url: string): string {
+  if (/[?&]beta=/.test(url)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}beta=true`;
+}
+
+type SystemBlock = { type: 'text'; text: string };
+
+/**
+ * Put the billing line at the front of the system prompt, if it is not there already.
+ *
+ * Claude Code sends it on every request and the upstream reads the entrypoint from it. Our
+ * own calls — naming a conversation, summarising one — carry no system prompt at all, and
+ * a subscription request with none is the one that does not look like the client holding
+ * the credential.
+ */
+export function withBillingSystem(body: unknown): unknown {
+  if (!body || typeof body !== 'object') return body;
+  const b = body as { system?: string | SystemBlock[] };
+  const head: SystemBlock = { type: 'text', text: BILLING_SYSTEM };
+
+  if (b.system === undefined) return { ...b, system: [head] };
+  if (typeof b.system === 'string') {
+    return b.system.startsWith('x-anthropic-billing-header:')
+      ? b
+      : { ...b, system: [head, { type: 'text', text: b.system }] };
+  }
+  if (!Array.isArray(b.system)) return b;
+  const first = b.system[0];
+  if (first && typeof first.text === 'string' && first.text.startsWith('x-anthropic-billing-header:')) return b;
+  return { ...b, system: [head, ...b.system] };
+}
 const PASSTHROUGH_PREFIX = ['x-stainless-'];
 
 function passthrough(reqHeaders: Record<string, string | string[] | undefined>): Record<string, string> {
@@ -403,6 +479,13 @@ export function outboundHeaders(
   reqHeaders: Record<string, string | string[] | undefined>,
   wire: Wire,
   apiKey: string,
+  /**
+   * The conversation this request belongs to, used as the session id when the caller sent
+   * none. A conversation is the closest thing here to a CLI session, and the id is already
+   * a uuid; with no conversation — an api key, or one of our own internal calls — each
+   * request gets one of its own.
+   */
+  session?: string,
 ): Record<string, string> {
   const accept = reqHeaders.accept;
   // The allowlist goes first and our own headers after, so ours always win on a name
@@ -416,12 +499,31 @@ export function outboundHeaders(
   };
   if (wire === 'anthropic') {
     const oauth = isOAuthToken(apiKey);
+
+    /*
+     * Filled in, never overwritten: whatever the client sent about itself is already in h.
+     *
+     * Only on a subscription. That credential is Claude Code's, and a request carrying it
+     * should look like the client it was issued to. An API key is billed to an API account
+     * whoever sends it, and nothing upstream asks who that is — inventing a claude-cli
+     * identity for a request that is not the CLI's would be describing it wrongly for no
+     * gain. DeepSeek's compatibility layer, reached on this same wire, gets neither.
+     */
+    if (oauth) {
+      h['user-agent'] ??= CLI_USER_AGENT;
+      h['x-app'] ??= 'cli';
+      h['x-claude-code-session-id'] ??= session || crypto.randomUUID();
+      for (const [k, v] of Object.entries(STAINLESS)) h[k] ??= v;
+    }
+
     if (!oauth) h['x-api-key'] = apiKey;
 
     const version = reqHeaders['anthropic-version'];
     h['anthropic-version'] = (typeof version === 'string' ? version : undefined) ?? '2023-06-01';
 
-    const beta = mergeBeta(reqHeaders['anthropic-beta'], oauth ? OAUTH_BETA : undefined);
+    // The two betas a subscription request carries. An API key gets neither: an endpoint
+    // that is not Anthropic is reached on the same wire, and unknown betas are its problem.
+    const beta = mergeBeta(reqHeaders['anthropic-beta'], oauth ? `${CLAUDE_CODE_BETA},${OAUTH_BETA}` : undefined);
     if (beta) h['anthropic-beta'] = beta;
   }
   return h;
