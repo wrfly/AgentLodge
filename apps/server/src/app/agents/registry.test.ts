@@ -23,6 +23,7 @@ const { initDb } = await import('../../core/db/index.js');
 initDb();
 const { setSetting, invalidate } = await import('../../core/db/settings.js');
 const { enabledAgentIds, isEnabledAgent, defaultAgent } = await import('./registry.js');
+const { turnArgs } = await import('./claude.js');
 
 let pass = 0;
 let fail = 0;
@@ -101,6 +102,15 @@ console.log('\n=== The read side is defensive anyway ===');
     enabledAgentIds().join(','),
   );
   ok('so there is still a default', defaultAgent() === 'claude');
+}
+
+console.log('\n=== The command line a turn runs on ===');
+{
+  const args = turnArgs({ prompt: 'hello', cwd: '/workspace', model: 'claude-opus-5' } as Parameters<typeof turnArgs>[0]);
+  const at = args.indexOf('--disallowedTools');
+  ok('the Skill tool is disallowed', at >= 0 && args[at + 1] === 'Skill', args.join(' '));
+  ok('the prompt is still there', args.includes('hello'));
+  ok('and the model it was asked for', args[args.indexOf('--model') + 1] === 'claude-opus-5');
 }
 
 fs.rmSync(box, { recursive: true, force: true });

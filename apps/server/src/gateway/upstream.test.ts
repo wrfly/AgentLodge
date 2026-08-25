@@ -144,6 +144,11 @@ console.log('\n=== Only a subscription is dressed as the CLI ===');
   ok('the protocol version still goes — a compatibility layer reads it', key['anthropic-version'] === '2023-06-01');
   ok('and the key goes in both auth headers as before', key['x-api-key'] === API_KEY && key.authorization === `Bearer ${API_KEY}`);
 
+  const runtime = outboundHeaders({ 'user-agent': 'node' }, 'anthropic', OAUTH, 'a-conversation-id');
+  ok('a runtime is not a client — node fetch fills that slot itself', runtime['user-agent'] === 'claude-cli/2.1.224 (external, sdk-cli)', runtime['user-agent']);
+  const named = outboundHeaders({ 'user-agent': 'my-own-client/1.0' }, 'anthropic', OAUTH, 'a-conversation-id');
+  ok('a client that named itself keeps its name', named['user-agent'] === 'my-own-client/1.0');
+
   const sub = outboundHeaders({}, 'anthropic', OAUTH, 'a-conversation-id');
   ok('a subscription gets the whole identity', sub['user-agent']?.startsWith('claude-cli/') === true && sub['x-app'] === 'cli' && sub['x-stainless-lang'] === 'js');
 }

@@ -209,8 +209,10 @@ export async function nameIfNeeded(userId: string, conversationId: string): Prom
   );
   if (!named || named.title_at || named.title_custom) return undefined;
 
-  const body = questions(conversationId, userId);
-  if (body.length < 8) return undefined;
+  // Only "there is nothing to read". A length floor here was 8 characters, which no
+  // Chinese question reaches: 「美国总统是谁」is a whole question in six.
+  const body = questions(conversationId, userId).trim();
+  if (!body) return undefined;
 
   const answer = await ask(userId, `${TITLE_PROMPT}\n\n---\n\n${body}`, 32);
   const title = cleanTitle(answer.split('\n')[0] ?? '');
