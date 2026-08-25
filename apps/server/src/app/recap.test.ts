@@ -164,35 +164,55 @@ console.log('\n=== A name the user typed is theirs ===');
   ok('an automatic name lands', convs.retitle(mine, 'What it was about'));
   ok('and is what the conversation is called', convs.meta(mine, userId)?.title === 'What it was about');
 
-  convs.update(mine, userId, { title: 'My own name', titleCustom: true });
-  ok('renaming by hand stops the next one', !convs.retitle(mine, 'Something else'));
-  ok('and leaves theirs alone', convs.meta(mine, userId)?.title === 'My own name');
+  const own = conversation('own', 4);
+  convs.update(own, userId, { title: 'My own name', titleCustom: true });
+  ok('a name typed by hand is not replaced', !convs.retitle(own, 'Something else'));
+  ok('and stands', convs.meta(own, userId)?.title === 'My own name');
 }
 
-console.log('\n=== What the sweep picks up ===');
+console.log('\n=== Named once, and not again ===');
 {
-  const long_ago = new Date(Date.now() - 60 * 60_000).toISOString();
-  const just_now = new Date(Date.now() - 60_000).toISOString();
-  const cutoff = new Date(Date.now() - 15 * 60_000).toISOString();
+  const once = conversation('once', 4);
+  ok('the first name lands', convs.retitle(once, 'What it is about'));
+  ok('a second call changes nothing', !convs.retitle(once, 'Something else'));
+  ok('and the first name stands', convs.meta(once, userId)?.title === 'What it is about');
+}
 
-  const quiet = conversation('gone quiet', 4, { lastAt: long_ago });
-  const live = conversation('still going', 4, { lastAt: just_now });
-  const covered = conversation('covered', 4, { lastAt: long_ago });
-  summarize(covered, 4);
+console.log('\n=== The questions a name is made from ===');
+{
+  // 12 messages alternate user/assistant, so six of them are questions
+  const long = conversation('long', 12);
+  const body = recap.questions(long, userId);
+  const lines = body.split('\n\n');
+  ok('the opening questions only', lines.length === 5, String(lines.length));
+  ok('oldest first', lines[0]?.includes('line 0') === true && lines[4]?.includes('line 8') === true, body.slice(0, 60));
+  ok('nothing the assistant said', !body.includes('line 1'), body.slice(0, 60));
+  ok('another user gets nothing', recap.questions(long, 'someone-else') === '');
+}
 
-  const other = users.create({ email: 'b@b.c', username: 'b', passwordHash: 'x', role: 'user' }).id;
-  const theirs = conversation('someone else', 4, { owner: other, lastAt: long_ago });
+console.log('\n=== A title out of what the model answered ===');
+{
+  ok('a decorated one is cleaned up', recap.cleanTitle('## "Container mount path".') === 'Container mount path');
+  ok('a sentence is not a title', recap.cleanTitle('They were trying to work out why the container would not start at all, and it turned out to be the mount path') === undefined);
+  ok('an empty answer is nothing', recap.cleanTitle('   ') === undefined);
+}
 
-  const picked = recap.stale(cutoff);
-  const ids = picked.map((c) => c.id);
-  ok('a conversation that has gone quiet', ids.includes(quiet));
-  ok('but not one still being typed into', !ids.includes(live), JSON.stringify(ids));
-  ok('nor one already covered', !ids.includes(covered));
-  ok('everybody is swept, not one user', ids.includes(theirs));
-  ok('and each carries its owner', picked.find((c) => c.id === theirs)?.user_id === other);
+console.log('\n=== Not on the last minute of a subscription window ===');
+{
+  const { setSetting } = await import('../core/db/settings.js');
+  const at = (ms: number) => new Date(Date.now() + ms).toISOString();
 
-  // Nothing has last_message_at unless a turn set it; those cannot be judged idle
-  ok('conversations with no last message are left alone', !ids.includes(conversation('never sent', 4)));
+  ok('nothing reported means nothing to wait for', !recap.windowAboutToRoll());
+
+  setSetting('quota.windowResetAt', at(4 * 60_000));
+  ok('four minutes left is fine', !recap.windowAboutToRoll());
+
+  setSetting('quota.windowResetAt', at(30_000));
+  ok('thirty seconds left waits for the next window', recap.windowAboutToRoll());
+
+  setSetting('quota.windowResetAt', at(-60_000));
+  ok('a window that already rolled is not the tail of one', !recap.windowAboutToRoll());
+  setSetting('quota.windowResetAt', '');
 }
 
 fs.rmSync(box, { recursive: true, force: true });

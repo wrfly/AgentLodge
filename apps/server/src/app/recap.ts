@@ -4,6 +4,7 @@ import * as convRepo from '../core/db/conversations.js';
 import * as profileRepo from '../core/db/profile.js';
 import type { StoredMessage } from '../core/protocol.js';
 import { config } from '../core/config.js';
+import { getStringFresh } from '../core/db/settings.js';
 import { signRuntimeToken } from '../core/runtime-token.js';
 import { gatewayEnabled, gatewayInternalUrl } from './agents/provider.js';
 
@@ -22,6 +23,11 @@ import { gatewayEnabled, gatewayInternalUrl } from './agents/provider.js';
  *
  * Both steps go through the gateway on a ticket for the user, so they are metered, counted
  * against their quota, refused when they are out, and recorded by the audit proxy.
+ *
+ * Nothing runs on a timer. A conversation is named once, on its first completed turn, from
+ * the first few questions in it; summaries are written when somebody opens their portrait
+ * and not before. A background pass over everybody's conversations spends tokens on pages
+ * nobody asked for.
  *
  * Nothing here writes memory. The portrait is a page to read; the lines it suggests are
  * offered, and become memory only when the user takes one.
@@ -46,6 +52,21 @@ is the conversation they were looking for.
 
 Write both in the language the person writes in, and answer with nothing else.`;
 
+/**
+ * Naming a conversation is its own small call, not a side effect of summarising: it happens
+ * once, early, and reads a few questions rather than a transcript.
+ */
+const TITLE_PROMPT = `Below are the first questions someone asked in one conversation.
+
+Answer with a name for that conversation and nothing else: what they are trying to do, at
+most 24 characters, in the language they write in. No quotes, no full stop, and not
+"conversation about".`;
+
+/** How many of the opening questions are enough to name it */
+const QUESTIONS = 5;
+/** Per question, so one pasted file cannot become the whole prompt */
+const CHARS_PER_QUESTION = 600;
+
 /** Titles are cut to the same length as the one derived from an opening message */
 const TITLE_MAX = 28;
 
@@ -58,20 +79,31 @@ const TITLE_MAX = 28;
  */
 export function parseRecap(answer: string): { title?: string; summary: string } {
   const lines = answer.trim().split('\n');
-  const first = (lines[0] ?? '').trim();
   const rest = lines.slice(1).join('\n').trim();
+  const title = cleanTitle(lines[0] ?? '');
 
-  const title = first
+  if (!rest || !title) return { title: undefined, summary: answer.trim() };
+  return { title, summary: rest };
+}
+
+/**
+ * A model's answer as a title, or nothing.
+ *
+ * Models decorate: a heading marker, quotes around it, a full stop at the end. What they
+ * cannot be talked out of is answering with a sentence, and a sentence is not a title —
+ * anything twice the length of a title is treated as one and dropped.
+ */
+export function cleanTitle(line: string): string | undefined {
+  const title = line
+    .trim()
     .replace(/^#+\s*/, '')
-    .replace(/^["'“”「『]|["'“”」』]$/g, '')
+    // The stop can be inside the quotes or outside them, so both orders are tried
+    .replace(/[.。!！]+$/, '')
+    .replace(/^["'“”「『]+|["'“”」』]+$/g, '')
     .replace(/[.。!！]+$/, '')
     .trim();
-
-  if (!rest || !title || title.length > TITLE_MAX * 2) return { title: undefined, summary: answer.trim() };
-  return {
-    title: title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX)}…` : title,
-    summary: rest,
-  };
+  if (!title || title.length > TITLE_MAX * 2) return undefined;
+  return title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX)}…` : title;
 }
 
 const PORTRAIT_PROMPT = `Below are summaries of the conversations one person has had with an
@@ -128,6 +160,62 @@ export function transcript(conversationId: string, userId: string): string {
     lines.push(line);
   }
   return lines.join('\n\n');
+}
+
+/** The opening questions, oldest first — what the conversation set out to be */
+export function questions(conversationId: string, userId: string): string {
+  const conv = convRepo.full(conversationId, userId);
+  if (!conv) return '';
+
+  return conv.messages
+    .filter((m) => m.role === 'user')
+    .slice(0, QUESTIONS)
+    .map((m) => textOf(m).slice(0, CHARS_PER_QUESTION))
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/**
+ * Whether the upstream's 5-hour window is about to roll over.
+ *
+ * On a subscription the window is a session, and the request that arrives after one ends
+ * opens the next. A title is not worth opening a session for: the user opens theirs by
+ * saying something, and this runs on the turn after that. Empty on a key-billed upstream —
+ * nothing reports a window — so this is false and nothing waits.
+ */
+const WINDOW_TAIL_MS = 60_000;
+
+export function windowAboutToRoll(): boolean {
+  const reset = getStringFresh('quota.windowResetAt');
+  if (!reset) return false;
+  const left = new Date(reset).getTime() - Date.now();
+  return left > 0 && left <= WINDOW_TAIL_MS;
+}
+
+/**
+ * Name the conversation, if nothing has named it yet.
+ *
+ * Called when a turn finishes and cheap enough to be: a couple of hundred tokens in, a
+ * dozen out. `retitle` is what makes it once — a second call finds the name already there
+ * and changes nothing, so this can be fired without checking first. A conversation left
+ * unnamed at the end of a window is named on its next turn, which is the user's own.
+ */
+export async function nameIfNeeded(userId: string, conversationId: string): Promise<string | undefined> {
+  if (windowAboutToRoll()) return undefined;
+  const named = get<{ title_at: string | null; title_custom: number }>(
+    'select title_at, title_custom from conversations where id = ? and user_id = ?',
+    conversationId,
+    userId,
+  );
+  if (!named || named.title_at || named.title_custom) return undefined;
+
+  const body = questions(conversationId, userId);
+  if (body.length < 8) return undefined;
+
+  const answer = await ask(userId, `${TITLE_PROMPT}\n\n---\n\n${body}`, 32);
+  const title = cleanTitle(answer.split('\n')[0] ?? '');
+  if (!title) return undefined;
+  return convRepo.retitle(conversationId, title) ? title : undefined;
 }
 
 function textOf(m: StoredMessage): string {
@@ -192,62 +280,6 @@ export async function catchUp(userId: string, limit = BATCH): Promise<CatchUpRes
  * Somebody who comes back ten minutes later is still in the same conversation, and
  * summarising after every turn would pay for the same conversation over and over.
  */
-const IDLE_MS = 15 * 60_000;
-export const EVERY_MS = 30 * 60_000;
-/** Per sweep, across everybody: a bound on what one tick can spend */
-const PER_SWEEP = 24;
-
-interface Stale {
-  id: string;
-  user_id: string;
-  messages: number;
-}
-
-/** Quiet conversations whose summary is missing or older than the conversation */
-export function stale(before: string): Stale[] {
-  return all<Stale>(
-    `select c.id as id, c.user_id as user_id, count(m.id) as messages
-       from conversations c join messages m on m.conversation_id = c.id
-      where c.last_message_at is not null and c.last_message_at < ?
-      group by c.id
-     having count(m.id) > 1
-        and (c.summary is null or c.summary_upto is null or c.summary_upto < count(m.id))
-      order by c.last_message_at desc
-      limit ?`,
-    before,
-    PER_SWEEP,
-  );
-}
-
-export async function sweep(): Promise<number> {
-  if (!gatewayEnabled()) return 0;
-
-  const cutoff = new Date(Date.now() - IDLE_MS).toISOString();
-  // One user's refusal should not stop the rest of the sweep, so failures are counted per
-  // user rather than thrown
-  const done = new Set<string>();
-  let n = 0;
-  for (const c of stale(cutoff)) {
-    if (done.has(c.user_id)) continue;
-    try {
-      if (await summarizeOne(c.user_id, c.id, c.messages)) n++;
-    } catch {
-      done.add(c.user_id);
-    }
-  }
-  return n;
-}
-
-/** Run it now, and every half hour after that */
-export function startSweeping(): void {
-  const tick = () => {
-    void sweep().catch(() => {});
-  };
-  // A minute in, so a restart does not race the rest of the boot sequence
-  setTimeout(tick, 60_000).unref();
-  setInterval(tick, EVERY_MS).unref();
-}
-
 export interface Recap {
   id: string;
   title: string;
