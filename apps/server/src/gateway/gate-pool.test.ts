@@ -71,6 +71,14 @@ console.log('\n=== The ceiling is deployment-wide ===');
   const existing = pool.for('provider-a');
   pool.setMaxConcurrency(5);
   ok('an existing pool is raised', existing.stats().max === 5, String(existing.stats().max));
+  // Nothing has throttled this pool, so the raise is just a raise. Deferring it
+  // to the AIMD climb would report the new ceiling while the gate still ran at
+  // the old one for the next few hundred requests.
+  ok(
+    'and the effective limit follows it immediately',
+    existing.stats().effectiveMax === 5,
+    JSON.stringify(existing.stats()),
+  );
   ok('and one created later starts there', pool.for('provider-new').stats().max === 5);
   ok('the pool reports it', pool.max() === 5, String(pool.max()));
   ok('stats carry the upstream each row belongs to', pool.stats().some((s) => s.providerId === 'provider-a'));
@@ -78,22 +86,25 @@ console.log('\n=== The ceiling is deployment-wide ===');
 
 console.log('\n=== Ceiling changes must not defeat AIMD backoff ===');
 {
-  const pool = new GatePool({ ...cfg });
+  // A ceiling of 4 halves to 2 on the first 429. The gap matters: with the
+  // ceiling at 2 the backoff floors at 1 straight away, and then "clamp to 1"
+  // below would hold whether or not the clamp exists.
+  const pool = new GatePool({ ...cfg, maxConcurrency: 4 });
   const a = pool.for('provider-a');
 
   // The upstream throttles us and the gate backs off.
   a.reportUpstream(429);
   const narrowed = a.stats().effectiveMax;
-  ok('a 429 narrows the gate', narrowed < a.stats().max, JSON.stringify(a.stats()));
+  ok('a 429 narrows the gate', narrowed === 2, JSON.stringify(a.stats()));
 
   // Raising the ceiling during the incident must leave the backoff alone: the
   // effective limit has to climb back on its own after a run of clean responses,
   // not jump to full the moment an admin opens the settings page.
-  pool.setMaxConcurrency(a.stats().max + 3);
-  ok('the new ceiling takes', a.stats().max === cfg.maxConcurrency + 3, String(a.stats().max));
+  pool.setMaxConcurrency(7);
+  ok('the new ceiling takes', a.stats().max === 7, String(a.stats().max));
   ok('the backoff survives a ceiling raise', a.stats().effectiveMax === narrowed, JSON.stringify(a.stats()));
 
-  // But a ceiling *below* the effective limit does clamp it.
+  // But a ceiling *below* the effective limit does clamp it, backoff or not.
   pool.setMaxConcurrency(1);
   ok('a lower ceiling clamps the effective limit', a.stats().effectiveMax === 1, String(a.stats().effectiveMax));
 }
