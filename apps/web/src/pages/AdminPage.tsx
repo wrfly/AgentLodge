@@ -2457,6 +2457,17 @@ function SettingsTab() {
         >
           {settings
             .filter((s) => s.group === g)
+            /*
+             * A field that belongs to another choice is not there at all, rather than
+             * greyed out or annotated: the mail card asks for an API key or for a relay,
+             * and which one follows the dropdown as it moves — the draft is read first,
+             * so it follows before the page is even saved.
+             */
+            .filter((s) => {
+              if (!s.showWhen) return true;
+              const on = settings.find((x) => x.key === s.showWhen!.key);
+              return s.showWhen.is.includes(draft[s.showWhen.key] ?? on?.value ?? '');
+            })
             .map((s) => {
               const value = draft[s.key] ?? s.value;
               return (

@@ -65,6 +65,15 @@ export interface SettingSpec {
    * every locale table for nothing.
    */
   options?: string[];
+  /**
+   * Only shown while another setting holds one of these values.
+   *
+   * Display only: the value is stored, read and env-overridden exactly as any other, and
+   * the server never refuses a write because a field was out of view. What it buys is a
+   * mail card that asks for an API key or for a relay, rather than for both and a note on
+   * each saying which half to ignore.
+   */
+  showWhen?: { key: string; is: string[] };
   /** Environment fallback, read when the setting itself is unset */
   envFallback?: string;
   default?: string;
@@ -116,7 +125,6 @@ export const SETTING_SPECS: SettingSpec[] = [
     options: ['resend', 'brevo', 'smtp'],
     default: 'resend',
     envFallback: 'MAIL_PROVIDER',
-    hint: 'resend and brevo take an API key; smtp takes a host, a port and a login',
     validate: (v) =>
       ['resend', 'brevo', 'smtp'].includes(v) ? undefined : 'Pick resend, brevo or smtp',
   },
@@ -126,7 +134,8 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'mail',
     type: 'secret',
     envFallback: 'MAIL_API_KEY',
-    hint: 'For resend or brevo. Without a working provider email degrades: invite and reset links are printed to the server log',
+    showWhen: { key: 'mail.provider', is: ['resend', 'brevo'] },
+    hint: 'Without it email degrades: invite and reset links are printed to the server log',
   },
   {
     key: 'mail.smtpHost',
@@ -134,7 +143,8 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'mail',
     type: 'string',
     envFallback: 'SMTP_HOST',
-    hint: 'For smtp — the relay to hand the message to',
+    showWhen: { key: 'mail.provider', is: ['smtp'] },
+    hint: 'The relay to hand the message to',
   },
   {
     key: 'mail.smtpPort',
@@ -143,6 +153,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     type: 'number',
     default: '587',
     envFallback: 'SMTP_PORT',
+    showWhen: { key: 'mail.provider', is: ['smtp'] },
     hint: '587 and 25 start in the clear and upgrade with STARTTLS; 465 is TLS from the first byte',
   },
   {
@@ -151,6 +162,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'mail',
     type: 'string',
     envFallback: 'SMTP_USER',
+    showWhen: { key: 'mail.provider', is: ['smtp'] },
     hint: 'Empty for a relay that authenticates by address rather than by login',
   },
   {
@@ -159,6 +171,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'mail',
     type: 'secret',
     envFallback: 'SMTP_PASSWORD',
+    showWhen: { key: 'mail.provider', is: ['smtp'] },
   },
   {
     key: 'mail.from',

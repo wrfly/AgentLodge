@@ -495,6 +495,8 @@ export interface SettingView {
   hint?: string;
   /** The values a `select` takes, shown as written and in this order */
   options?: string[];
+  /** Only shown while the setting it names holds one of these values */
+  showWhen?: { key: string; is: string[] };
   /** Shown and entered as a multiple of the stored value — a token limit is typed in millions */
   scale?: number;
   /** Shown inside the field, in the entered scale */
