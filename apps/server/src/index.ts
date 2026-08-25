@@ -24,7 +24,6 @@ import { buildGateway, gate, startModelAutoRefresh } from './gateway/index.js';
 import { drainLegacyProviderKeys } from './gateway/legacy-keys.js';
 import { gatewayEnabled } from './app/agents/provider.js';
 import * as containers from './app/containers.js';
-import * as recap from './app/recap.js';
 
 /**
  * How many reverse-proxy hops to trust. A number is a hop count; an IP or CIDR string
@@ -186,8 +185,6 @@ app.get('/api/agents', { preHandler: requireUser }, async () => listAgents());
 if (config.role !== 'gateway') {
   setInterval(() => void sessionsRepo.pruneExpired(), 3600_000).unref();
   setInterval(() => void containers.reapIdle(), 5 * 60_000).unref();
-  // Conversations that have gone quiet get summarised on their own; see app/recap.ts
-  recap.startSweeping();
 }
 
 // The gateway is a Fastify app of its own that happens to share this process by default,

@@ -292,17 +292,22 @@ export function deriveTitle(text: string): string {
 }
 
 /**
- * Name a conversation after what it turned out to be about.
+ * Name a conversation after what it is about, once.
  *
- * Skips one the user named: an automatic title is a better guess than the opening message,
- * but it is still a guess, and theirs is not.
+ * Two things stop it. A title the user typed is theirs — an automatic one is a better
+ * guess than the opening message, but it is still a guess. And `title_at`, once set, means
+ * a model has already named this conversation: renaming it later costs another call and
+ * moves a name the user has learned to recognise in their list.
  */
 export function retitle(id: string, title: string): boolean {
+  const now = nowIso();
   return (
     run(
-      'update conversations set title = ?, updated_at = ? where id = ? and title_custom = 0',
+      `update conversations set title = ?, title_at = ?, updated_at = ?
+        where id = ? and title_custom = 0 and title_at is null`,
       title,
-      nowIso(),
+      now,
+      now,
       id,
     ).changes > 0
   );

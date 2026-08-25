@@ -100,7 +100,7 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -175,6 +175,14 @@ function migrate(d: DatabaseSync): void {
     // dropped on the gateway's next start; see gateway/legacy-keys.ts.
     if (!columns(d, 'upstream_providers').has('credential_id')) {
       d.exec('alter table upstream_providers add column credential_id text');
+    }
+  }
+
+  if (from < 6) {
+    // When a model named the conversation. Null means never, and that is the whole
+    // condition for naming it: it happens once, on the first turn, and never again.
+    if (!columns(d, 'conversations').has('title_at')) {
+      d.exec('alter table conversations add column title_at text');
     }
   }
 

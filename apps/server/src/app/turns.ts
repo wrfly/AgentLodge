@@ -13,6 +13,7 @@ import * as memory from './memory.js';
 import * as quota from '../core/quota.js';
 import * as usersRepo from '../core/db/users.js';
 import * as mail from './mail.js';
+import * as recap from './recap.js';
 import { getString } from '../core/db/settings.js';
 import type { MessageBlock, StoredMessage } from '../core/protocol.js';
 
@@ -298,6 +299,19 @@ export async function startTurn(
       // Usage changed, so push the current quota to refresh the usage bar
       publish(conversationId, { type: 'quota.updated', quota: quota.status(userId) });
       void maybeWarnQuota(userId).catch(() => {});
+
+      /*
+       * Name it, if nothing has yet. Not awaited: the turn is over as far as the user is
+       * concerned, and the name arrives over the event stream a second later. It is one
+       * call per conversation ever — see recap.nameIfNeeded — and it is fired here rather
+       * than on a timer because this is the moment the questions to name it from exist.
+       */
+      void recap
+        .nameIfNeeded(userId, conversationId)
+        .then((title) => {
+          if (title) publish(conversationId, { type: 'title.updated', conversationId, title });
+        })
+        .catch(() => {});
     })
     .catch((err: unknown) => {
       publish(conversationId, {
