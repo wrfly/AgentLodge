@@ -497,6 +497,8 @@ export interface SettingView {
   options?: string[];
   /** Only shown while the setting it names holds one of these values */
   showWhen?: { key: string; is: string[] };
+  /** How many of the six columns it takes; absent means the whole row */
+  span?: number;
   /** Shown and entered as a multiple of the stored value — a token limit is typed in millions */
   scale?: number;
   /** Shown inside the field, in the entered scale */
