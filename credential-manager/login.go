@@ -144,8 +144,12 @@ func (a *manager) finishLogin(ctx context.Context, loginID, pasted string) (*cre
 	}
 
 	c := &credential{ID: p.CredID, Kind: p.Kind, Label: p.Label, Source: sourceLogin, Token: pair}
+	// The sign-in itself succeeded: the code was exchanged and the refresh token
+	// is in memory. Failing here would tell the operator to start over with a
+	// fresh code — impossible, the old one is spent — while a working credential
+	// sits in memory. Recorded for /health (put sets storeErr) and logged.
 	if err := a.put(c); err != nil {
-		return nil, fmt.Errorf("sign-in: persist: %w", err)
+		logf("signed in %s, but the store could not be written: %v", c.ID, err)
 	}
 
 	a.lock()

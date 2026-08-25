@@ -130,15 +130,16 @@ func decryptState(key, ciphertext []byte) (*persistentState, error) {
 // persist writes the store to the state file, encrypted. Called on every
 // change, so a restart comes back to what the console last saw.
 //
-// Every failure is returned rather than swallowed: a full disk, a permission
-// change, or a rename failure means the console was just told a credential
-// "succeeded" while nothing (or a stale copy) is on disk. The whole point of
-// the service is durability, so that has to surface to the caller as an error,
-// not vanish.
+// It records the outcome into a.storeErr so the health endpoint can report the
+// store's durability: a full disk, a permission change, or a rename failure
+// means the last change lives only in memory and a restart loses it. Callers
+// decide per-operation whether that is fatal (storing a key, whose whole point
+// is durability) or something to serve alongside a log line (delete / sign-in /
+// import / refresh, whose in-memory effect is immediate).
 //
 // A missing state file or key is intentionally not an error: it is the
 // no-persistence configuration (nothing to write and nowhere to write it),
-// which is a deliberate, documented mode.
+// which is a deliberate, documented mode — and is not recorded as a failure.
 func (a *manager) persist() error {
 	if a.cfg.stateFile == "" || len(a.cfg.authKey) == 0 {
 		return nil
@@ -146,18 +147,23 @@ func (a *manager) persist() error {
 	state := &persistentState{Credentials: a.creds}
 	ct, err := encryptState(a.cfg.authKey, state)
 	if err != nil {
-		return fmt.Errorf("encrypt store: %w", err)
+		a.storeErr = fmt.Errorf("encrypt store: %w", err)
+		return a.storeErr
 	}
 	if err := os.MkdirAll(filepath.Dir(a.cfg.stateFile), 0o700); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
+		a.storeErr = fmt.Errorf("create state dir: %w", err)
+		return a.storeErr
 	}
 	tmp := a.cfg.stateFile + ".tmp"
 	if err := os.WriteFile(tmp, ct, 0o600); err != nil {
-		return fmt.Errorf("write state: %w", err)
+		a.storeErr = fmt.Errorf("write state: %w", err)
+		return a.storeErr
 	}
 	if err := os.Rename(tmp, a.cfg.stateFile); err != nil {
-		return fmt.Errorf("replace state: %w", err)
+		a.storeErr = fmt.Errorf("replace state: %w", err)
+		return a.storeErr
 	}
+	a.storeErr = nil
 	return nil
 }
 

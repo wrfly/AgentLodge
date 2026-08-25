@@ -443,7 +443,7 @@ func TestStoreKeepsPastedKeysAndForgetsThem(t *testing.T) {
 		t.Fatal("an update must not add a second credential")
 	}
 
-	if removed, _ := a.remove("paid"); !removed {
+	if removed := a.remove("paid"); !removed {
 		t.Fatal("remove said there was nothing to remove")
 	}
 	if _, err := a.resolve(context.Background(), "paid", false); !errors.Is(err, errNoCredential) {
@@ -750,6 +750,52 @@ func TestPutSurfacesAPersistFailure(t *testing.T) {
 	err = a.put(&credential{ID: "paid", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-ant-api03-abcdef"})
 	if err == nil {
 		t.Fatal("put on an unwritable state file must return an error")
+	}
+}
+
+// Removing a credential is an immediate, in-memory fact — the credential stops
+// being usable the moment the map no longer holds it — so a persist failure must
+// not turn the delete into an error. It records the degradation for /health
+// (storeErr) and reports true, because the operator's intent was carried out.
+func TestRemoveSurfacesStoreDegradationInsteadOfFailing(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	a, err := newManager(config{
+		stateFile:   filepath.Join(blocker, "sub", "state.enc"),
+		authKey:     make([]byte, 32),
+		refreshLead: time.Minute,
+	}, map[string]provider{})
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+
+	// It has to be there to be removed; put already failed to persist above, but
+	// the in-memory store holds it regardless (put updates the map before the
+	// persist fails).
+	_ = a.put(&credential{ID: "gone", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-ant-api03-abcdef"})
+
+	if !a.remove("gone") {
+		t.Fatal("remove must report true even when the store cannot be written")
+	}
+	if _, ok := a.creds["gone"]; ok {
+		t.Fatal("the credential must be gone from memory")
+	}
+
+	a.lock()
+	storeErr := a.storeErr
+	a.unlock()
+	if storeErr == nil {
+		t.Fatal("a failed persist must be recorded for /health")
+	}
+
+	// And the refresh lock is pruned along with the credential.
+	a.refreshMu.Lock()
+	_, kept := a.refreshLocks["gone"]
+	a.refreshMu.Unlock()
+	if kept {
+		t.Fatal("the per-credential refresh lock must be released on remove")
 	}
 }
 
