@@ -856,6 +856,67 @@ func TestPutDurableRollsBackAStoreThatDidNotReachDisk(t *testing.T) {
 	}
 }
 
+// A persist failure is invisible unless something says so where the operator is
+// looking. Every response the console acts on carries the store's durability,
+// so the reload that follows a delete / import / sign-in shows the degradation
+// even though the operation itself succeeded.
+func TestConsoleResponsesCarryTheStoreState(t *testing.T) {
+	dir := t.TempDir()
+	a, err := newManager(config{
+		stateFile:   filepath.Join(dir, "state.enc"),
+		authKey:     make([]byte, 32),
+		refreshLead: time.Minute,
+	}, map[string]provider{})
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+
+	store := func(method, target string) map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		a.handleCredentials(rec, httptest.NewRequest(method, target, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s: %d %s", method, target, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Store map[string]any `json:"store"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body.Store == nil {
+			t.Fatalf("%s %s carries no store block: %s", method, target, rec.Body.String())
+		}
+		return body.Store
+	}
+
+	if err := a.putDurable(&credential{ID: "paid", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-ant-api03-abcdef"}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if ok := store(http.MethodGet, "/credentials")["ok"]; ok != true {
+		t.Fatalf("a writable store must report ok, got %v", ok)
+	}
+
+	// Break the store, then do the thing the console does: an operation that
+	// succeeds in memory, followed by a reload.
+	blocker := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	a.cfg.stateFile = filepath.Join(blocker, "sub", "state.enc")
+
+	removed := store(http.MethodDelete, "/credentials?id=paid")
+	if removed["ok"] != false {
+		t.Fatalf("the delete response must report the degraded store, got %v", removed)
+	}
+	if msg, _ := removed["error"].(string); msg == "" {
+		t.Fatal("a degraded store must say why")
+	}
+	if listed := store(http.MethodGet, "/credentials"); listed["ok"] != false {
+		t.Fatalf("the reload after it must report it too, got %v", listed)
+	}
+}
+
 func writeTestJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)

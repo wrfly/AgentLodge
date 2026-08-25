@@ -777,7 +777,11 @@ export function buildGateway(): FastifyInstance {
   app.get('/credentials', adminOnly, async () => {
     if (!credentialManager.isConfigured()) return { configured: false, credentials: [] };
     try {
-      return { configured: true, credentials: await credentialManager.list() };
+      // `store` is the manager's own durability, carried through so the console
+      // can say that a change it just made lives only in memory. The console
+      // reloads this list after every mutation, so that is where it lands.
+      const { credentials, store } = await credentialManager.list();
+      return { configured: true, credentials, store };
     } catch (e) {
       return { configured: true, credentials: [], error: (e as Error).message };
     }

@@ -565,6 +565,7 @@ export const zh: Record<string, string> = {
   '{id} is not in the credential manager any more, so requests are refused': 'credential-manager 里已经没有 {id} 了，请求会被拒',
   'read from a file': '读自文件',
   'The credential manager is not running, so no upstream can authenticate. Start that service and its credentials appear here.': 'credential-manager 没在跑，任何上游都没法鉴权。把这个服务起起来，凭据就会出现在这里。',
+  'The credential manager cannot write its store, so anything changed here lives only in memory and a restart loses it. {error}': 'credential-manager 无法写入自己的存储，这里改动的东西只留在内存里，重启就会丢失。{error}',
   'Read a key from a file': '从文件读取 key',
   'Path': '路径',
   'Readable directories: {roots}. Set CREDENTIAL_FILE_ROOTS on the credential manager to add others.': '可读目录：{roots}。要加别的挂载点，改 credential-manager 的 CREDENTIAL_FILE_ROOTS。',

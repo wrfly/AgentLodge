@@ -335,6 +335,24 @@ func (a *manager) releaseRefreshLock(id string) {
 	a.refreshMu.Unlock()
 }
 
+// storeBlock is what a response says about the store's durability, in the one
+// shape every endpoint uses.
+//
+// It travels as its own fact rather than as the failure of whatever operation
+// happened to run into it. A credential stored while the disk is full is live,
+// listed and serving tokens — the operation did what was asked. What is not
+// true any more is that a restart comes back to it, and that is a property of
+// the store, not of the request that noticed.
+func (a *manager) storeBlock() map[string]any {
+	a.lock()
+	err := a.storeErr
+	a.unlock()
+	if err != nil {
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	return map[string]any{"ok": true}
+}
+
 // logf is every log line this service writes, so they all carry the same prefix.
 func logf(format string, args ...any) {
 	log.Printf("credential-manager: "+format, args...)
@@ -424,18 +442,11 @@ func (a *manager) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			ready = true
 		}
 	}
-	out := map[string]any{"status": "ok", "ready": ready, "credentials": creds}
-	// The store's durability is its own fact: "ready" says whether a credential
-	// is usable now, which a failed persist does not change. Say so separately.
-	a.lock()
-	storeErr := a.storeErr
-	a.unlock()
-	if storeErr != nil {
-		out["store"] = map[string]any{"ok": false, "error": storeErr.Error()}
-	} else {
-		out["store"] = map[string]any{"ok": true}
-	}
-	writeJSON(w, http.StatusOK, out)
+	// "ready" says whether a credential is usable now, which a failed persist
+	// does not change. The store's durability is a separate line.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok", "ready": ready, "credentials": creds, "store": a.storeBlock(),
+	})
 }
 
 // handleCredentials lists, stores and forgets credentials.
@@ -447,7 +458,7 @@ func (a *manager) handleHealth(w http.ResponseWriter, _ *http.Request) {
 func (a *manager) handleCredentials(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"credentials": a.list()})
+		writeJSON(w, http.StatusOK, map[string]any{"credentials": a.list(), "store": a.storeBlock()})
 
 	case http.MethodPost:
 		var req struct {
@@ -488,7 +499,7 @@ func (a *manager) handleCredentials(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			logf("stored key file %s -> %s", c.ID, path)
-			writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary()})
+			writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary(), "store": a.storeBlock()})
 			return
 		}
 
@@ -514,7 +525,7 @@ func (a *manager) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		logf("stored api key %s", c.ID)
-		writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary()})
+		writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary(), "store": a.storeBlock()})
 
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
@@ -523,7 +534,7 @@ func (a *manager) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		logf("removed %s", id)
-		writeJSON(w, http.StatusOK, map[string]any{"removed": id})
+		writeJSON(w, http.StatusOK, map[string]any{"removed": id, "store": a.storeBlock()})
 
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "use GET, POST or DELETE"})
@@ -588,7 +599,7 @@ func (a *manager) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logf("imported %s from the mounted credentials file", c.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary()})
+	writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary(), "store": a.storeBlock()})
 }
 
 // handleLoginStart hands back the URL to authorise at. Nothing is stored until
@@ -647,7 +658,7 @@ func (a *manager) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary()})
+	writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary(), "store": a.storeBlock()})
 }
 
 // credentialParam accepts either name for the same thing: `credential` is what

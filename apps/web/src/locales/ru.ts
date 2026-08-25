@@ -565,6 +565,7 @@ export const ru: Record<string, string> = {
   '{id} is not in the credential manager any more, so requests are refused': '{id} больше нет в credential-manager — запросы отклоняются',
   'read from a file': 'читается из файла',
   'The credential manager is not running, so no upstream can authenticate. Start that service and its credentials appear here.': 'credential-manager не запущен, поэтому ни один апстрим не может пройти аутентификацию. Запустите этот сервис — учётные данные появятся здесь.',
+  'The credential manager cannot write its store, so anything changed here lives only in memory and a restart loses it. {error}': 'credential-manager не может записать своё хранилище: изменения, сделанные здесь, остаются только в памяти и теряются при перезапуске. {error}',
   'Read a key from a file': 'Читать ключ из файла',
   'Path': 'Путь',
   'Readable directories: {roots}. Set CREDENTIAL_FILE_ROOTS on the credential manager to add others.': 'Доступные каталоги: {roots}. Чтобы добавить другие, задайте CREDENTIAL_FILE_ROOTS у credential-manager.',

@@ -539,6 +539,7 @@ export const zhHant: Record<string, string> = {
   '{id} is not in the credential manager any more, so requests are refused': 'credential-manager 裡已經沒有 {id} 了，請求會被拒',
   'read from a file': '讀自檔案',
   'The credential manager is not running, so no upstream can authenticate. Start that service and its credentials appear here.': 'credential-manager 沒在跑，任何上游都無法鑑權。把這個服務啟動起來，憑證就會出現在這裡。',
+  'The credential manager cannot write its store, so anything changed here lives only in memory and a restart loses it. {error}': 'credential-manager 無法寫入自己的儲存，這裡變更的東西只留在記憶體裡，重新啟動就會遺失。{error}',
   'Read a key from a file': '從檔案讀取 key',
   'Path': '路徑',
   'Readable directories: {roots}. Set CREDENTIAL_FILE_ROOTS on the credential manager to add others.': '可讀目錄：{roots}。要加別的掛載點，改 credential-manager 的 CREDENTIAL_FILE_ROOTS。',

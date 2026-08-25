@@ -35,6 +35,22 @@ export interface CredentialSummary {
   accountId?: string;
 }
 
+/**
+ * Whether the manager's own store is durable right now.
+ *
+ * `ok: false` means the last change reached memory but not disk: the credential
+ * works, is listed, mints tokens — and a restart comes back without it. That is
+ * a property of the store rather than of any one operation, which is why it
+ * rides along with the list instead of turning a delete or a sign-in into a
+ * failure. Those are irreversible the moment they happen; refusing them after
+ * the fact only asks for a retry that cannot help.
+ */
+export interface StoreState {
+  ok: boolean;
+  /** Why the store cannot be written. Shown verbatim. */
+  error?: string;
+}
+
 export interface StartedLogin {
   loginId: string;
   /** Where the administrator authorises. The code shown afterwards completes it. */
@@ -109,9 +125,9 @@ function request<T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unkn
   });
 }
 
-export async function list(): Promise<CredentialSummary[]> {
-  const body = await request<{ credentials?: CredentialSummary[] }>('/credentials', 'GET');
-  return body.credentials ?? [];
+export async function list(): Promise<{ credentials: CredentialSummary[]; store?: StoreState }> {
+  const body = await request<{ credentials?: CredentialSummary[]; store?: StoreState }>('/credentials', 'GET');
+  return { credentials: body.credentials ?? [], store: body.store };
 }
 
 /** Store a key somebody pasted. The only kind that can be given as a value. */

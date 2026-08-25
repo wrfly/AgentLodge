@@ -538,6 +538,7 @@ export const es: Record<string, string> = {
   '{id} is not in the credential manager any more, so requests are refused': '{id} ya no está en el credential-manager, así que las peticiones se rechazan',
   'read from a file': 'leída de un archivo',
   'The credential manager is not running, so no upstream can authenticate. Start that service and its credentials appear here.': 'El credential-manager no está en marcha, así que ningún upstream puede autenticarse. Arranca ese servicio y sus credenciales aparecerán aquí.',
+  'The credential manager cannot write its store, so anything changed here lives only in memory and a restart loses it. {error}': 'El credential-manager no puede escribir su almacén: lo que se cambie aquí solo vive en memoria y se pierde al reiniciar. {error}',
   'Read a key from a file': 'Leer una clave de un archivo',
   'Path': 'Ruta',
   'Readable directories: {roots}. Set CREDENTIAL_FILE_ROOTS on the credential manager to add others.': 'Directorios legibles: {roots}. Añade otros con CREDENTIAL_FILE_ROOTS en el credential-manager.',
