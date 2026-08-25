@@ -134,6 +134,13 @@ async function create(userId: string): Promise<void> {
     // reach their upstream through it, while keeping an internet route so an agent can
     // install packages and look things up. app and caddy are not on this network, so an
     // agent cannot reach the internal services.
+    //
+    // Make sure the network exists before naming it. Compose owns this network, but an
+    // agent container is not compose's, so nothing deletes it when `compose down -v` (or
+    // a `network prune`) tears the named network away: the container survives and later
+    // fails with "network ... not found". Creating here means a fresh container never
+    // depends on what an earlier lifecycle left behind.
+    await ensureNetwork(config.agentNetwork);
     args.push('--network', config.agentNetwork);
   }
   // Unset means the default network, where a container reaches a gateway on the host
@@ -141,6 +148,22 @@ async function create(userId: string): Promise<void> {
 
   args.push(config.agentImage);
   await podman(args, 120_000);
+}
+
+/**
+ * Make sure a network exists, creating it if it does not.
+ *
+ * Idempotent and self-healing: `network create` fails when the network is already there,
+ * so probe with `inspect` first and create only on a miss. Doing this in `create()` — not
+ * at deploy time — keeps the app the single owner of its agent containers' network and
+ * removes the manual `docker network create` step a fresh host would otherwise need.
+ */
+async function ensureNetwork(name: string): Promise<void> {
+  try {
+    await podman(['network', 'inspect', name], 15_000);
+  } catch {
+    await podman(['network', 'create', name], 15_000);
+  }
 }
 
 /** Make sure this user's container is running, and return its name */
@@ -152,7 +175,19 @@ export async function ensure(userId: string): Promise<string> {
   const task = (async () => {
     const status = await exists(name);
     if (status === 'absent') await create(userId);
-    else if (status === 'stopped') await podman(['start', name], 60_000);
+    else if (status === 'stopped') {
+      // A stopped container still remembers the network it was created on. If that
+      // network has since been removed — `compose down -v`, a `network prune`, a daemon
+      // reset — `start` fails with "network ... not found" and there is no way to reattach
+      // it. The container itself holds no state (workspace and HOME are bind mounts), so
+      // the recovery is to drop it and let `create` build a fresh one on the live network.
+      try {
+        await podman(['start', name], 60_000);
+      } catch {
+        await podman(['rm', '-f', name], 30_000).catch(() => {});
+        await create(userId);
+      }
+    }
 
     state.set(userId, { name, running: true, lastActiveAt: Date.now(), startedAt: new Date().toISOString() });
     return name;
