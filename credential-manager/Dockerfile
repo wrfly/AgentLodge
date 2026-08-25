@@ -3,9 +3,16 @@ FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY *.go ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/credential-manager .
+RUN apk add --no-cache ca-certificates \
+ && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/credential-manager .
 
 FROM scratch
+
+# Root certificates. Without them a scratch image cannot verify any TLS certificate, and
+# this service exists to POST to a token endpoint — every refresh fails with "certificate
+# signed by unknown authority", hours after a deployment looked healthy, because the token
+# it started with had not expired yet.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 COPY --from=build /out/credential-manager /usr/local/bin/credential-manager
 
