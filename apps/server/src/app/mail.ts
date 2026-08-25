@@ -1,11 +1,16 @@
-import { getString } from '../core/db/settings.js';
+import nodemailer from 'nodemailer';
+import { getNumber, getString } from '../core/db/settings.js';
 
 /**
- * Sending mail through SendGrid v3.
+ * Sending mail, through whichever of three backends is configured.
  *
- * Straight to the REST API rather than pulling in @sendgrid/mail — it is one POST, which
- * does not justify a dependency. With no API key configured it degrades to printing the
- * link to the server log, so local development still exercises the whole flow.
+ * resend and brevo are one POST each, so they are one POST each here rather than an SDK.
+ * smtp is not one POST: the TLS upgrade, the authentication mechanisms and the MIME
+ * encoding of a non-ASCII subject are each a place a hand-written client is wrong without
+ * saying so, and that one is nodemailer — which carries no dependencies of its own.
+ *
+ * With nothing configured it degrades to printing the link to the server log, so local
+ * development still exercises the whole flow.
  */
 
 export interface SendResult {
@@ -24,53 +29,125 @@ interface SendInput {
   link?: string;
 }
 
-const ENDPOINT = 'https://api.sendgrid.com/v3/mail/send';
+type Provider = 'resend' | 'brevo' | 'smtp';
+
+/** What this provider still needs, or undefined when it can send */
+function missing(provider: Provider, from: string): string | undefined {
+  if (!from) return 'No from address configured';
+  if (provider === 'smtp') {
+    return getString('mail.smtpHost') ? undefined : 'No SMTP host configured';
+  }
+  return getString('mail.apiKey') ? undefined : 'No API key configured';
+}
+
+/** The reason a provider gave, which its status code alone never carries */
+async function detail(res: Response): Promise<string> {
+  const body = await res.text().catch(() => '');
+  return `${res.status}: ${body.slice(0, 400) || 'no body'}`;
+}
 
 export async function send(input: SendInput): Promise<SendResult> {
-  const apiKey = getString('mail.sendgridApiKey');
+  const provider = (getString('mail.provider', 'resend') || 'resend') as Provider;
   const from = getString('mail.from');
   const fromName = getString('mail.fromName', 'AgentLodge');
 
-  if (!apiKey || !from) {
+  const notReady = missing(provider, from);
+  if (notReady) {
     console.log(
-      `\n  [mail] SendGrid is not configured; nothing was sent\n` +
+      `\n  [mail] ${provider} is not configured; nothing was sent\n` +
         `  to:      ${input.to}\n` +
         `  subject: ${input.subject}\n` +
         (input.link ? `  link:    ${input.link}\n` : ''),
     );
-    return { sent: false, fallbackLink: input.link, error: !apiKey ? 'No SendGrid API key configured' : 'No from address configured' };
+    return { sent: false, fallbackLink: input.link, error: notReady };
   }
 
   try {
-    const res = await fetch(ENDPOINT, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        personalizations: [{ to: [{ email: input.to }] }],
-        from: { email: from, name: fromName },
-        subject: input.subject,
-        content: [
-          { type: 'text/plain', value: input.text },
-          { type: 'text/html', value: input.html },
-        ],
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    const failure =
+      provider === 'smtp'
+        ? await sendSmtp(from, fromName, input)
+        : provider === 'brevo'
+          ? await sendBrevo(from, fromName, input)
+          : await sendResend(from, fromName, input);
 
-    if (res.ok) return { sent: true };
-
-    // SendGrid puts the reason in the body; the status code alone says nothing
-    const body = await res.text().catch(() => '');
-    const detail = body.slice(0, 400) || `HTTP ${res.status}`;
-    console.error(`[mail] SendGrid returned ${res.status}: ${detail}`);
-    return { sent: false, error: `SendGrid ${res.status}: ${detail}`, fallbackLink: input.link };
+    if (!failure) return { sent: true };
+    console.error(`[mail] ${provider}: ${failure}`);
+    return { sent: false, error: `${provider} ${failure}`, fallbackLink: input.link };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[mail] send failed:', msg);
     return { sent: false, error: msg, fallbackLink: input.link };
+  }
+}
+
+async function sendResend(from: string, fromName: string, input: SendInput): Promise<string | undefined> {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${getString('mail.apiKey')}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: `${fromName} <${from}>`,
+      to: [input.to],
+      subject: input.subject,
+      html: input.html,
+      text: input.text,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  return res.ok ? undefined : await detail(res);
+}
+
+async function sendBrevo(from: string, fromName: string, input: SendInput): Promise<string | undefined> {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      // Brevo's own header, not Authorization: a Bearer token there is a different API
+      'api-key': getString('mail.apiKey'),
+      'content-type': 'application/json',
+      accept: 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { email: from, name: fromName },
+      to: [{ email: input.to }],
+      subject: input.subject,
+      htmlContent: input.html,
+      textContent: input.text,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  return res.ok ? undefined : await detail(res);
+}
+
+async function sendSmtp(from: string, fromName: string, input: SendInput): Promise<string | undefined> {
+  const port = getNumber('mail.smtpPort') ?? 587;
+  const user = getString('mail.smtpUser');
+  const transport = nodemailer.createTransport({
+    host: getString('mail.smtpHost'),
+    port,
+    // 465 is TLS from the first byte; 587 and 25 open in the clear and STARTTLS from
+    // there, which nodemailer does on its own when the server offers it
+    secure: port === 465,
+    auth: user ? { user, pass: getString('mail.smtpPassword') } : undefined,
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 20_000,
+  });
+  try {
+    // Built per send rather than kept: this sends a handful of messages a day, and a
+    // pooled connection would only be something to keep alive and re-open after the relay
+    // drops it
+    await transport.sendMail({
+      from: { address: from, name: fromName },
+      to: input.to,
+      subject: input.subject,
+      text: input.text,
+      html: input.html,
+    });
+    return undefined;
+  } finally {
+    transport.close();
   }
 }
 

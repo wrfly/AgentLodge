@@ -2476,6 +2476,18 @@ function SettingsTab() {
                       checked={value === 'true'}
                       onChange={(v) => setDraft((d) => ({ ...d, [s.key]: String(v) }))}
                     />
+                  ) : s.type === 'select' ? (
+                    <Select
+                      value={value}
+                      onChange={(e) => setDraft((d) => ({ ...d, [s.key]: e.target.value }))}
+                    >
+                      {/* Written as they are stored: these are product names */}
+                      {(s.options ?? []).map((o) => (
+                        <option key={o} value={o}>
+                          {o}
+                        </option>
+                      ))}
+                    </Select>
                   ) : s.scale ? (
                     /* Typed in its own unit; what leaves here is still the stored one */
                     <WithUnit

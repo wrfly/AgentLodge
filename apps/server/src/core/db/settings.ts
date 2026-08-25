@@ -55,8 +55,16 @@ export interface SettingSpec {
   key: string;
   label: string;
   group: 'mail' | 'quota' | 'agents';
-  type: 'string' | 'secret' | 'number' | 'boolean' | 'list';
+  type: 'string' | 'secret' | 'number' | 'boolean' | 'list' | 'select';
   hint?: string;
+  /**
+   * The values a `select` takes, shown as written.
+   *
+   * Not translated, and not paired with display labels: these are product names — resend,
+   * brevo, smtp — which read the same in every language, and a label here would land in
+   * every locale table for nothing.
+   */
+  options?: string[];
   /** Environment fallback, read when the setting itself is unset */
   envFallback?: string;
   default?: string;
@@ -101,12 +109,56 @@ export interface SettingSpec {
 export const SETTING_SPECS: SettingSpec[] = [
   // Email
   {
-    key: 'mail.sendgridApiKey',
-    label: 'SendGrid API Key',
+    key: 'mail.provider',
+    label: 'Mail provider',
+    group: 'mail',
+    type: 'select',
+    options: ['resend', 'brevo', 'smtp'],
+    default: 'resend',
+    envFallback: 'MAIL_PROVIDER',
+    hint: 'resend and brevo take an API key; smtp takes a host, a port and a login',
+    validate: (v) =>
+      ['resend', 'brevo', 'smtp'].includes(v) ? undefined : 'Pick resend, brevo or smtp',
+  },
+  {
+    key: 'mail.apiKey',
+    label: 'API key',
     group: 'mail',
     type: 'secret',
-    envFallback: 'SENDGRID_API_KEY',
-    hint: 'Without it email degrades: invite and reset links are printed to the server log',
+    envFallback: 'MAIL_API_KEY',
+    hint: 'For resend or brevo. Without a working provider email degrades: invite and reset links are printed to the server log',
+  },
+  {
+    key: 'mail.smtpHost',
+    label: 'SMTP host',
+    group: 'mail',
+    type: 'string',
+    envFallback: 'SMTP_HOST',
+    hint: 'For smtp — the relay to hand the message to',
+  },
+  {
+    key: 'mail.smtpPort',
+    label: 'SMTP port',
+    group: 'mail',
+    type: 'number',
+    default: '587',
+    envFallback: 'SMTP_PORT',
+    hint: '587 and 25 start in the clear and upgrade with STARTTLS; 465 is TLS from the first byte',
+  },
+  {
+    key: 'mail.smtpUser',
+    label: 'SMTP username',
+    group: 'mail',
+    type: 'string',
+    envFallback: 'SMTP_USER',
+    hint: 'Empty for a relay that authenticates by address rather than by login',
+  },
+  {
+    key: 'mail.smtpPassword',
+    label: 'SMTP password',
+    group: 'mail',
+    type: 'secret',
+    envFallback: 'SMTP_PASSWORD',
   },
   {
     key: 'mail.from',
@@ -114,7 +166,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'mail',
     type: 'string',
     envFallback: 'MAIL_FROM',
-    hint: 'Must be a sender verified in SendGrid',
+    hint: 'The address mail is sent as. The provider has to have verified it, or it is rejected or filed as spam',
   },
   { key: 'mail.fromName', label: 'From name', group: 'mail', type: 'string', default: 'AgentLodge' },
   {

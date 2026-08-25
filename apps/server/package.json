@@ -33,17 +33,20 @@
     "test:recap": "tsx src/app/recap.test.ts",
     "reset-password": "tsx src/cli/reset-password.ts",
     "test:reset-password": "tsx src/cli/reset-password.test.ts",
-    "test:containers": "tsx src/app/containers.test.ts"
+    "test:containers": "tsx src/app/containers.test.ts",
+    "test:mail": "tsx src/app/mail.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^10.0.2",
     "@fastify/multipart": "^10.1.1",
     "fastify": "^5.2.1",
-    "jose": "^6.2.9"
+    "jose": "^6.2.9",
+    "nodemailer": "^9.0.5"
   },
   "devDependencies": {
     "@types/node": "^22.13.1",
+    "@types/nodemailer": "^8.0.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

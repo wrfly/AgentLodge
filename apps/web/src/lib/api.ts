@@ -491,8 +491,10 @@ export interface SettingView {
   key: string;
   label: string;
   group: 'mail' | 'quota' | 'agents';
-  type: 'string' | 'secret' | 'number' | 'boolean' | 'list';
+  type: 'string' | 'secret' | 'number' | 'boolean' | 'list' | 'select';
   hint?: string;
+  /** The values a `select` takes, shown as written and in this order */
+  options?: string[];
   /** Shown and entered as a multiple of the stored value — a token limit is typed in millions */
   scale?: number;
   /** Shown inside the field, in the entered scale */

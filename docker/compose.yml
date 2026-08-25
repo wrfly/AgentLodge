@@ -54,7 +54,7 @@ services:
       dockerfile: docker/server.Dockerfile
     environment:
       # Fixed, and secret: whoever holds it can forge an administrator and the billing
-      # credentials both. Changing it means the DeepSeek and SendGrid keys saved in the
+      # credentials both. Changing it means the upstream and mail keys saved in the
       # console can never be decrypted again and have to be entered afresh.
       JWT_SECRET: ${JWT_SECRET:?must be set, see "Deployment" in MANUAL.md}
       ROLE: app

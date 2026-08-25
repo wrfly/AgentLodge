@@ -51,7 +51,7 @@ flowchart LR
 ## Features
 
 **Accounts**
-- [x] Invite-code registration, plus email invites bound to one address (SendGrid)
+- [x] Invite-code registration, plus email invites bound to one address (Resend, Brevo or any SMTP relay)
 - [x] Access token + refresh-token rotation; **a replayed token is treated as a leak** and
       every session for that user is revoked
 - [x] Password change, password reset, multi-device management, instant lockout on suspend

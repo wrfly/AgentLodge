@@ -46,7 +46,7 @@ flowchart LR
 ## 功能特性
 
 **账号**
-- [x] 邀请码注册、邮件定向邀请（SendGrid）
+- [x] 邀请码注册、邮件定向邀请（Resend / Brevo / SMTP 任选）
 - [x] access token + refresh token 轮转，**重放即判定泄漏**并撤销该用户全部会话
 - [x] 改密码、忘记密码、多设备管理、停用即时踢线
 - [x] 登录失败按 IP + 邮箱双维度锁定
