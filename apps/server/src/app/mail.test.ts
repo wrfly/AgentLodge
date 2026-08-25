@@ -48,17 +48,24 @@ interface Sent {
   body: Record<string, unknown>;
 }
 
-let sent: Sent | null = null;
+/*
+ * Read through a function, not straight off the variable: the assignment that fills it
+ * happens inside the stub, where control-flow analysis cannot see it, so a `= null` at the
+ * top of a case would narrow every later read in that block to `never`. A call's return
+ * type is not narrowed.
+ */
+let captured: Sent | null = null;
+const request = (): Sent | null => captured;
 let reply: () => Response = () => new Response('{}', { status: 200 });
 
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  sent = {
+globalThis.fetch = (async (input: unknown, init?: { headers?: unknown; body?: unknown }) => {
+  captured = {
     url: String(input),
     headers: (init?.headers ?? {}) as Record<string, string>,
     body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
   };
   return reply();
-}) as typeof fetch;
+}) as unknown as typeof fetch;
 
 const message = {
   to: 'someone@example.com',
@@ -70,12 +77,12 @@ const message = {
 
 console.log('\n=== Nothing configured ===');
 {
-  sent = null;
+  captured = null;
   const r = await send(message);
   ok('nothing is sent', r.sent === false);
   ok('the link comes back for the caller to show', r.fallbackLink === message.link);
   ok('and it says what is missing', /from address/i.test(r.error ?? ''), r.error);
-  ok('no request was made', sent === null);
+  ok('no request was made', request() === null);
 }
 
 console.log('\n=== resend ===');
@@ -83,12 +90,12 @@ console.log('\n=== resend ===');
   setSetting('mail.from', 'lodge@example.com');
   setSetting('mail.fromName', 'AgentLodge');
   setSetting('mail.apiKey', 'rsnd_key');
-  sent = null;
+  captured = null;
   const r = await send(message);
-  const body = sent?.body ?? {};
+  const body = request()?.body ?? {};
   ok('the default provider needs no setting of its own', r.sent === true, r.error);
-  ok('posts to resend', sent?.url === 'https://api.resend.com/emails', sent?.url);
-  ok('the key is a bearer token', sent?.headers.authorization === 'Bearer rsnd_key', JSON.stringify(sent?.headers));
+  ok('posts to resend', request()?.url === 'https://api.resend.com/emails', request()?.url);
+  ok('the key is a bearer token', request()?.headers.authorization === 'Bearer rsnd_key', JSON.stringify(request()?.headers));
   ok('the sender carries the display name', body.from === 'AgentLodge <lodge@example.com>', String(body.from));
   ok('the recipient is a list', Array.isArray(body.to) && (body.to as string[])[0] === message.to, JSON.stringify(body.to));
   ok('both bodies go', body.html === message.html && body.text === message.text);
@@ -107,13 +114,13 @@ console.log('\n=== What a provider says when it refuses ===');
 console.log('\n=== brevo ===');
 {
   setSetting('mail.provider', 'brevo');
-  sent = null;
+  captured = null;
   const r = await send(message);
-  const body = sent?.body ?? {};
+  const body = request()?.body ?? {};
   const sender = body.sender as { email?: string; name?: string } | undefined;
   const to = body.to as Array<{ email?: string }> | undefined;
-  ok('posts to brevo', sent?.url === 'https://api.brevo.com/v3/smtp/email', sent?.url);
-  ok('the key rides its own header, not Authorization', sent?.headers['api-key'] === 'rsnd_key' && !sent?.headers.authorization, JSON.stringify(sent?.headers));
+  ok('posts to brevo', request()?.url === 'https://api.brevo.com/v3/smtp/email', request()?.url);
+  ok('the key rides its own header, not Authorization', request()?.headers['api-key'] === 'rsnd_key' && !request()?.headers.authorization, JSON.stringify(request()?.headers));
   ok('the sender is an object', sender?.email === 'lodge@example.com' && sender?.name === 'AgentLodge', JSON.stringify(sender));
   ok('and so is each recipient', to?.[0]?.email === message.to, JSON.stringify(to));
   ok('the bodies are named differently here', body.htmlContent === message.html && body.textContent === message.text);
@@ -123,10 +130,10 @@ console.log('\n=== brevo ===');
 console.log('\n=== smtp ===');
 {
   setSetting('mail.provider', 'smtp');
-  sent = null;
+  captured = null;
   const missing = await send(message);
   ok('without a host it degrades rather than dialling', missing.sent === false && /SMTP host/i.test(missing.error ?? ''), missing.error);
-  ok('and makes no HTTP request either', sent === null);
+  ok('and makes no HTTP request either', request() === null);
 
   // Port 1 is refused straight away, which is the point: the dispatch reaches the SMTP
   // client and the failure comes back as a result rather than as a thrown error.
@@ -135,7 +142,7 @@ console.log('\n=== smtp ===');
   const refused = await send(message);
   ok('a relay that refuses is a failed send, not a crash', refused.sent === false && Boolean(refused.error), refused.error);
   ok('the link comes back from there too', refused.fallbackLink === message.link);
-  ok('and no HTTP provider was called', sent === null);
+  ok('and no HTTP provider was called', request() === null);
 }
 
 console.log('\n=== The provider name is checked when it is written ===');
