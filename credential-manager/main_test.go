@@ -642,6 +642,89 @@ func TestResolveSerialisesRefreshPerCredential(t *testing.T) {
 	}
 }
 
+// A 401 storm forces a refresh from every proxied request in flight at once.
+// Serialising them is only half the fix: a forced caller that still refreshes
+// after waiting rotates a refresh token the rotation it waited for already
+// spent, which is the same invalid_grant the lock was added to prevent.
+func TestResolveCollapsesConcurrentForcedRefreshes(t *testing.T) {
+	now := time.Now()
+	var refreshes atomic.Int32
+	fp := &fakeProvider{
+		// Not near expiry: force is the only reason any of these refresh.
+		pair: &tokenPair{AccessToken: "OLD", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			refreshes.Add(1)
+			// Hold the "endpoint" open long enough that every goroutine has
+			// read the store and queued before the first swap lands.
+			time.Sleep(50 * time.Millisecond)
+			return &tokenPair{AccessToken: "NEW", RefreshToken: "RT2", ExpiresAt: now.Add(time.Hour).UnixMilli()}, nil
+		},
+	}
+	a, _ := newManager(config{refreshLead: time.Minute}, map[string]provider{"fake": fp})
+
+	const n = 10
+	var wg sync.WaitGroup
+	served := make(chan string, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pair, err := resolveToken(a, true)
+			if err != nil {
+				served <- "error: " + err.Error()
+				return
+			}
+			served <- pair.AccessToken
+		}()
+	}
+	wg.Wait()
+	close(served)
+
+	for got := range served {
+		if got != "NEW" {
+			t.Fatalf("forced resolve answered %q, want the refreshed token", got)
+		}
+	}
+	if got := refreshes.Load(); got != 1 {
+		t.Fatalf("refresh called %d times for %d concurrent forced resolves, want exactly 1", got, n)
+	}
+}
+
+// The mirror of TestPutSurfacesAPersistFailure. An operator asking to store
+// something has to hear that it was not written; a refresh has already spent
+// the old refresh token by the time persist runs, so failing the call there
+// only takes the upstream down while a usable access token sits in memory.
+func TestResolveServesARefreshedTokenThatCouldNotBePersisted(t *testing.T) {
+	now := time.Now()
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "OLD", RefreshToken: "RT", ExpiresAt: now.Add(-time.Second).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			return &tokenPair{AccessToken: "NEW", RefreshToken: "RT2", ExpiresAt: now.Add(time.Hour).UnixMilli()}, nil
+		},
+	}
+
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	a, err := newManager(config{
+		stateFile:   filepath.Join(blocker, "sub", "state.enc"),
+		authKey:     make([]byte, 32),
+		refreshLead: time.Minute,
+	}, map[string]provider{"fake": fp})
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+
+	pair, err := resolveToken(a, false)
+	if err != nil {
+		t.Fatalf("resolve must serve the refreshed token even when the store cannot be written: %v", err)
+	}
+	if pair.AccessToken != "NEW" {
+		t.Fatalf("resolve answered %q, want the refreshed token", pair.AccessToken)
+	}
+}
+
 // A persist failure must not be reported as success: putting a credential into a
 // store whose state file cannot be written has to come back as an error, so the
 // operator is not told "saved" when a restart will lose it.

@@ -285,6 +285,7 @@ func (a *manager) resolve(ctx context.Context, id string, force bool) (*credenti
 	// endpoint, and — because the endpoint rotates the refresh token — the last
 	// one to swap stores a refresh token that the other already spent. That
 	// leaves the credential permanently broken with an "invalid_grant".
+	queued := c.Token
 	rl := a.refreshLock(id)
 	rl.Lock()
 	defer rl.Unlock()
@@ -297,6 +298,17 @@ func (a *manager) resolve(ctx context.Context, id string, force bool) (*credenti
 		c = cur
 	}
 	a.unlock()
+
+	// A token other than the one we queued with means the refresh we were
+	// waiting for has already landed, and that answers a force caller as well:
+	// force asks for "not the token I had", and this is not the token it had.
+	// Gating this on !force would leave the lock serialising the stampede
+	// instead of collapsing it — ten proxied requests that hit 401 together
+	// each rotate the refresh token in turn, and every rotation but the last
+	// is spent the moment the next one lands.
+	if c.Token != queued {
+		return c, nil
+	}
 	if !force && !expired(c.Token, a.cfg.refreshLead) {
 		return c, nil
 	}
@@ -325,11 +337,17 @@ func (a *manager) resolve(ctx context.Context, id string, force bool) (*credenti
 	updated.Token = refreshed
 	updated.UpdatedAt = time.Now().UnixMilli()
 	a.creds[id] = &updated
-	if err := a.persist(); err != nil {
-		a.unlock()
-		return nil, fmt.Errorf("refresh %s: persist: %w", id, err)
-	}
+	persistErr := a.persist()
 	a.unlock()
+	if persistErr != nil {
+		// The refresh has already happened and the old refresh token is spent.
+		// Returning an error here would take the upstream down while a usable
+		// access token sits in memory, and it would not un-spend anything — so
+		// serve the token and make the lost durability loud instead. The real
+		// damage is that a restart inside this window comes back holding the
+		// spent refresh token, which is what the operator has to see.
+		logf("%s: refreshed, but the store could not be written: %v", id, persistErr)
+	}
 	return &updated, nil
 }
 

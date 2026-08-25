@@ -254,16 +254,25 @@ export class UpstreamGate {
   }
 
   setMaxConcurrency(n: number): void {
-    this.cfg.maxConcurrency = Math.max(1, n);
-    // Raising the ceiling must not wipe the AIMD backoff: the whole point of
-    // the gate is to climb back down when the upstream is throttling, and
-    // resetting effectiveMax here — the exact moment an admin is likely to be
-    // poking settings during an incident — would answer a 429 storm by pushing
-    // harder. The effective limit already rises on its own after a run of
-    // clean responses (reportUpstream), so this only clamps it when the new
-    // ceiling is *lower*, and otherwise leaves recovery to the AIMD timer.
-    if (this.effectiveMax > this.cfg.maxConcurrency) {
-      this.effectiveMax = this.cfg.maxConcurrency;
+    const previousCeiling = this.cfg.maxConcurrency;
+    const ceiling = Math.max(1, n);
+    this.cfg.maxConcurrency = ceiling;
+    // Two different situations, and only one of them is a backoff.
+    //
+    // A gate that is *not* backing off sits at effectiveMax === the old
+    // ceiling, and there a raise is just a raise: applying it immediately is
+    // what the admin asked for. Leaving it to the AIMD climb instead — 20
+    // clean responses per +1 step — would report the new limit while nothing
+    // changed, for hundreds of requests.
+    //
+    // A gate that *is* backing off sits below its ceiling because the upstream
+    // is throttling us. Raising effectiveMax there, at the exact moment an
+    // admin is likely to be poking settings during an incident, answers a 429
+    // storm by pushing harder; recovery stays with the AIMD climb.
+    //
+    // A lower ceiling clamps in both cases — that is the limit doing its job.
+    if (this.effectiveMax > ceiling || this.effectiveMax === previousCeiling) {
+      this.effectiveMax = ceiling;
     }
     this.schedule();
   }
