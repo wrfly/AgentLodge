@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -441,7 +443,7 @@ func TestStoreKeepsPastedKeysAndForgetsThem(t *testing.T) {
 		t.Fatal("an update must not add a second credential")
 	}
 
-	if !a.remove("paid") {
+	if removed, _ := a.remove("paid"); !removed {
 		t.Fatal("remove said there was nothing to remove")
 	}
 	if _, err := a.resolve(context.Background(), "paid", false); !errors.Is(err, errNoCredential) {
@@ -590,6 +592,81 @@ func TestSignInIsRefusedForAKindWithNoEndpoints(t *testing.T) {
 	}
 	if _, _, err := a.startLogin(kindCodex, "codex", ""); err == nil {
 		t.Fatal("want an error when the kind has no authorize endpoint")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Single-flight refresh, and persist failures surfacing
+// ---------------------------------------------------------------------------
+
+// Concurrent resolve calls for the same expiring credential must issue exactly
+// one refresh. Without the per-credential lock, they would all see the token
+// expiring, all call the endpoint, and the last swap could persist a refresh
+// token an earlier call already spent.
+func TestResolveSerialisesRefreshPerCredential(t *testing.T) {
+	now := time.Now()
+	var refreshes atomic.Int32
+	fp := &fakeProvider{
+		pair: &tokenPair{AccessToken: "OLD", RefreshToken: "RT", ExpiresAt: now.Add(-time.Second).UnixMilli()},
+		onRefresh: func(pair *tokenPair) (*tokenPair, error) {
+			refreshes.Add(1)
+			// Hold the "endpoint" open long enough that, without a lock, every
+			// goroutine would pass the expiry check and call in.
+			time.Sleep(20 * time.Millisecond)
+			return &tokenPair{AccessToken: "NEW", RefreshToken: "RT", ExpiresAt: now.Add(time.Hour).UnixMilli()}, nil
+		},
+	}
+	a, _ := newManager(config{refreshLead: time.Minute}, map[string]provider{"fake": fp})
+
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := a.resolve(context.Background(), "fake", false)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+	}
+	if got := refreshes.Load(); got != 1 {
+		t.Fatalf("refresh called %d times, want exactly 1 (single-flight)", got)
+	}
+}
+
+// A persist failure must not be reported as success: putting a credential into a
+// store whose state file cannot be written has to come back as an error, so the
+// operator is not told "saved" when a restart will lose it.
+func TestPutSurfacesAPersistFailure(t *testing.T) {
+	// Make a regular file, then name the state file *under* it: MkdirAll on a path
+	// whose component is a file fails deterministically, which is the silent-loss
+	// shape the fix makes loud.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	bad := filepath.Join(blocker, "sub", "state.enc")
+
+	a, err := newManager(config{
+		stateFile:   bad,
+		authKey:     make([]byte, 32),
+		refreshLead: time.Minute,
+	}, map[string]provider{})
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+
+	err = a.put(&credential{ID: "paid", Kind: kindAPIKey, Source: sourceTyped, APIKey: "sk-ant-api03-abcdef"})
+	if err == nil {
+		t.Fatal("put on an unwritable state file must return an error")
 	}
 }
 

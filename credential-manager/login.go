@@ -144,7 +144,9 @@ func (a *manager) finishLogin(ctx context.Context, loginID, pasted string) (*cre
 	}
 
 	c := &credential{ID: p.CredID, Kind: p.Kind, Label: p.Label, Source: sourceLogin, Token: pair}
-	a.put(c)
+	if err := a.put(c); err != nil {
+		return nil, fmt.Errorf("sign-in: persist: %w", err)
+	}
 
 	a.lock()
 	delete(a.logins, loginID)

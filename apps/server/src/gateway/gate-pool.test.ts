@@ -76,5 +76,27 @@ console.log('\n=== The ceiling is deployment-wide ===');
   ok('stats carry the upstream each row belongs to', pool.stats().some((s) => s.providerId === 'provider-a'));
 }
 
+console.log('\n=== Ceiling changes must not defeat AIMD backoff ===');
+{
+  const pool = new GatePool({ ...cfg });
+  const a = pool.for('provider-a');
+
+  // The upstream throttles us and the gate backs off.
+  a.reportUpstream(429);
+  const narrowed = a.stats().effectiveMax;
+  ok('a 429 narrows the gate', narrowed < a.stats().max, JSON.stringify(a.stats()));
+
+  // Raising the ceiling during the incident must leave the backoff alone: the
+  // effective limit has to climb back on its own after a run of clean responses,
+  // not jump to full the moment an admin opens the settings page.
+  pool.setMaxConcurrency(a.stats().max + 3);
+  ok('the new ceiling takes', a.stats().max === cfg.maxConcurrency + 3, String(a.stats().max));
+  ok('the backoff survives a ceiling raise', a.stats().effectiveMax === narrowed, JSON.stringify(a.stats()));
+
+  // But a ceiling *below* the effective limit does clamp it.
+  pool.setMaxConcurrency(1);
+  ok('a lower ceiling clamps the effective limit', a.stats().effectiveMax === 1, String(a.stats().effectiveMax));
+}
+
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

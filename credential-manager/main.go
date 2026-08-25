@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -272,15 +273,26 @@ type manager struct {
 	// In memory only: an interrupted sign-in is started again, not resumed.
 	logins map[string]*pendingLogin
 	mu     chan struct{} // mutex: buffered channel of size 1
+
+	// refreshMu serialises token refresh per credential id, so that concurrent
+	// /token (and the preRefresh ticker) calls for the same subscription do not
+	// issue overlapping refreshes of the same refresh token. The token endpoint
+	// rotates the refresh token, so an overlapping pair can persist a stale one
+	// and permanently break the credential ("invalid_grant"). One lock per id,
+	// created lazily; holding ever-seen ids in a map is bounded by the number of
+	// credentials, which is small and stable.
+	refreshMu    sync.Mutex
+	refreshLocks map[string]*sync.Mutex
 }
 
 func newManager(cfg config, provs map[string]provider) (*manager, error) {
 	a := &manager{
-		cfg:    cfg,
-		provs:  provs,
-		creds:  make(map[string]*credential),
-		logins: make(map[string]*pendingLogin),
-		mu:     make(chan struct{}, 1),
+		cfg:          cfg,
+		provs:        provs,
+		creds:        make(map[string]*credential),
+		logins:       make(map[string]*pendingLogin),
+		mu:           make(chan struct{}, 1),
+		refreshLocks: make(map[string]*sync.Mutex),
 	}
 	if cfg.stateFile != "" {
 		if err := a.restore(); err != nil {
@@ -293,6 +305,19 @@ func newManager(cfg config, provs map[string]provider) (*manager, error) {
 
 func (a *manager) lock()   { a.mu <- struct{}{} }
 func (a *manager) unlock() { <-a.mu }
+
+// refreshLock returns the per-credential lock for one id, creating it on first
+// use. Callers must hold a.refreshMu while creating it to stay race-free.
+func (a *manager) refreshLock(id string) *sync.Mutex {
+	a.refreshMu.Lock()
+	defer a.refreshMu.Unlock()
+	if l, ok := a.refreshLocks[id]; ok {
+		return l
+	}
+	l := &sync.Mutex{}
+	a.refreshLocks[id] = l
+	return l
+}
 
 // logf is every log line this service writes, so they all carry the same prefix.
 func logf(format string, args ...any) {
@@ -431,7 +456,10 @@ func (a *manager) handleCredentials(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			c := &credential{ID: req.ID, Kind: kindKeyFile, Label: req.Label, Source: sourceFile, Path: path}
-			a.put(c)
+			if err := a.put(c); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
 			logf("stored key file %s -> %s", c.ID, path)
 			writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary()})
 			return
@@ -454,13 +482,21 @@ func (a *manager) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c := &credential{ID: req.ID, Kind: kindAPIKey, Label: req.Label, Source: sourceTyped, APIKey: key}
-		a.put(c)
+		if err := a.put(c); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
 		logf("stored api key %s", c.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary()})
 
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		if !a.remove(id) {
+		removed, err := a.remove(id)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		if !removed {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "no credential " + id})
 			return
 		}

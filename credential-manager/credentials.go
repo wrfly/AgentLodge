@@ -208,7 +208,11 @@ func (a *manager) list() []map[string]any {
 // put stores a credential, replacing one with the same id. The creation time of
 // what was there is kept: an id is a stable thing the console points at, and
 // re-pasting a rotated key is an update, not a new credential.
-func (a *manager) put(c *credential) {
+//
+// The returned error is the persist error: the in-memory store is updated
+// regardless, but the caller must tell the operator when that update will not
+// survive a restart rather than claim success.
+func (a *manager) put(c *credential) error {
 	a.lock()
 	defer a.unlock()
 
@@ -219,20 +223,20 @@ func (a *manager) put(c *credential) {
 		c.CreatedAt = prev.CreatedAt
 	}
 	a.creds[c.ID] = c
-	a.persist()
+	return a.persist()
 }
 
-// remove deletes a credential. Reports whether there was one.
-func (a *manager) remove(id string) bool {
+// remove deletes a credential. Reports whether there was one; a non-nil error
+// means the delete happened in memory but failed to reach disk.
+func (a *manager) remove(id string) (bool, error) {
 	a.lock()
 	defer a.unlock()
 
 	if _, ok := a.creds[id]; !ok {
-		return false
+		return false, nil
 	}
 	delete(a.creds, id)
-	a.persist()
-	return true
+	return true, a.persist()
 }
 
 func (a *manager) get(id string) (*credential, bool) {
@@ -269,13 +273,32 @@ func (a *manager) resolve(ctx context.Context, id string, force bool) (*credenti
 	if c.Token == nil {
 		return nil, fmt.Errorf("credential %q holds no token; sign in or import it again", id)
 	}
-	if !force && !expired(c.Token, a.cfg.refreshLead) {
-		return c, nil
-	}
 
 	p, ok := a.provs[c.Kind]
 	if !ok {
 		return nil, fmt.Errorf("credential %q has kind %q, which this build cannot refresh", id, c.Kind)
+	}
+
+	// Serialise the refresh per credential. Without this, two concurrent calls
+	// (a /token and the preRefresh ticker, or two gateway requests crossing the
+	// expiry lead together) both see an expiring token, both call the token
+	// endpoint, and — because the endpoint rotates the refresh token — the last
+	// one to swap stores a refresh token that the other already spent. That
+	// leaves the credential permanently broken with an "invalid_grant".
+	rl := a.refreshLock(id)
+	rl.Lock()
+	defer rl.Unlock()
+
+	// Re-read under the per-credential lock: another request may have refreshed
+	// while we queued behind it, and that fresh token must be answered as is.
+	// The store lock guards the map read itself.
+	a.lock()
+	if cur, ok := a.creds[id]; ok && cur.Token != nil {
+		c = cur
+	}
+	a.unlock()
+	if !force && !expired(c.Token, a.cfg.refreshLead) {
+		return c, nil
 	}
 
 	refreshed, err := p.refresh(ctx, c.Token)
@@ -287,17 +310,27 @@ func (a *manager) resolve(ctx context.Context, id string, force bool) (*credenti
 	}
 
 	a.lock()
-	defer a.unlock()
-	// Re-read under the lock: a concurrent request may have refreshed already,
-	// or the credential may have been replaced while this call was upstream.
-	cur, ok := a.creds[id]
+	// Re-read under the store lock: the credential may have been replaced while
+	// this call was upstream (a re-import or a re-sign-in).
+	prev, ok := a.creds[id]
 	if !ok {
+		a.unlock()
 		return nil, fmt.Errorf("%w: %s (removed while it was being renewed)", errNoCredential, id)
 	}
-	cur.Token = refreshed
-	cur.UpdatedAt = time.Now().UnixMilli()
-	a.persist()
-	return cur, nil
+	// Copy-on-write: the map entry is replaced with a fresh struct carrying the
+	// new token, rather than mutating the shared credential in place. Anyone who
+	// read the old value earlier keeps an immutable snapshot, so the Token field
+	// is never written to a struct another goroutine is reading.
+	updated := *prev
+	updated.Token = refreshed
+	updated.UpdatedAt = time.Now().UnixMilli()
+	a.creds[id] = &updated
+	if err := a.persist(); err != nil {
+		a.unlock()
+		return nil, fmt.Errorf("refresh %s: persist: %w", id, err)
+	}
+	a.unlock()
+	return &updated, nil
 }
 
 // seedFromHost stores the credentials mounted into this container (the host's
@@ -318,7 +351,9 @@ func (a *manager) seedFromHost() {
 			logf("%s: no credential to seed from: %v", kind, err)
 			continue
 		}
-		a.put(&credential{ID: kind, Kind: kind, Source: sourceHostFile, Token: pair})
+		if err := a.put(&credential{ID: kind, Kind: kind, Source: sourceHostFile, Token: pair}); err != nil {
+			logf("%s: seeded in memory but not persisted: %v", kind, err)
+		}
 		logf("%s: seeded from the mounted credentials file", kind)
 	}
 }
@@ -336,6 +371,8 @@ func (a *manager) importFromHost(kind, id, label string) (*credential, error) {
 		return nil, err
 	}
 	c := &credential{ID: id, Kind: kind, Label: label, Source: sourceImport, Token: pair}
-	a.put(c)
+	if err := a.put(c); err != nil {
+		return nil, fmt.Errorf("import %s: persist: %w", id, err)
+	}
 	return c, nil
 }
