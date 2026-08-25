@@ -347,6 +347,18 @@ func (a *manager) resolve(ctx context.Context, id string, force bool) (*credenti
 		return nil, fmt.Errorf("%w: %s (removed while it was being renewed)", errNoCredential, id)
 	}
 
+	// The credential changed kind while this call waited for its turn — most
+	// plausibly the subscription was replaced by a pasted key or a key file.
+	// That needs no refresh: serve it exactly the way the top of this function
+	// would have, rather than reporting "sign in or import it again" about a
+	// credential that needs neither.
+	if c.Kind == kindAPIKey || c.Kind == kindKeyFile {
+		if _, err := c.secret(); err != nil {
+			return nil, fmt.Errorf("credential %q: %w", id, err)
+		}
+		return c, nil
+	}
+
 	// A token other than the one we queued with means the refresh we were
 	// waiting for has already landed, and that answers a force caller as well:
 	// force asks for "not the token I had", and this is not the token it had.
@@ -384,16 +396,34 @@ func (a *manager) resolve(ctx context.Context, id string, force bool) (*credenti
 	a.lock()
 	// Re-read under the store lock: the credential may have been replaced while
 	// this call was upstream (a re-import or a re-sign-in).
-	prev, ok := a.creds[id]
+	cur, ok := a.creds[id]
 	if !ok {
 		a.unlock()
 		return nil, fmt.Errorf("%w: %s (removed while it was being renewed)", errNoCredential, id)
+	}
+	// The refresh result belongs to the credential we started from. Every write
+	// path installs a fresh pointer, so pointer equality says whether the thing
+	// in the store is still that one; if it is not — the subscription was
+	// replaced while the token endpoint was answering — grafting these tokens
+	// onto the replacement would stitch an old subscription onto a new key.
+	// Discard the result and answer with what the store holds now.
+	if cur != c {
+		a.unlock()
+		// Through the same admission the top of this function applies. resolve
+		// promises a credential with a usable secret — publicToken leans on it,
+		// and hands out `accessToken: ""` with a 200 if it is not true. A
+		// replacement that is merely close to expiry is served as is: the next
+		// call refreshes it, and the 401 path forces one sooner.
+		if _, err := cur.secret(); err != nil {
+			return nil, fmt.Errorf("credential %q: %w", id, err)
+		}
+		return cur, nil
 	}
 	// Copy-on-write: the map entry is replaced with a fresh struct carrying the
 	// new token, rather than mutating the shared credential in place. Anyone who
 	// read the old value earlier keeps an immutable snapshot, so the Token field
 	// is never written to a struct another goroutine is reading.
-	updated := *prev
+	updated := *cur
 	updated.Token = refreshed
 	updated.UpdatedAt = time.Now().UnixMilli()
 	a.creds[id] = &updated
