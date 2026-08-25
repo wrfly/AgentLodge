@@ -20,7 +20,16 @@ import {
 import { attachUser, requireAdmin } from '../core/auth/guard.js';
 import * as credentialManager from '../core/credential-manager.js';
 import { installLocale, tr } from '../core/i18n/locale.js';
-import { localAgentText, mockStream, outboundHeaders, resolveUpstream, type Resolved } from './upstream.js';
+import {
+  betaUrl,
+  isOAuthToken,
+  localAgentText,
+  mockStream,
+  outboundHeaders,
+  resolveUpstream,
+  type Resolved,
+  withBillingSystem,
+} from './upstream.js';
 import {
   ChatToAnthropic,
   ChatToResponses,
@@ -359,10 +368,18 @@ async function handleProxy(
 
     // null was already refused above, so this cannot fall back to a direct connection
     const egress = egressTarget(target)!;
-    const upstream = await fetch(egress.url, {
+    /*
+     * A subscription is billed as Claude Code, so a request on one is sent as Claude Code:
+     * the query it puts on /v1/messages and the billing line at the head of its system
+     * prompt, both filled in only when the caller sent neither. An agent container is that
+     * client already and passes through untouched; what this covers is our own calls and
+     * anybody's own SDK against the same credential.
+     */
+    const asCli = target.wire === 'anthropic' && !target.translate && isOAuthToken(target.apiKey);
+    const upstream = await fetch(asCli ? betaUrl(egress.url) : egress.url, {
       method: 'POST',
-      headers: { ...outboundHeaders(req.headers, target.wire, target.apiKey), ...egress.headers },
-      body: JSON.stringify(outbound),
+      headers: { ...outboundHeaders(req.headers, target.wire, target.apiKey, claims.cid), ...egress.headers },
+      body: JSON.stringify(asCli ? withBillingSystem(outbound) : outbound),
       signal: ac.signal,
     });
 
@@ -653,7 +670,7 @@ export function buildGateway(): FastifyInstance {
       try {
         const res = await fetch(egress.url, {
           method: 'POST',
-          headers: { ...outboundHeaders(req.headers, 'anthropic', target.apiKey), ...egress.headers },
+          headers: { ...outboundHeaders(req.headers, 'anthropic', target.apiKey, who.cid), ...egress.headers },
           body: JSON.stringify(req.body ?? {}),
           signal: AbortSignal.timeout(10_000),
         });
