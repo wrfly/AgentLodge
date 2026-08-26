@@ -22,11 +22,12 @@
 #   PORT=9000                the port to serve on                (default 8080)
 #   SITE=lodge.example.com   the address Caddy answers on; a real domain gets a
 #                            certificate, anything else stays plain http
-#   TAG=latest               image channel                       (default master)
+#   TAG=0.2.1                which images, and the compose file cut with them: a version
+#                            number, `latest` for the newest release, or `master` for the
+#                            rolling build of the branch          (default master)
 #   START=0                  write the files and stop, for reading .env before anything runs
 set -eu
 
-REPO="https://raw.githubusercontent.com/wrfly/AgentLodge/master"
 DIR="${DIR:-$PWD/agentlodge}"
 PORT_GIVEN="${PORT+yes}"
 PORT="${PORT:-8080}"
@@ -37,6 +38,25 @@ SITE="${SITE:-localhost}"
 # newest release tag, which is only a complete stack once a release has been cut that
 # contains all of them.
 TAG="${TAG:-master}"
+# `v1.2.3` names the git tag and `1.2.3` names the image; people type whichever they saw
+case "$TAG" in v[0-9]*) TAG="${TAG#v}" ;; esac
+
+# The compose file comes from wherever the images come from. Taking master's for a pinned
+# install is how a deployment ends up running last month's images against this week's
+# file — a service master added that the pinned version never published, or a setting only
+# the newer images read, and neither says anything on the way past.
+#
+#   master   the branch's file, alongside the :master images
+#   latest   the newest release's own file, from its release page
+#   1.2.3    that release's file
+#
+# The two channels are moving targets and the version is not, which is why only one of
+# them is a git ref.
+case "$TAG" in
+  master) COMPOSE_URL="https://raw.githubusercontent.com/wrfly/AgentLodge/master/docker/compose.release.yml" ;;
+  latest) COMPOSE_URL="https://github.com/wrfly/AgentLodge/releases/latest/download/compose.release.yml" ;;
+  *)      COMPOSE_URL="https://github.com/wrfly/AgentLodge/releases/download/v$TAG/compose.release.yml" ;;
+esac
 START="${START:-1}"
 YES="${YES:-0}"
 
@@ -147,7 +167,11 @@ cd "$DIR"
 
 # ---- the two files a deployment is made of ----------------------------------
 say "fetching compose.release.yml"
-curl -fsSL "$REPO/docker/compose.release.yml" -o compose.release.yml
+curl -fsSL "$COMPOSE_URL" -o compose.release.yml || die "no compose file at $COMPOSE_URL
+
+  Every release from v0.2.0 on publishes one on its own page. For anything older, or for a
+  tag that was never cut, there is nothing to fetch — use TAG=master, or a version that has
+  a release page: https://github.com/wrfly/AgentLodge/releases"
 
 # ---- secrets, generated rather than asked for -------------------------------
 JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"

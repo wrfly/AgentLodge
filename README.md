@@ -121,7 +121,8 @@ curl -fsSL https://u.kfd.me/X7 | sh
 
 它会问地址和端口，默认 `localhost:8080`。不想被问就直接给：
 `curl -fsSL https://u.kfd.me/X7 | SITE=lodge.example.com sh`——填域名时 Caddy 自动签证书，
-端口固定 80/443。
+端口固定 80/443。装某个固定版本用 `TAG=0.2.1`，镜像和 compose 文件都取那一版的；默认的
+`master` 是分支的滚动构建。
 
 不想跑脚本，也可以自己来：
 
