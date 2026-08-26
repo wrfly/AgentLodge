@@ -131,6 +131,14 @@ console.log('\n=== A subscription request is sent as Claude Code ===');
 
   const own = outboundHeaders({ 'x-stainless-lang': 'python', 'anthropic-beta': 'mine-2026-01-01' }, 'anthropic', OAUTH);
   ok('an sdk that names itself is left alone', own['x-stainless-lang'] === 'python');
+  // And nothing of ours is mixed in with it. Filling the rest of the family from this
+  // host would put a Node runtime version next to lang=python — a client that does not
+  // exist, which is worse than either identity on its own.
+  ok(
+    'and the rest of the family is not filled in around it',
+    own['x-stainless-runtime'] === undefined && own['x-stainless-os'] === undefined,
+    JSON.stringify(own),
+  );
   ok('and its betas are merged, not replaced', (own['anthropic-beta'] ?? '').split(',').includes('mine-2026-01-01'), own['anthropic-beta']);
 }
 
