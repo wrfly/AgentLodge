@@ -10,6 +10,10 @@
 #   sudo install -d -o 10001 -g 10001 "$DATA_DIR"
 #   docker compose -f compose.release.yml up -d
 #
+# That is the newest release. Every release page carries the same two files with the
+# version already filled in, for a deployment that stays where it was put:
+# https://github.com/wrfly/AgentLodge/releases
+#
 # Written for **Docker**. On rootless podman, drop the `user:` and `group_add:` lines from
 # app and gateway — there, root inside a container is already you on the host — and point
 # PODMAN_SOCK at podman's socket.
@@ -25,9 +29,9 @@
 #     changing it makes the encrypted system settings permanently unreadable. Upstream
 #     credentials are not among them — those live in credential-manager, under its own key.
 
-# AGENTLODGE_TAG picks the channel: `latest` is the newest release, `master` is the rolling
-# build of the branch. `latest` exists only once a v* tag has been cut.
-x-image-base: &image-base docker.io/${AGENTLODGE_NAMESPACE:-wrfly}/agentlodge
+# AGENTLODGE_TAG picks the channel for all five images: `latest` is the newest release,
+# `master` is the rolling build of the branch, and a version number (`1.2.3`) pins this
+# deployment where it is. `latest` exists only once a v* tag has been cut.
 x-data-dir: &data-dir ${DATA_DIR:?must be an absolute path on the host, e.g. /srv/agentlodge/data}
 x-audit-proxy-url: &audit-proxy-url ${AUDIT_PROXY_URL:-http://audit:8796}
 x-audit-admin-token: &audit-admin-token ${AUDIT_ADMIN_TOKEN:?must be set, e.g. openssl rand -base64 32}
@@ -52,8 +56,11 @@ services:
       DATA_DIR: /data
       USE_CONTAINERS: "true"
       AGENT_NETWORK: agentlodge-agent-net
-      # Pulled by the engine on the host, not by compose — see the `docker pull` line above
-      AGENT_IMAGE: ${AGENT_IMAGE:-docker.io/wrfly/agentlodge-agent:latest}
+      # Follows AGENTLODGE_TAG like the other four, so pinning a version is one setting
+      # rather than two. It needs saying explicitly because this is the one image compose
+      # does not manage: app starts the agent containers through the socket, and the engine
+      # on the host is what pulls it — see the `agent-image` service below.
+      AGENT_IMAGE: ${AGENT_IMAGE:-docker.io/${AGENTLODGE_NAMESPACE:-wrfly}/agentlodge-agent:${AGENTLODGE_TAG:-latest}}
       GATEWAY_URL: http://gateway:8788
       GATEWAY_INTERNAL_URL: http://gateway:8788
       PUBLIC_GATEWAY_URL: ${PUBLIC_GATEWAY_URL:-${APP_BASE_URL:-http://localhost}}
@@ -150,7 +157,7 @@ services:
   # would otherwise never touch that image — and a deployment that skipped the separate
   # pull only found out when the first user sent a message.
   agent-image:
-    image: ${AGENT_IMAGE:-docker.io/wrfly/agentlodge-agent:latest}
+    image: ${AGENT_IMAGE:-docker.io/${AGENTLODGE_NAMESPACE:-wrfly}/agentlodge-agent:${AGENTLODGE_TAG:-latest}}
     command: ["sleep", "1"]
     restart: "no"
     # It has nothing to talk to, and saying so keeps compose from creating a default
