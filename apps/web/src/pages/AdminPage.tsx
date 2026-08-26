@@ -15,7 +15,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { factsFor, price, tokens } from '../lib/model-facts';
+import { factsFor, price } from '../lib/model-facts';
 import {
   admin,
   type AdminOverview,
@@ -1110,15 +1110,20 @@ function ModelsCard() {
                             {m.note && ` · ${m.note}`}
                           </td>
                           <td className="py-1.5 pr-3 text-right tabular-nums text-faint">
-                            {f ? tokens(f.context) : '—'}
+                            {f ? fmtTokens(f.context) : '—'}
                           </td>
                           <td className="py-1.5 pr-3 text-right tabular-nums text-faint">
-                            {f?.maxOutput ? tokens(f.maxOutput) : '—'}
+                            {f?.maxOutput ? fmtTokens(f.maxOutput) : '—'}
                           </td>
                           <td className="py-1.5 pr-3 text-right tabular-nums text-faint">
-                            {f?.inPrice !== undefined && f.outPrice !== undefined
-                              ? `${price(f.inPrice)} / ${price(f.outPrice)}`
-                              : '—'}
+                            {f?.inPrice !== undefined && f.outPrice !== undefined ? (
+                              <span title={f.note}>
+                                {`${price(f.inPrice)} / ${price(f.outPrice)}`}
+                                {f.note && <span className="ml-1 text-[10px]">*</span>}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
                           </td>
                           <td className="py-1.5 pr-3 text-right tabular-nums text-faint">
                             {f?.swe !== undefined ? `${f.swe}%` : '—'}

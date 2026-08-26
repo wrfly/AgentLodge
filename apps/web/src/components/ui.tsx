@@ -242,8 +242,13 @@ export function Banner({
 
 /** Token counts turn up all over the interface, so they are formatted in one place */
 export function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  // Trailing zeros dropped: a context window is 200k and a round million is 1M, and the
+  // second decimal is only ever noise on a number that happens to be round. Everything
+  // that shows a token count goes through here, so one screen cannot render 1.00M in one
+  // column and 1M in the next.
+  const trim = (s: string): string => String(Number(s));
+  if (n >= 1_000_000) return `${trim((n / 1_000_000).toFixed(2))}M`;
+  if (n >= 1_000) return `${trim((n / 1_000).toFixed(1))}k`;
   return String(n);
 }
 
