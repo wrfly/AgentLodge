@@ -150,7 +150,10 @@ create table if not exists conversations (
   -- How many messages the summary covers, so a conversation that has moved on is spotted
   summary_upto     integer,
   -- The user named this one themselves, so nothing else may rename it
-  title_custom     integer not null default 0
+  title_custom     integer not null default 0,
+  -- When a model named it. Null means never, and that is the whole condition for
+  -- naming it: once, on the first completed turn, and never again.
+  title_at         text
 );
 create index if not exists idx_conv_user on conversations(user_id, updated_at desc);
 create index if not exists idx_conv_user_agent on conversations(user_id, agent, updated_at desc);
