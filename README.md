@@ -133,6 +133,9 @@ sudo install -d -o 10001 -g 10001 "$DATA_DIR"   # app 和 gateway 以这个 uid 
 docker compose -f compose.release.yml up -d
 ```
 
+这两个链接给的是最新发布版。要钉在某个版本上，就去 [Releases](https://github.com/wrfly/AgentLodge/releases)
+拿那个版本页面上的同样两个文件——`.env` 里的 `AGENTLODGE_TAG` 已经写好版本号，五个镜像一起钉住。
+
 镜像按组件拆开发布在 Docker Hub 上。`:latest` 是最新的发布版本，`:master` 是分支的滚动构建。
 fork 之后流水线自动改用你自己的账号名，不用改任何东西。
 agent 镜像的标签里写着里面装的是哪个版本的 claude 和 codex。
