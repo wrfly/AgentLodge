@@ -15,8 +15,6 @@ import { getNumber, getSetting, getString } from '../core/db/settings.js';
 
 export interface SendResult {
   sent: boolean;
-  /** When nothing was actually sent, the link is handed back so the caller can show it */
-  fallbackLink?: string;
   error?: string;
 }
 
@@ -25,7 +23,13 @@ interface SendInput {
   subject: string;
   html: string;
   text: string;
-  /** The link printed and returned when degraded */
+  /**
+   * Printed to the log when nothing can be sent, which is what makes a local run usable
+   * without an account anywhere. Not handed back: the caller wrote this link and still
+   * has it, and the two callers that do not show it must not — a password-reset link
+   * returned to whoever asked for it is account takeover, and the quota warning has
+   * nobody to return anything to.
+   */
   link?: string;
 }
 
@@ -91,7 +95,7 @@ export async function send(input: SendInput): Promise<SendResult> {
   const chosen = provider();
   if (typeof chosen !== 'string') {
     console.error(`[mail] ${chosen.error}; nothing was sent to ${input.to}`);
-    return { sent: false, fallbackLink: input.link, error: chosen.error };
+    return { sent: false, error: chosen.error };
   }
   const from = getString('mail.from');
   const fromName = getString('mail.fromName', 'AgentLodge');
@@ -104,7 +108,7 @@ export async function send(input: SendInput): Promise<SendResult> {
         `  subject: ${input.subject}\n` +
         (input.link ? `  link:    ${input.link}\n` : ''),
     );
-    return { sent: false, fallbackLink: input.link, error: notReady };
+    return { sent: false, error: notReady };
   }
 
   try {
@@ -129,11 +133,11 @@ export async function send(input: SendInput): Promise<SendResult> {
 
     if (!failure) return { sent: true };
     console.error(`[mail] ${chosen}: ${failure}`);
-    return { sent: false, error: `${chosen} ${failure}`, fallbackLink: input.link };
+    return { sent: false, error: `${chosen} ${failure}` };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[mail] send failed:', msg);
-    return { sent: false, error: msg, fallbackLink: input.link };
+    return { sent: false, error: msg };
   }
 }
 

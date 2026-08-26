@@ -6,9 +6,10 @@
  * a 401 or a 400 at the moment somebody is waiting for an invite, so the shape of each
  * request is pinned here rather than discovered in production.
  *
- * The unconfigured case is a test as much as the others: it has to degrade to a link in
- * the log and hand that link back, because that is what makes local development work
- * without an account anywhere.
+ * The unconfigured case is a test as much as the others: it has to degrade rather than
+ * throw, and report that nothing went out, because that is what makes local development
+ * work without an account anywhere. The link goes to the log — the caller wrote it and
+ * still has it, so there is nothing to hand back.
  *
  * Run: npm -w @agentlodge/server run test:mail
  */
@@ -80,7 +81,6 @@ console.log('\n=== Nothing configured ===');
   captured = null;
   const r = await send(message);
   ok('nothing is sent', r.sent === false);
-  ok('the link comes back for the caller to show', r.fallbackLink === message.link);
   ok('and it says what is missing', /from address/i.test(r.error ?? ''), r.error);
   ok('no request was made', request() === null);
 }
@@ -108,7 +108,6 @@ console.log('\n=== What a provider says when it refuses ===');
   reply = () => new Response('{}', { status: 200 });
   ok('the failure is reported', r.sent === false);
   ok('with the status and the reason it gave', /403/.test(r.error ?? '') && /not verified/.test(r.error ?? ''), r.error);
-  ok('and the link still comes back', r.fallbackLink === message.link);
 }
 
 console.log('\n=== brevo ===');
@@ -141,7 +140,6 @@ console.log('\n=== smtp ===');
   setSetting('mail.smtpPort', '1');
   const refused = await send(message);
   ok('a relay that refuses is a failed send, not a crash', refused.sent === false && Boolean(refused.error), refused.error);
-  ok('the link comes back from there too', refused.fallbackLink === message.link);
   ok('and no HTTP provider was called', request() === null);
 }
 
