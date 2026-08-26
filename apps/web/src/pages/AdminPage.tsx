@@ -2331,6 +2331,18 @@ const SPAN: Record<NonNullable<SettingView['span']>, string> = {
   6: 'sm:col-span-6',
 };
 
+/**
+ * Whether a field belongs to the choice that is currently made.
+ *
+ * The draft is read before the stored value, so the mail card follows the dropdown as it
+ * moves rather than waiting for a save.
+ */
+function shownBy(settings: SettingView[], draft: Record<string, string>, s: SettingView): boolean {
+  if (!s.showWhen) return true;
+  const on = settings.find((x) => x.key === s.showWhen!.key);
+  return s.showWhen.is.includes(draft[s.showWhen.key] ?? on?.value ?? '');
+}
+
 const GROUP_LABELS: Record<SettingView['group'], string> = {
   // The site address belongs in this group: all three of its uses build links in emails
   mail: 'Email and site address',
@@ -2428,6 +2440,24 @@ function SettingsTab() {
     void load();
   }, []);
 
+  /*
+   * A field the dropdown has moved away from is gone from the card, and its unsaved edit
+   * goes with it. Hiding it while keeping the draft entry meant an edit nobody could see
+   * was counted in "N unsaved changes", Discard threw it out along with the visible one
+   * with no way to separate them, and Save wrote a value for a provider that is no longer
+   * chosen — a Resend key stored while the card says smtp.
+   */
+  useEffect(() => {
+    if (!settings) return;
+    const stale = settings.filter((s) => draft[s.key] !== undefined && !shownBy(settings, draft, s));
+    if (stale.length === 0) return;
+    setDraft((d) => {
+      const next = { ...d };
+      for (const s of stale) delete next[s.key];
+      return next;
+    });
+  }, [settings, draft]);
+
   if (!settings) return <Spinner />;
 
   const dirty = Object.keys(draft).length > 0;
@@ -2521,11 +2551,7 @@ function SettingsTab() {
              * and which one follows the dropdown as it moves — the draft is read first,
              * so it follows before the page is even saved.
              */
-            .filter((s) => {
-              if (!s.showWhen) return true;
-              const on = settings.find((x) => x.key === s.showWhen!.key);
-              return s.showWhen.is.includes(draft[s.showWhen.key] ?? on?.value ?? '');
-            })
+            .filter((s) => shownBy(settings, draft, s))
             .map((s) => {
               const value = draft[s.key] ?? s.value;
               return (
