@@ -545,7 +545,7 @@ export const ja: Record<string, string> = {
   'In memory': '記憶済み',
   'Keep': '記憶する',
   'Your conversations, in a line each': '会話ごとに一行',
-  '{n} more are still being summarised in the background': '残り {n} 件をバックグラウンドで要約中',
+  '{n} more have no summary yet. Writing it again picks up where this left off.': '要約がまだの会話があと {n} 件あります。もう一度書くと続きから処理します。',
   '{n}h left': '残り {n} 時間',
   '{n}m left': '残り {n} 分',
   'read from the mounted file': 'マウントされたファイルから読み取り',

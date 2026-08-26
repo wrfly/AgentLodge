@@ -519,7 +519,7 @@ export const zhHant: Record<string, string> = {
   'In memory': '已記住',
   'Keep': '記下來',
   'Your conversations, in a line each': '每個對話一句話',
-  '{n} more are still being summarised in the background': '還有 {n} 個在後台總結',
+  '{n} more have no summary yet. Writing it again picks up where this left off.': '還有 {n} 個沒有總結。再寫一次會接著處理。',
   '{n}h left': '還剩 {n} 小時',
   '{n}m left': '還剩 {n} 分鐘',
   'read from the mounted file': '讀自掛載的檔案',

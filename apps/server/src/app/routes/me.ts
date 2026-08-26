@@ -156,12 +156,13 @@ export function registerMeRoutes(app: FastifyInstance): void {
   });
 
   /**
-   * Write the portrait.
+   * Write the portrait, summarising whatever has no summary yet.
    *
-   * Conversations are summarised by the sweep as they go quiet, so by the time anyone opens
-   * this page there is usually nothing to catch up on. Anything still outstanding is taken
-   * care of here rather than asked about — but bounded, because each one is a request; the
-   * rest stays with the sweep and the page says how many are left.
+   * This is the only thing that summarises anything: nothing runs on a timer, so a
+   * conversation stays unsummarised until somebody opens this page. Bounded, because each
+   * one is a request and the user is waiting on all of them — and what is left over comes
+   * back as a count the page can offer to pick up, rather than a promise that something
+   * else will.
    */
   app.post('/api/me/profile/recap', guard, async (req, reply) => {
     const userId = req.user!.id;

@@ -393,7 +393,12 @@ export const me = {
   },
   quota: () => request<QuotaStatus>('/api/me/quota'),
   profile: () => request<Profile>('/api/me/profile'),
-  /** Write the portrait, catching up any conversation the sweep has not reached yet */
+  /**
+   * Write the portrait, summarising a batch of whatever has no summary yet.
+   *
+   * `pending` is what did not fit in the batch. Nothing else will pick those up — calling
+   * this again is what does.
+   */
   recap: () =>
     request<{ portrait?: Profile['portrait']; summaries: Profile['summaries']; pending: number }>(
       '/api/me/profile/recap',
