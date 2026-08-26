@@ -409,7 +409,8 @@ export const ja: Record<string, string> = {
 
   // Admin: agents
   Agents: 'Agent',
-  'Which agents this deployment offers.': 'どの agent を提供するか。',
+  'Which agents this deployment offers. Turning one off hides it everywhere; conversations already on it are kept but become unreachable.': 'このデプロイが提供するエージェント。オフにするとどこにも表示されなくなり、すでにそのエージェントで進めている会話は残りますが開けなくなります。',
+  'At least one has to stay on, so the last one cannot be switched off.': '少なくとも 1 つは有効なままにする必要があるため、最後の 1 つはオフにできません。',
   'CLI found': 'CLI を検出',
   'CLI not found': 'CLI が見つかりません',
   'Off — not offered to users': 'オフ — ユーザーには提供されません',

@@ -409,7 +409,8 @@ export const zh: Record<string, string> = {
 
   // Admin: agents
   Agents: 'Agent',
-  'Which agents this deployment offers.': '对外提供哪几个 agent。',
+  'Which agents this deployment offers. Turning one off hides it everywhere; conversations already on it are kept but become unreachable.': '这个部署提供哪些 agent。关掉一个会在所有地方隐藏它；已经在用它的会话会保留，但打不开了。',
+  'At least one has to stay on, so the last one cannot be switched off.': '至少要留一个开着，所以最后一个关不掉。',
   'CLI found': 'CLI 已就位',
   'CLI not found': '没找到 CLI',
   'Off — not offered to users': '已关闭，不对用户提供',
