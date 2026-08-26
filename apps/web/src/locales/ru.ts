@@ -409,7 +409,8 @@ export const ru: Record<string, string> = {
 
   // Admin: agents
   Agents: 'Агенты',
-  'Which agents this deployment offers.': 'Какие agent предлагает эта установка.',
+  'Which agents this deployment offers. Turning one off hides it everywhere; conversations already on it are kept but become unreachable.': 'Какие агенты доступны в этой установке. Выключенный исчезает везде; уже начатые с ним разговоры сохраняются, но открыть их нельзя.',
+  'At least one has to stay on, so the last one cannot be switched off.': 'Хотя бы один должен оставаться включённым, поэтому последний выключить нельзя.',
   'CLI found': 'CLI найден',
   'CLI not found': 'CLI не найден',
   'Off — not offered to users': 'Выключен — пользователям не предлагается',

@@ -2399,7 +2399,7 @@ function AgentsCard() {
   return (
     <Card
       title={t('Agents')}
-      description={t('Which agents this deployment offers.')}
+      description={t('Which agents this deployment offers. Turning one off hides it everywhere; conversations already on it are kept but become unreachable.')}
     >
       {err && <Banner tone="error">{err}</Banner>}
       <div className="divide-y divide-line">
@@ -2423,6 +2423,11 @@ function AgentsCard() {
           </div>
         ))}
       </div>
+      {/* The switch on the last enabled agent is disabled. Without this line it just does
+          not respond, which reads as a bug rather than a rule. */}
+      <p className="mt-2 text-[11.5px] text-faint">
+        {t('At least one has to stay on, so the last one cannot be switched off.')}
+      </p>
     </Card>
   );
 }
