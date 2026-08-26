@@ -518,7 +518,7 @@ export const fr: Record<string, string> = {
   'In memory': 'En mémoire',
   'Keep': 'Retenir',
   'Your conversations, in a line each': 'Vos conversations, une ligne chacune',
-  '{n} more are still being summarised in the background': '{n} autres sont encore en cours de résumé en arrière-plan',
+  '{n} more have no summary yet. Writing it again picks up where this left off.': '{n} autres n\'ont pas encore de résumé. Réécrire reprend là où cela s\'est arrêté.',
   '{n}h left': '{n} h restantes',
   '{n}m left': '{n} min restantes',
   'read from the mounted file': 'lu depuis le fichier monté',

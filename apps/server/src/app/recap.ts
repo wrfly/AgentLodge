@@ -256,15 +256,19 @@ async function summarizeOne(userId: string, id: string, messages: number): Promi
 
 export interface CatchUpResult {
   summarized: number;
-  /** Still waiting. The sweep will get to them; the page says so rather than asking. */
+  /**
+   * Left over. Nothing picks these up on its own — there is no background pass any more —
+   * so this is the number the page has to hand back to the user as something to do, not
+   * as something already in progress.
+   */
   remaining: number;
 }
 
 /**
  * Summarise this user's out-of-date conversations, up to a batch.
  *
- * Bounded because each one is a request. Anything over the batch is left to the sweep,
- * which is why nothing here asks the user to press the button again.
+ * Bounded because each one is a request, and the user is waiting on all of them. Whatever
+ * is over the batch stays where it is until they ask again.
  */
 export async function catchUp(userId: string, limit = BATCH): Promise<CatchUpResult> {
   const queue = pending(userId);
@@ -280,13 +284,9 @@ export async function catchUp(userId: string, limit = BATCH): Promise<CatchUpRes
   return { summarized, remaining: Math.max(0, queue.length - limit) };
 }
 
-/* ---------------- The sweep ---------------- */
+/* ---------------- Reading them back ---------------- */
 
-/**
- * A conversation is finished when it has been quiet for a while — not when a turn ends.
- * Somebody who comes back ten minutes later is still in the same conversation, and
- * summarising after every turn would pay for the same conversation over and over.
- */
+/** One conversation as the portrait page lists it: what it was called, and what it was */
 export interface Recap {
   id: string;
   title: string;

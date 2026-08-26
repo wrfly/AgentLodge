@@ -545,7 +545,7 @@ export const zh: Record<string, string> = {
   'In memory': '已记住',
   'Keep': '记下来',
   'Your conversations, in a line each': '每个对话一句话',
-  '{n} more are still being summarised in the background': '还有 {n} 个在后台总结',
+  '{n} more have no summary yet. Writing it again picks up where this left off.': '还有 {n} 个没有总结。再写一次会接着处理。',
   '{n}h left': '还剩 {n} 小时',
   '{n}m left': '还剩 {n} 分钟',
   'read from the mounted file': '读自挂载的文件',

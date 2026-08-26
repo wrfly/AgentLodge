@@ -545,7 +545,7 @@ export const ru: Record<string, string> = {
   'In memory': 'В памяти',
   'Keep': 'Запомнить',
   'Your conversations, in a line each': 'Каждый разговор одной строкой',
-  '{n} more are still being summarised in the background': 'ещё {n} обрабатываются в фоне',
+  '{n} more have no summary yet. Writing it again picks up where this left off.': 'Ещё {n} без резюме. Нажмите «написать ещё раз», и продолжится с того же места.',
   '{n}h left': 'осталось {n} ч',
   '{n}m left': 'осталось {n} мин',
   'read from the mounted file': 'прочитано из смонтированного файла',

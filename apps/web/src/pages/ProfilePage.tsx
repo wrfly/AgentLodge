@@ -159,7 +159,9 @@ export function ProfilePage() {
               title={t('Your conversations, in a line each')}
               description={
                 p.pending > 0
-                  ? t('{n} more are still being summarised in the background', { n: p.pending })
+                  ? t('{n} more have no summary yet. Writing it again picks up where this left off.', {
+                      n: p.pending,
+                    })
                   : undefined
               }
             >
