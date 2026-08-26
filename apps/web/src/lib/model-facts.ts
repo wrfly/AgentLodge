@@ -48,8 +48,17 @@ const FACTS: Record<string, ModelFacts> = {
   'claude-sonnet-4-5': { context: 200 * K, maxOutput: 64 * K, inPrice: 3, outPrice: 15 },
   'claude-haiku-4-5': { context: 200 * K, maxOutput: 64 * K, inPrice: 1, outPrice: 5, swe: 73.3 },
   'deepseek-v4-pro': { context: M, maxOutput: 384 * K, inPrice: 0.435, outPrice: 0.87 },
-  // Off-peak. DeepSeek doubles both between 01:00–04:00 and 06:00–10:00 UTC.
-  'deepseek-v4-flash': { context: M, maxOutput: 384 * K, inPrice: 0.22, outPrice: 0.66, swe: 78.6 },
+  'deepseek-v4-flash': {
+    context: M,
+    maxOutput: 384 * K,
+    inPrice: 0.22,
+    outPrice: 0.66,
+    swe: 78.6,
+    // The prices above are the off-peak ones, which is exactly what `note` is for: a
+    // reader comparing $0.22 against Claude's $3 has to know the number is conditional,
+    // and a source comment tells nobody.
+    note: 'off-peak; doubles 01:00–04:00 and 06:00–10:00 UTC',
+  },
 };
 
 const KEYS = Object.keys(FACTS).sort((a, b) => b.length - a.length);
@@ -58,13 +67,6 @@ export function factsFor(name: string): ModelFacts | undefined {
   const id = name.trim().toLowerCase();
   const key = KEYS.find((k) => id.startsWith(k));
   return key ? FACTS[key] : undefined;
-}
-
-/** 1000000 → 1M, 200000 → 200K */
-export function tokens(n: number): string {
-  if (n >= M) return `${Number((n / M).toFixed(1))}M`;
-  if (n >= K) return `${Number((n / K).toFixed(0))}K`;
-  return String(n);
 }
 
 /** $5 and $0.435 both read as themselves, without trailing zeros */
