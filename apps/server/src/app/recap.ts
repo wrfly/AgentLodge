@@ -214,9 +214,16 @@ export async function nameIfNeeded(userId: string, conversationId: string): Prom
   const body = questions(conversationId, userId).trim();
   if (!body) return undefined;
 
+  // A failure to reach the model at all — out of quota, upstream unwell — leaves the
+  // guard open on purpose: that is transient, and the next turn is the right time to try
+  // again. An answer that arrives and cannot be used is not transient, so it closes the
+  // guard: the model that replies with a sentence replies with a sentence every time.
   const answer = await ask(userId, `${TITLE_PROMPT}\n\n---\n\n${body}`, 32);
   const title = cleanTitle(answer.split('\n')[0] ?? '');
-  if (!title) return undefined;
+  if (!title) {
+    convRepo.markNamingTried(conversationId);
+    return undefined;
+  }
   return convRepo.retitle(conversationId, title) ? title : undefined;
 }
 
@@ -243,8 +250,10 @@ async function summarizeOne(userId: string, id: string, messages: number): Promi
     id,
     userId,
   );
-  // The name it started with is the first thing that was said; this is what it turned out
-  // to be about. Skipped when the user has named it themselves.
+  // Only for a conversation nothing has named yet — `retitle` keeps `title_at is null`,
+  // and every conversation since naming moved to the first turn has it set. So this is
+  // the backlog case: one that was created before, has not had a turn since, and is being
+  // summarised now. It is not a second chance to rename what the first turn named.
   if (title) convRepo.retitle(id, title);
   return true;
 }

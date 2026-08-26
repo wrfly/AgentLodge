@@ -178,6 +178,26 @@ console.log('\n=== Named once, and not again ===');
   ok('and the first name stands', convs.meta(once, userId)?.title === 'What it is about');
 }
 
+console.log('\n=== An answer that cannot be used still counts as tried ===');
+{
+  // The guard has to mean "has this been tried", not "did it work". A model that replies
+  // with a whole sentence — the failure cleanTitle exists for — used to leave title_at
+  // null, so the next turn read the conversation again, called the model again, and billed
+  // the user again, for as long as the conversation lived.
+  const tried = conversation('opening line', 4);
+  const before = convs.meta(tried, userId)?.title;
+
+  convs.markNamingTried(tried);
+
+  ok('the name it had is untouched', convs.meta(tried, userId)?.title === before);
+  ok('but nothing will name it again', !convs.retitle(tried, 'A model got there late'));
+  ok('and it still shows the old name', convs.meta(tried, userId)?.title === before);
+
+  // Idempotent, so a second turn racing the first cannot move the stamp.
+  convs.markNamingTried(tried);
+  ok('marking twice is a no-op', !convs.retitle(tried, 'Later still'));
+}
+
 console.log('\n=== The questions a name is made from ===');
 {
   // 12 messages alternate user/assistant, so six of them are questions
