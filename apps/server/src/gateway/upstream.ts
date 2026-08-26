@@ -519,7 +519,14 @@ export function outboundHeaders(
       if (!h['user-agent'] || BARE_RUNTIME.test(h['user-agent'])) h['user-agent'] = CLI_USER_AGENT;
       h['x-app'] ??= 'cli';
       h['x-claude-code-session-id'] ??= session || crypto.randomUUID();
-      for (const [k, v] of Object.entries(STAINLESS)) h[k] ??= v;
+      // The whole set or none of it. Filled key by key, a caller that sent three of its
+      // own got the rest from this host: `x-stainless-lang: python` alongside a Node
+      // runtime version and this machine's OS is a fingerprint no real client produces,
+      // which is the opposite of what describing yourself as one is for. A caller that
+      // named itself is left to describe itself completely.
+      if (!Object.keys(h).some((k) => k.startsWith('x-stainless-'))) {
+        for (const [k, v] of Object.entries(STAINLESS)) h[k] = v;
+      }
     }
 
     if (!oauth) h['x-api-key'] = apiKey;
