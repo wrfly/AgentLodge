@@ -51,6 +51,16 @@ export function decrypt(stored: string): string | null {
 
 /* ---------------- Setting definitions ---------------- */
 
+/**
+ * The widths a field can take, and not a number.
+ *
+ * The console turns this into a Tailwind class through a lookup table, and Tailwind needs
+ * the class to appear in the source — so there is a fixed set of them. Typed as `number`,
+ * `span: 5` type-checked, found nothing in the table, rendered with no class at all, and
+ * collapsed the field to a sixth of the row.
+ */
+export type SettingSpan = 1 | 2 | 3 | 4 | 6;
+
 export interface SettingSpec {
   key: string;
   label: string;
@@ -71,7 +81,7 @@ export interface SettingSpec {
    * Left out it takes the row. A reset hour and a weight are three characters wide and
    * had a row each, which turned six numbers into six screens of scrolling.
    */
-  span?: number;
+  span?: SettingSpan;
   /**
    * Only shown while another setting holds one of these values.
    *

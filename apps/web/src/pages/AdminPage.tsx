@@ -2323,7 +2323,7 @@ function TraceDetailView({ d }: { d: TraceDetail }) {
  * Tailwind needs the class in the source, so the spans are a map rather than a template.
  * Six columns, and a field that declares none takes the row.
  */
-const SPAN: Record<number, string> = {
+const SPAN: Record<NonNullable<SettingView['span']>, string> = {
   1: 'sm:col-span-1',
   2: 'sm:col-span-2',
   3: 'sm:col-span-3',
