@@ -150,3 +150,51 @@ jobs:
             echo "- claude-code \`${{ steps.cli.outputs.claude }}\`"
             echo "- codex \`${{ steps.cli.outputs.codex }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # A tag with nothing but images behind it is a version people cannot deploy without first
+  # working out which variables to set and to what. This writes the page that answers it:
+  # the instructions with the version filled in, and the two files a deployment is made of
+  # attached to it — the .env example with AGENTLODGE_TAG already set, so running a specific
+  # version is a download rather than an edit.
+  #
+  # After the images on purpose. A page describing images that do not exist yet is worse
+  # than no page, because it is the part everybody copies from.
+  notes:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+
+          # Re-running this workflow on a tag — because one image job failed and was
+          # retried — must not overwrite a page somebody has edited since. What is
+          # generated here is a starting point, not the last word on the release.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists; leaving it as it is"
+            exit 0
+          fi
+
+          mkdir -p dist
+          cp docker/compose.release.yml dist/
+          # The example ships with the channel commented out, which is right for whoever
+          # takes it from master and wrong on a version's own page
+          sed "s|^#*AGENTLODGE_TAG=.*|AGENTLODGE_TAG=$version|" \
+            docker/env.release.example > dist/env.release.example
+          sed "s|__VERSION__|$version|g" .github/release-notes.md > notes.md
+
+          # --generate-notes appends the commit and pull-request list underneath. `--notes`
+          # rather than `--notes-file`, which is the combination gh documents.
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes "$(cat notes.md)" \
+            --generate-notes \
+            dist/compose.release.yml dist/env.release.example

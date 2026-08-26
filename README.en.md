@@ -159,6 +159,10 @@ sudo install -d -o 10001 -g 10001 "$DATA_DIR"   # the uid app and gateway run as
 docker compose -f compose.release.yml up -d
 ```
 
+Those two links give you the newest release. To stay on a particular version, take the same
+two files from that version's page under [Releases](https://github.com/wrfly/AgentLodge/releases)
+— the `.env` there has `AGENTLODGE_TAG` filled in, which pins all five images at once.
+
 Images are split by component and published to Docker Hub. `:latest` is the newest release
 and `:master` is the rolling build of the branch. A fork publishes under its own owner with
 nothing to edit. The agent image's labels say which claude and codex versions are inside it.
