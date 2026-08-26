@@ -31,6 +31,24 @@ interface SendInput {
 
 type Provider = 'resend' | 'brevo' | 'smtp';
 
+const PROVIDERS: readonly Provider[] = ['resend', 'brevo', 'smtp'];
+
+/**
+ * The configured provider, or the reason there isn't one.
+ *
+ * A settings spec carries a `validate`, but that only runs on `setSetting` — the
+ * MAIL_PROVIDER environment path never passes through it. So an unrecognised value used
+ * to reach `send()` and fall off the end of a ternary chain into resend, which meant a
+ * typo, or a key for some fourth provider, was POSTed to api.resend.com as a bearer
+ * token. Handing someone's credential to a service they did not name is the one outcome
+ * worth failing closed for.
+ */
+function provider(): Provider | { error: string } {
+  const configured = getString('mail.provider', 'resend') || 'resend';
+  if ((PROVIDERS as readonly string[]).includes(configured)) return configured as Provider;
+  return { error: `Unknown mail provider ${JSON.stringify(configured)}; pick ${PROVIDERS.join(', ')}` };
+}
+
 /** What this provider still needs, or undefined when it can send */
 function missing(provider: Provider, from: string): string | undefined {
   if (!from) return 'No from address configured';
@@ -47,14 +65,18 @@ async function detail(res: Response): Promise<string> {
 }
 
 export async function send(input: SendInput): Promise<SendResult> {
-  const provider = (getString('mail.provider', 'resend') || 'resend') as Provider;
+  const chosen = provider();
+  if (typeof chosen !== 'string') {
+    console.error(`[mail] ${chosen.error}; nothing was sent to ${input.to}`);
+    return { sent: false, fallbackLink: input.link, error: chosen.error };
+  }
   const from = getString('mail.from');
   const fromName = getString('mail.fromName', 'AgentLodge');
 
-  const notReady = missing(provider, from);
+  const notReady = missing(chosen, from);
   if (notReady) {
     console.log(
-      `\n  [mail] ${provider} is not configured; nothing was sent\n` +
+      `\n  [mail] ${chosen} is not configured; nothing was sent\n` +
         `  to:      ${input.to}\n` +
         `  subject: ${input.subject}\n` +
         (input.link ? `  link:    ${input.link}\n` : ''),
@@ -63,16 +85,28 @@ export async function send(input: SendInput): Promise<SendResult> {
   }
 
   try {
-    const failure =
-      provider === 'smtp'
-        ? await sendSmtp(from, fromName, input)
-        : provider === 'brevo'
-          ? await sendBrevo(from, fromName, input)
-          : await sendResend(from, fromName, input);
+    // Exhaustive on purpose: a fourth provider added to the union without a branch here
+    // is a compile error rather than a silent delivery to whichever one is last.
+    let failure: string | undefined;
+    switch (chosen) {
+      case 'smtp':
+        failure = await sendSmtp(from, fromName, input);
+        break;
+      case 'brevo':
+        failure = await sendBrevo(from, fromName, input);
+        break;
+      case 'resend':
+        failure = await sendResend(from, fromName, input);
+        break;
+      default: {
+        const never: never = chosen;
+        throw new Error(`unhandled mail provider ${String(never)}`);
+      }
+    }
 
     if (!failure) return { sent: true };
-    console.error(`[mail] ${provider}: ${failure}`);
-    return { sent: false, error: `${provider} ${failure}`, fallbackLink: input.link };
+    console.error(`[mail] ${chosen}: ${failure}`);
+    return { sent: false, error: `${chosen} ${failure}`, fallbackLink: input.link };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[mail] send failed:', msg);

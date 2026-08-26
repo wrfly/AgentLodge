@@ -156,6 +156,36 @@ console.log('\n=== The provider name is checked when it is written ===');
   ok('an unknown provider is refused', /resend/.test(refusedWrite), refusedWrite);
 }
 
+console.log('\n=== An unknown provider fails closed, whichever way it arrived ===');
+{
+  // setSetting refuses it, but MAIL_PROVIDER never passes through validate. It used to
+  // fall off the end of a ternary chain into resend, so a key meant for some fourth
+  // provider went to api.resend.com as a bearer token.
+  captured = null;
+  const settings = await import('../core/db/settings.js');
+  const { run } = await import('../core/db/index.js');
+  // Straight out of the table: setSetting cannot clear it, because '' fails the same
+  // validate that MAIL_PROVIDER skips — which is the asymmetry under test.
+  run('delete from settings where key = ?', 'mail.provider');
+  process.env.MAIL_PROVIDER = 'postmark';
+  process.env.MAIL_API_KEY = 'pm_a_key_for_somebody_else';
+  settings.invalidate();
+
+  const result = await send(message);
+
+  ok('nothing is sent', !result.sent);
+  ok('the reason names the bad value', /postmark/.test(result.error ?? ''), result.error);
+  // Not just "it threw somewhere": an administrator reading this has to learn what the
+  // accepted values are, which is what separates a checked configuration from the
+  // exhaustive switch downstream catching an impossible case.
+  ok('and what to put there instead', /resend/.test(result.error ?? ''), result.error);
+  ok('and nobody received the key', request() === null, JSON.stringify(request()));
+
+  delete process.env.MAIL_PROVIDER;
+  delete process.env.MAIL_API_KEY;
+  settings.invalidate();
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
