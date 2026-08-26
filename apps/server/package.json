@@ -34,7 +34,8 @@
     "reset-password": "tsx src/cli/reset-password.ts",
     "test:reset-password": "tsx src/cli/reset-password.test.ts",
     "test:containers": "tsx src/app/containers.test.ts",
-    "test:mail": "tsx src/app/mail.test.ts"
+    "test:mail": "tsx src/app/mail.test.ts",
+    "test:schema": "tsx src/core/db/schema.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

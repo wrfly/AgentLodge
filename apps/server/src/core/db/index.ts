@@ -178,14 +178,6 @@ function migrate(d: DatabaseSync): void {
     }
   }
 
-  if (from < 6) {
-    // When a model named the conversation. Null means never, and that is the whole
-    // condition for naming it: it happens once, on the first turn, and never again.
-    if (!columns(d, 'conversations').has('title_at')) {
-      d.exec('alter table conversations add column title_at text');
-    }
-  }
-
   if (from < 5) {
     /*
      * Models become the thing requests are routed by, and a provider stops being a global
@@ -231,6 +223,14 @@ function migrate(d: DatabaseSync): void {
     }
     if (!columns(d, 'model_pricing').has('provider_id')) {
       d.exec('alter table model_pricing add column provider_id text');
+    }
+  }
+
+  if (from < 6) {
+    // When a model named the conversation. Null means never, and that is the whole
+    // condition for naming it: it happens once, on the first turn, and never again.
+    if (!columns(d, 'conversations').has('title_at')) {
+      d.exec('alter table conversations add column title_at text');
     }
   }
 
