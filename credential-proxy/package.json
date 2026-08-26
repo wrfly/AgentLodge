@@ -1,7 +1,7 @@
 {
   "name": "@agentlodge/gateway-auth",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Credential-injecting, usage-metering gateway: DeepSeek passes straight through, Claude/Codex use the host subscription credentials",
   "scripts": {
