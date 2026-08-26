@@ -160,6 +160,27 @@ export function full(id: string, userId: string): Conversation | undefined {
   };
 }
 
+/**
+ * The first few things the user said, oldest first.
+ *
+ * Its own query rather than a slice of `full()`. Naming a conversation reads five
+ * messages, and `full()` reads all of them — every row, every blocks blob parsed — plus a
+ * sum() across usage_records, so a five-hundred-message conversation paid for all of that
+ * to build a string out of the first five. The rest of what full() returns is thrown away
+ * on the next line.
+ */
+export function openingQuestions(id: string, userId: string, limit: number): StoredMessage[] {
+  return all<MsgRow>(
+    `select m.* from messages m
+       join conversations c on c.id = m.conversation_id
+      where m.conversation_id = ? and c.user_id = ? and m.role = 'user'
+      order by m.seq limit ?`,
+    id,
+    userId,
+    limit,
+  ).map(toMessage);
+}
+
 /* ---------------- Writes ---------------- */
 
 export interface CreateInput {

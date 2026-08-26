@@ -164,12 +164,8 @@ export function transcript(conversationId: string, userId: string): string {
 
 /** The opening questions, oldest first — what the conversation set out to be */
 export function questions(conversationId: string, userId: string): string {
-  const conv = convRepo.full(conversationId, userId);
-  if (!conv) return '';
-
-  return conv.messages
-    .filter((m) => m.role === 'user')
-    .slice(0, QUESTIONS)
+  return convRepo
+    .openingQuestions(conversationId, userId, QUESTIONS)
     .map((m) => textOf(m).slice(0, CHARS_PER_QUESTION))
     .filter(Boolean)
     .join('\n\n');
