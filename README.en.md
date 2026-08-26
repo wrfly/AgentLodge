@@ -147,7 +147,8 @@ read it first: `curl -fsSL https://u.kfd.me/X7 -o install.sh`, then `less instal
 
 It asks for the address and the port, defaulting to `localhost:8080`. To answer up front:
 `curl -fsSL https://u.kfd.me/X7 | SITE=lodge.example.com sh` — a domain gets a certificate
-from Caddy, on ports 80 and 443.
+from Caddy, on ports 80 and 443. `TAG=0.2.1` installs that version, images and compose file
+both; the default `master` is the rolling build of the branch.
 
 Or do it by hand:
 
