@@ -299,6 +299,23 @@ export function deriveTitle(text: string): string {
  * a model has already named this conversation: renaming it later costs another call and
  * moves a name the user has learned to recognise in their list.
  */
+/**
+ * Record that a model was asked to name this one, without giving it a name.
+ *
+ * `title_at` is the guard on naming, and the question it has to answer is "has this been
+ * tried", not "did it work". Only `retitle` used to set it, so an answer the cleaner
+ * rejects — a whole sentence, which its own comment calls the failure models cannot be
+ * talked out of — left the guard open and bought another call on the next turn, and the
+ * turn after that, billed to the user each time.
+ */
+export function markNamingTried(id: string): void {
+  run(
+    'update conversations set title_at = ? where id = ? and title_at is null',
+    nowIso(),
+    id,
+  );
+}
+
 export function retitle(id: string, title: string): boolean {
   const now = nowIso();
   return (
