@@ -24,6 +24,8 @@ import { buildGateway, gate, startModelAutoRefresh } from './gateway/index.js';
 import { drainLegacyProviderKeys } from './gateway/legacy-keys.js';
 import { gatewayEnabled } from './app/agents/provider.js';
 import * as containers from './app/containers.js';
+import { legacySendgrid } from './app/mail.js';
+import { getString } from './core/db/settings.js';
 
 /**
  * How many reverse-proxy hops to trust. A number is a hop count; an IP or CIDR string
@@ -240,6 +242,14 @@ if (!config.jwtSecretFromEnv) {
   console.log(`      be decrypted and have to be entered again, and streaming requests in`);
   console.log(`      flight break at restart. Sessions are unaffected — a refresh token is a`);
   console.log(`      random string in the database, not a JWT, and resumes by itself.`);
+}
+if (legacySendgrid() && !getString('mail.apiKey')) {
+  // Loud at boot rather than at the first invite: an upgrade that quietly stops sending
+  // mail is found by a user who never got their password-reset link.
+  console.log(`  ⚠️  A SendGrid key is configured, and SendGrid is no longer a backend`);
+  console.log(`      Mail is not being sent. Set MAIL_PROVIDER and MAIL_API_KEY (resend or`);
+  console.log(`      brevo), or MAIL_PROVIDER=smtp with the SMTP settings, in the console`);
+  console.log(`      under Settings → Email. The old key is left where it is, unused.`);
 }
 const containerProbe = await containers.probe();
 console.log(

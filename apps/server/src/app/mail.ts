@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { getNumber, getString } from '../core/db/settings.js';
+import { getNumber, getSetting, getString } from '../core/db/settings.js';
 
 /**
  * Sending mail, through whichever of three backends is configured.
@@ -49,13 +49,36 @@ function provider(): Provider | { error: string } {
   return { error: `Unknown mail provider ${JSON.stringify(configured)}; pick ${PROVIDERS.join(', ')}` };
 }
 
+/**
+ * The configuration this used to have, still on disk after an upgrade.
+ *
+ * SendGrid was the only backend there was, under `mail.sendgridApiKey` /
+ * SENDGRID_API_KEY, and it is not one of the three any more. The key is deliberately
+ * **not** carried into `mail.apiKey`: it is no good to resend or brevo, and moving it
+ * there would hand it to one of them — the failure the provider check above exists to
+ * prevent. Leaving the row where it is costs nothing and is the only way left to
+ * recognise the case.
+ *
+ * Worth recognising because the alternative is silence. Without this, an upgrade turns
+ * every invite, password reset and quota warning into a console.log, with "No API key
+ * configured" as the only clue and a key sitting in the settings table that the console
+ * no longer displays.
+ */
+export function legacySendgrid(): boolean {
+  return Boolean(getSetting('mail.sendgridApiKey') || process.env.SENDGRID_API_KEY);
+}
+
+const SENDGRID_GONE =
+  'SendGrid is no longer supported. Set an API key for resend or brevo, or set the mail provider to smtp and point it at a relay.';
+
 /** What this provider still needs, or undefined when it can send */
 function missing(provider: Provider, from: string): string | undefined {
   if (!from) return 'No from address configured';
   if (provider === 'smtp') {
     return getString('mail.smtpHost') ? undefined : 'No SMTP host configured';
   }
-  return getString('mail.apiKey') ? undefined : 'No API key configured';
+  if (getString('mail.apiKey')) return undefined;
+  return legacySendgrid() ? SENDGRID_GONE : 'No API key configured';
 }
 
 /** The reason a provider gave, which its status code alone never carries */

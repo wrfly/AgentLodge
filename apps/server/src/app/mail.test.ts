@@ -186,6 +186,36 @@ console.log('\n=== An unknown provider fails closed, whichever way it arrived ==
   settings.invalidate();
 }
 
+console.log('\n=== An upgrade from SendGrid says so ===');
+{
+  // SendGrid was the only backend there was, and it is gone. Its key is left in the
+  // settings table on purpose — carrying it into mail.apiKey would hand it to resend —
+  // so the one thing left to do with it is recognise the case and say what to do about
+  // it. Without that, an upgrade turns every invite and reset link into a console.log
+  // whose only clue is "No API key configured".
+  captured = null;
+  const settings = await import('../core/db/settings.js');
+  const { run } = await import('../core/db/index.js');
+  run('delete from settings where key = ?','mail.apiKey');
+  run(
+    'insert into settings (key, value, updated_at) values (?, ?, ?)',
+    'mail.sendgridApiKey',
+    'SG.an_old_key',
+    new Date().toISOString(),
+  );
+  settings.invalidate();
+
+  const result = await send(message);
+
+  ok('nothing is sent', !result.sent);
+  ok('it names SendGrid rather than saying "no API key"', /SendGrid/.test(result.error ?? ''), result.error);
+  ok('and says what to configure instead', /resend|smtp/.test(result.error ?? ''), result.error);
+  ok('the old key goes nowhere', request() === null, JSON.stringify(request()));
+
+  run('delete from settings where key = ?','mail.sendgridApiKey');
+  settings.invalidate();
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
