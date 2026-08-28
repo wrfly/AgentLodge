@@ -89,6 +89,9 @@ flowchart LR
       portrait written from those summaries — with the lines worth keeping offered,
       never taken
 - [x] Your own CLI: one command to install, then run `claude` as usual
+- [x] **Your own allowance in the CLI status line** (`5h 37% · 7d 12%`) — the `/usage` panel
+      asks `api.anthropic.com` and ignores `ANTHROPIC_BASE_URL`, so the figures ride the
+      response headers into the status line instead
 - [x] Both wire protocols — Anthropic Messages and OpenAI Responses
 - [x] Several upstreams live at once, routed by model: one model can be served by two of
       them, priced separately

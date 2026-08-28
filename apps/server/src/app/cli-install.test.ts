@@ -144,6 +144,68 @@ console.log('\n=== The first-run wizard is not the user\'s problem ===');
   fs.rmSync(s.home, { recursive: true, force: true });
 }
 
+console.log('\n=== The status line says what the /usage panel cannot ===');
+{
+  const s = sandbox('');
+  s.run(script());
+  const root = path.join(s.home, '.agentlodge');
+  const line = path.join(root, 'bin', 'statusline');
+  ok('a status line script is installed', fs.existsSync(line));
+  ok('and it is executable', (fs.statSync(line).mode & 0o111) !== 0, (fs.statSync(line).mode & 0o777).toString(8));
+
+  const settings = path.join(root, 'claude', 'settings.json');
+  ok('settings.json names it', JSON.parse(fs.readFileSync(settings, 'utf8')).statusLine.command === line);
+
+  /** What Claude Code puts on the script's stdin */
+  const feed = (json: string): string => execFileSync('sh', [line], { input: json, encoding: 'utf8' });
+
+  // Captured from a real 2.1.250 session, driven against a stand-in gateway answering with
+  // the headers unifiedHeaders() writes for a user at 37% of the window and 12% of the week
+  const captured =
+    '{"model":{"id":"claude-opus-5","display_name":"Opus 5"},"rate_limits":{"five_hour":{"used_percentage":37,"resets_at":1787911394},"seven_day":{"used_percentage":12,"resets_at":1788249794}}}';
+  ok('both windows, as the CLI reported them', feed(captured) === '5h 37% · 7d 12%', feed(captured));
+
+  ok(
+    'a fraction is rounded rather than printed',
+    feed('{"rate_limits":{"five_hour":{"used_percentage":37.62,"resets_at":1},"seven_day":{"used_percentage":8.4,"resets_at":2}}}') === '5h 38% · 7d 8%',
+  );
+  ok(
+    'one window alone does not drag a separator along',
+    feed('{"rate_limits":{"five_hour":{"used_percentage":99.9,"resets_at":1}}}') === '5h 100%',
+  );
+  // The order of the keys inside a window is the CLI's to change, and one day it will
+  ok(
+    'resets_at first is read the same',
+    feed('{"rate_limits":{"seven_day":{"resets_at":2,"used_percentage":50}}}') === '7d 50%',
+  );
+  // rate_limits only appears once a response has carried the headers
+  ok(
+    'before the first turn it says nothing rather than something wrong',
+    feed('{"model":{"display_name":"Opus 5"},"workspace":{"current_dir":"/tmp"}}') === '',
+  );
+  fs.rmSync(s.home, { recursive: true, force: true });
+}
+{
+  const s = sandbox('');
+  s.run(script());
+  const settings = path.join(s.home, '.agentlodge', 'claude', 'settings.json');
+
+  fs.writeFileSync(settings, '{"statusLine":{"type":"command","command":"mine"},"theme":"dark"}');
+  s.run(script());
+  ok(
+    'a status line the user chose survives a reinstall',
+    fs.readFileSync(settings, 'utf8') === '{"statusLine":{"type":"command","command":"mine"},"theme":"dark"}',
+    fs.readFileSync(settings, 'utf8'),
+  );
+
+  fs.writeFileSync(settings, '{\n  "theme": "dark",\n  "model": "opus"\n}\n');
+  s.run(script());
+  const merged = JSON.parse(fs.readFileSync(settings, 'utf8'));
+  ok('a settings.json without one gets it', merged.statusLine?.command.endsWith('/bin/statusline'), fs.readFileSync(settings, 'utf8'));
+  ok('and keeps what was already there', merged.theme === 'dark' && merged.model === 'opus');
+  fs.rmSync(s.home, { recursive: true, force: true });
+}
+
 console.log('\n=== Swapping the key is one edit, no reinstall ===');
 {
   const s = sandbox('');
