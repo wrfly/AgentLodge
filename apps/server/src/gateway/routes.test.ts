@@ -45,6 +45,10 @@ const EXPECTED: Array<[string, string]> = [
   ['POST', '/responses'],
   ['POST', '/v1/chat/completions'],
   ['GET', '/v1/models'],
+  // Unreachable from the CLI — the /usage panel asks api.anthropic.com, not us — and kept
+  // registered anyway, so this path can never fall through to a passthrough of the pool's
+  // figures. Being unused is exactly why it needs a line here.
+  ['GET', '/api/oauth/usage'],
   ['GET', '/gate'],
   ['PATCH', '/gate'],
   ['GET', '/models'],

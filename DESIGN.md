@@ -1141,7 +1141,7 @@ if (upstreamStatus === 404 || upstreamStatus === 400) {
 | 通道 | 上游给的 | 我们给的 |
 |---|---|---|
 | `/v1/messages` 响应头 `anthropic-ratelimit-unified-*` | 池子的 5h / 7d 利用率 | 丢弃。改写成该用户配额换算的一组同名头 |
-| `GET /api/oauth/usage`（`/usage` 面板读它） | 池子的五个窗口 | 网关自己应答，不透传，数据来自 `quota.status(userId)` |
+| `GET /api/oauth/usage`（客户端不往这儿发，见下） | 池子的五个窗口 | 网关自己应答，不透传，数据来自 `quota.status(userId)` |
 | Codex 响应体里的 `rate_limits` | 池子的 `used_percent` | 从流里摘掉 |
 
 **两种格式的标度不一样**，都是从 claude 二进制里读出来的，不是猜的：
@@ -1191,11 +1191,25 @@ if (upstreamStatus === 404 || upstreamStatus === 400) {
 `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","utilization":0.98,"rateLimitType":"five_hour"}}`
 —— 这个数字是网关按该用户配额算的。
 
-**`/usage` 面板 —— 不经过我们，也不需要。** 实测：挂 HTTPS_PROXY 抓 CONNECT，那个请求直连
-`api.anthropic.com:443`，用本机的 claude.ai 凭据，`ANTHROPIC_BASE_URL` 对它无效。而这条
-接法下那个 profile 没登录任何 claude.ai 账号，所以面板既没有额度数字，也不产生任何外联
-（CONNECT 记录为空）。网关上的 `GET /api/oauth/usage` 因此不是给面板用的，它的价值是
-**这条路径永远不会被透传**：真有客户端问过来，答的是他自己的配额。
+**`/usage` 面板 —— 不经过我们，而且没法让它经过。** 实测（2.1.250）：挂 HTTPS_PROXY 抓
+CONNECT，`HEAD /api/hello` 和 `POST /v1/messages` 都走 `ANTHROPIC_BASE_URL`，只有
+`GET /api/oauth/usage` 直连 `api.anthropic.com:443`。二进制里它走的是另一个客户端，base 取
+`getOauthConfig().BASE_API_URL`，release 版硬编码 `https://api.anthropic.com`；唯一的覆盖
+`CLAUDE_CODE_CUSTOM_OAUTH_URL` 带三域名白名单，填别的抛错。
+
+**它也不是安静地空着**——这一条早先记反了。凭据让会话算订阅会话，那既是响应头被采信的前提，
+也是面板决定要不要去问的判据，所以它照问不误，拿回 429，显示
+`Error: Usage endpoint is rate limited`（外联断掉时是 `Failed to load usage data`）。两句都指不
+到真正的原因，看着像网关坏了。
+
+网关上的 `GET /api/oauth/usage` 因此不是面板的数据源，是一道闸：**这条路径永远不会被透传**，
+真有客户端问过来答的是他自己的配额；哪天上游改走 `ANTHROPIC_BASE_URL`，它原样生效。
+`docker/Caddyfile` 里 `/api/oauth/*` 单独转给网关，就是为了让这道闸真的够得着——否则它会撞上
+`/api/*` 那条 handle，被送去 app，答一个 404。
+
+**用户实际能读到的那两个数字在状态栏。** 安装脚本装一个 `~/.agentlodge/bin/statusline`，从
+状态栏 JSON 的 `rate_limits` 里读 `five_hour` / `seven_day` 的 `used_percentage`，打成
+`5h 37% · 7d 12%`。数据源就是上面那组响应头，绕开了面板这条死路。
 
 **Codex 的 `rate_limits` —— 经过我们，在流里摘掉。** 它没有账号 API，额度跟着响应体走，
 而响应体是逐字节转发的，所以这是唯一真的会漏的通道。
