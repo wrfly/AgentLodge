@@ -89,6 +89,8 @@ export const zh: Record<string, string> = {
   'Switch model (affects later messages only)': '切换模型（只影响后续消息）',
   Effort: '强度',
   'Reasoning effort (affects later messages only)': '推理强度（只影响后续消息）',
+  Think: '思考',
+  'Show the thinking before the answer (affects later messages only)': '回答前先显示思考过程（只影响后续消息）',
   'Stop generating': '停止生成',
   Send: '发送',
   'Your quota period has ended — ask an administrator to top it up': '额度有效期已过，请联系管理员重新充值',

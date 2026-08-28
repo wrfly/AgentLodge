@@ -727,10 +727,13 @@ workspaces/<userId>/<convId>/AGENTS.md    上面这些渲染成一整份，给 c
   （`turns.ts:204` 的回退链是 会话 → provider.defaultModel → `MODEL` 环境变量 → 交给 CLI）
 
 **模型与推理强度**
-- 输入框内两个下拉，只影响后续消息；新会话继承当前选择
+- 输入框内两个下拉加一个「思考」开关，只影响后续消息；新会话继承当前选择
 - Claude 模型走别名（`opus`/`sonnet`/`haiku`），接第三方端点时由 `ANTHROPIC_DEFAULT_*_MODEL` 映射
 - Codex 模型读 `~/.codex/models.json`
 - 强度取值实测得到：Claude `low|medium|high|xhigh|max`；Codex 另有 `none|minimal`
+- 「思考」默认开，只有 Claude 有这个开关。关掉是往上游发 `thinking: disabled`；开着时网关把
+  CLI 要的 `adaptive` 翻成第三方上游读得懂的 `enabled`（DeepSeek 不认 `adaptive`，这是它
+  不回思考过程的原因）。详见 DESIGN.md §2.2b「思考的方言」
 
 **后台可改，无需重启**
 - **上游与模型**：上游是地址、协议、凭据；模型是「名字 → 上游」，同名可挂多条。配了模型就启用计量网关，

@@ -27,8 +27,10 @@ import {
   mockStream,
   outboundHeaders,
   resolveUpstream,
-  type Resolved,
+  speaksAdaptiveThinking,
   withBillingSystem,
+  withThinking,
+  type Resolved,
 } from './upstream.js';
 import {
   ChatToAnthropic,
@@ -359,7 +361,13 @@ async function handleProxy(
     // this is the one place the request is rewritten to use it.
     const askedModel = ((body ?? {}) as AnthropicRequest & ResponsesRequest).model ?? 'local';
     const reqModel = target.upstreamModel || askedModel;
-    const sent = target.upstreamModel ? { ...(body ?? {}), model: target.upstreamModel } : (body ?? {});
+    const renamed = target.upstreamModel ? { ...(body ?? {}), model: target.upstreamModel } : (body ?? {});
+    /*
+     * The thinking directive, in words this upstream understands and only if the client
+     * asked for one. `target.url` and not the egress url: with the audit proxy on we fetch
+     * the proxy, and the question is about the vendor at the other end of it.
+     */
+    const sent = withThinking(renamed, claims.thinking, speaksAdaptiveThinking(target.url));
     const outbound = !target.translate
       ? sent
       : wire === 'anthropic'

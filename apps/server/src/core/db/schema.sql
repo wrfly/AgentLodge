@@ -153,7 +153,10 @@ create table if not exists conversations (
   title_custom     integer not null default 0,
   -- When a model named it. Null means never, and that is the whole condition for
   -- naming it: once, on the first completed turn, and never again.
-  title_at         text
+  title_at         text,
+  -- Whether the agent's thinking is asked for. On by default: the CLI asks for it anyway,
+  -- and this is the switch that turns it off. See gateway/upstream.ts withThinking.
+  thinking         integer not null default 1
 );
 create index if not exists idx_conv_user on conversations(user_id, updated_at desc);
 create index if not exists idx_conv_user_agent on conversations(user_id, agent, updated_at desc);

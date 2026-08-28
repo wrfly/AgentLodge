@@ -21,6 +21,7 @@ interface ConvRow {
   created_at: string;
   updated_at: string;
   last_message_at: string | null;
+  thinking: number;
 }
 
 interface MsgRow {
@@ -113,6 +114,7 @@ export function meta(
     agentSessionId: r.agent_session_id ?? undefined,
     model: r.model ?? undefined,
     effort: r.effort ?? undefined,
+    thinking: bool(r.thinking),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     messageCount: n,
@@ -146,6 +148,7 @@ export function full(id: string, userId: string): Conversation | undefined {
     agentSessionId: r.agent_session_id ?? undefined,
     model: r.model ?? undefined,
     effort: r.effort ?? undefined,
+    thinking: bool(r.thinking),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     messageCount: messages.length,
@@ -189,20 +192,23 @@ export interface CreateInput {
   title?: string;
   model?: string;
   effort?: string;
+  /** Undefined means on, which is the column's default */
+  thinking?: boolean;
 }
 
 export function create(input: CreateInput): Conversation {
   const now = nowIso();
   const id = crypto.randomUUID();
   run(
-    `insert into conversations (id, user_id, agent, title, model, effort, status, created_at, updated_at)
-     values (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+    `insert into conversations (id, user_id, agent, title, model, effort, thinking, status, created_at, updated_at)
+     values (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
     id,
     input.userId,
     input.agent,
     input.title?.trim() || 'New chat',
     input.model?.trim() || null,
     input.effort?.trim() || null,
+    flag(input.thinking ?? true),
     now,
     now,
   );
@@ -215,6 +221,7 @@ export interface Patch {
   titleCustom?: boolean;
   model?: string;
   effort?: string;
+  thinking?: boolean;
   agentSessionId?: string;
 }
 
@@ -236,6 +243,10 @@ export function update(id: string, userId: string, patch: Patch): boolean {
   if (patch.effort !== undefined) {
     fields.push('effort = ?');
     params.push(patch.effort || null);
+  }
+  if (patch.thinking !== undefined) {
+    fields.push('thinking = ?');
+    params.push(flag(patch.thinking));
   }
   if (patch.agentSessionId !== undefined) {
     fields.push('agent_session_id = ?');

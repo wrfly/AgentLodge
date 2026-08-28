@@ -26,6 +26,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       agent?: string;
       model?: string;
       effort?: string;
+      thinking?: boolean;
     };
     const conv = convRepo.create({
       userId: req.user!.id,
@@ -35,6 +36,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       title: body.title,
       model: body.model,
       effort: body.effort,
+      thinking: body.thinking,
     });
     reply.code(201);
     return conv;
@@ -49,16 +51,23 @@ export function registerConversationRoutes(app: FastifyInstance): void {
 
   app.patch('/api/conversations/:id', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { title?: string; model?: string; effort?: string };
+    const body = (req.body ?? {}) as {
+      title?: string;
+      model?: string;
+      effort?: string;
+      thinking?: boolean;
+    };
     const patch: convRepo.Patch = {};
     if (typeof body.title === 'string' && body.title.trim()) {
       patch.title = body.title.trim();
       // Named by hand, so the summariser leaves it alone from here on
       patch.titleCustom = true;
     }
-    // Changing model or effort affects later turns only; existing messages are untouched
+    // Changing model, effort or thinking affects later turns only; existing messages are
+    // untouched — the ticket a turn runs on carries the values it started with
     if (typeof body.model === 'string') patch.model = body.model.trim();
     if (typeof body.effort === 'string') patch.effort = body.effort.trim();
+    if (typeof body.thinking === 'boolean') patch.thinking = body.thinking;
 
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
     convRepo.update(id, req.user!.id, patch);

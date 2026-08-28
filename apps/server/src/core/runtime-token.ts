@@ -20,10 +20,19 @@ export interface RuntimeClaims {
   cid: string;
   tid: string;
   agent: AgentId;
+  /**
+   * Whether this turn wants the agent's thinking.
+   *
+   * It rides on the ticket rather than being read from the conversation per request, so a
+   * turn keeps the setting it started with — the same rule the model and the effort follow,
+   * both of which are fixed when the process is launched. Flipping the switch mid-answer
+   * would otherwise change the shape of the requests inside one turn.
+   */
+  thinking: boolean;
 }
 
 export async function signRuntimeToken(claims: RuntimeClaims, ttlMs: number): Promise<string> {
-  return new SignJWT({ cid: claims.cid, tid: claims.tid, agent: claims.agent })
+  return new SignJWT({ cid: claims.cid, tid: claims.tid, agent: claims.agent, think: claims.thinking })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.sub)
     .setIssuer(ISSUER)
@@ -41,6 +50,9 @@ export async function verifyRuntimeToken(token: string): Promise<RuntimeClaims |
       cid: payload.cid,
       tid: String(payload.tid ?? ''),
       agent: payload.agent as AgentId,
+      // A ticket signed before the switch existed carries no claim, and what it meant was
+      // "thinking", because nothing turned it off then
+      thinking: payload.think !== false,
     };
   } catch {
     return null;

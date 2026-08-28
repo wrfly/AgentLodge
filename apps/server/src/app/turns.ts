@@ -182,7 +182,13 @@ export async function startTurn(
   const viaGateway = gatewayEnabled();
   const runtimeToken = viaGateway
     ? await signRuntimeToken(
-        { sub: userId, cid: conversationId, tid: turnId, agent: conv.agent },
+        {
+          sub: userId,
+          cid: conversationId,
+          tid: turnId,
+          agent: conv.agent,
+          thinking: conv.thinking,
+        },
         config.runtimeTokenTtlMs,
       )
     : undefined;
