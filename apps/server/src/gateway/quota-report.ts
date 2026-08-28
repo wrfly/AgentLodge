@@ -29,12 +29,27 @@ import type { QuotaStatus, QuotaWindow } from '../core/protocol.js';
  * makes the session count as one. Measured: answering with a utilization of 0.98 makes the
  * CLI emit a rate_limit_event with status allowed_warning.
  *
- * The `/usage` panel does **not** come through here, and does not need to. That request goes
- * straight to `api.anthropic.com` with the machine's own claude.ai credentials, ignoring
- * ANTHROPIC_BASE_URL — and in the profile we install there is no claude.ai account, so the
- * panel shows no allowance and makes no outbound connection at all. `oauthUsage` therefore
- * exists to keep that path from ever being proxied: asked, we answer with the caller's own
- * quota rather than fetching the pool's.
+ * **The `/usage` panel does not come through here, and cannot be made to.** That request is
+ * built by the CLI's first-party API client, whose base is `getOauthConfig().BASE_API_URL` —
+ * the literal `https://api.anthropic.com` in a production build. ANTHROPIC_BASE_URL is not
+ * consulted; the one override that exists, CLAUDE_CODE_CUSTOM_OAUTH_URL, throws on anything
+ * outside a three-entry allowlist of Anthropic's own hosts. Measured on 2.1.250 against a
+ * stand-in gateway: `HEAD /api/hello` and `POST /v1/messages` arrive, `GET /api/oauth/usage`
+ * never does, and an HTTPS_PROXY logging CONNECT catches it opening `api.anthropic.com:443`.
+ *
+ * It is also not silent, which an earlier note here had wrong. The credentials file we
+ * install makes the session a subscription session — that is the whole point of it, it is
+ * what makes the headers above count — and that is the same condition the panel checks
+ * before fetching. So it fetches, against an account Anthropic has never heard of, and
+ * renders whatever comes back: `Usage endpoint is rate limited` off a 429, or `Failed to
+ * load usage data` when the connection is refused. Neither says the true cause.
+ *
+ * So `oauthUsage` is a guard, not a data source. It exists so this path can never become a
+ * passthrough of the pool's figures: asked, we answer with the caller's own quota. It costs
+ * one small handler and it is what would start working, unchanged, the day that request
+ * begins honouring ANTHROPIC_BASE_URL. The figures a user can actually read today are in
+ * the status line — see the script app/cli-install.ts installs, which parses the very
+ * headers `unifiedHeaders` writes back out of Claude Code's status line JSON.
  */
 
 /** Which of the quota's windows each of the client's two lines carries */

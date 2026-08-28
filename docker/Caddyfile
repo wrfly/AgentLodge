@@ -57,6 +57,16 @@
 		}
 	}
 
+	# The one /api path that belongs to the gateway rather than the application, and it has to
+	# be written above the /api/* block below or that one swallows it — handle blocks are
+	# first-match. Nothing sends this today: Claude Code's /usage panel builds the request
+	# with its first-party client, which is pinned to api.anthropic.com and does not read
+	# ANTHROPIC_BASE_URL. It is routed anyway so that the guard in gateway/quota-report.ts is
+	# reachable if that ever changes, rather than answering with the application's 404.
+	handle /api/oauth/* {
+		reverse_proxy gateway:8788
+	}
+
 	# The application's own API. /api/hello is Claude Code's liveness probe; both app and
 	# gateway answer it, and landing on app is fine.
 	handle /api/* {
