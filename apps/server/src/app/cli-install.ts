@@ -7,9 +7,18 @@
  * user to sign in. The credentials file *is* that sign-in, and we issue it: with the file in
  * place the same command reports
  * `{"loggedIn": true, "authMethod": "claude.ai", "subscriptionType": "max"}`, a turn runs
- * against this gateway carrying `Authorization: Bearer <key>`, the allowance headers we send
- * are honoured, and `/usage` prints no figures and makes no outbound connection at all.
- * Nothing rides in a URL either, so the key stays out of shell history and screenshots.
+ * against this gateway carrying `Authorization: Bearer <key>`, and the allowance headers we
+ * send are honoured. Nothing rides in a URL either, so the key stays out of shell history
+ * and screenshots.
+ *
+ * **What that costs: the `/usage` panel shows an error.** Being a subscription session is
+ * what makes the allowance headers count, and it is also what makes the panel try. Measured
+ * on 2.1.250, with HTTPS_PROXY logging CONNECT: opening `/usage` reaches for
+ * `api.anthropic.com:443`, retries, and renders `Usage endpoint is rate limited` off the 429
+ * that comes back — ANTHROPIC_BASE_URL is not consulted for that request, so there is no
+ * arrangement here that changes it. The two numbers it would have shown go in the status
+ * line instead, from the headers, which do come through us. See `$ROOT/bin/statusline`
+ * below, and gateway/quota-report.ts for why the endpoint is answered anyway.
  *
  * **CLAUDE_CONFIG_DIR is what keeps this safe.** The file goes in a directory of ours, so a
  * user's own `~/.claude` login is never touched. The cost is that the AgentLodge session is
@@ -130,6 +139,50 @@ elif ! grep -q 'hasCompletedOnboarding' "\$CONFIG"; then
   # Inserted after the opening brace, so whatever the CLI has already written is kept.
   # A temp file rather than sed -i, which takes a different argument on BSD.
   sed '1s/^{/{"hasCompletedOnboarding":true,/' "\$CONFIG" > "\$CONFIG.tmp" && mv "\$CONFIG.tmp" "\$CONFIG"
+fi
+
+# The figures the /usage panel asks api.anthropic.com for, taken from the headers instead.
+# A quoted heredoc: nothing in here is substituted at install time.
+cat > "\$ROOT/bin/statusline" <<'STATUSLINE'
+#!/bin/sh
+# Claude Code pipes the session as JSON on stdin, and rate_limits is the part that is ours:
+# the gateway rewrites anthropic-ratelimit-unified-* on every response to describe the
+# caller's own quota, and the CLI carries those two numbers into this JSON. The /usage panel
+# cannot show them — it asks api.anthropic.com, not the gateway — so this is where they go.
+#
+# sed rather than jq, because installing claude does not install jq. printf %.0f to round,
+# which is what Claude Code's own documentation for this hook does.
+
+json=\$(cat)
+
+pct() {
+  printf '%s' "\$json" | sed -n "s|.*\\"\$1\\":{[^}]*\\"used_percentage\\":\\([0-9.][0-9.]*\\).*|\\1|p" | head -1
+}
+
+five=\$(pct five_hour)
+week=\$(pct seven_day)
+
+# Absent until a response has carried the headers, which is every session's first turn.
+# Nothing to say yet, and an empty status line is the honest way to say it.
+out=''
+if [ -n "\$five" ]; then out=\$(printf '5h %.0f%%' "\$five"); fi
+if [ -n "\$week" ]; then
+  if [ -n "\$out" ]; then out="\$out · "; fi
+  out="\$out\$(printf '7d %.0f%%' "\$week")"
+fi
+printf '%s' "\$out"
+STATUSLINE
+chmod +x "\$ROOT/bin/statusline"
+
+# Only when there is nothing to lose: a settings.json the user has edited keeps whatever
+# status line it names, and a reinstall does not undo that choice.
+SETTINGS="\$ROOT/claude/settings.json"
+LINE='"statusLine":{"type":"command","command":"'"\$ROOT"'/bin/statusline"}'
+if [ ! -f "\$SETTINGS" ]; then
+  printf '{%s}\\n' "\$LINE" > "\$SETTINGS"
+elif ! grep -q '"statusLine"' "\$SETTINGS"; then
+  # | as the delimiter, because the command is a path and paths are full of /
+  sed '1s|^{|{'"\$LINE"',|' "\$SETTINGS" > "\$SETTINGS.tmp" && mv "\$SETTINGS.tmp" "\$SETTINGS"
 fi
 
 cat > "\$ROOT/bin/claude" <<WRAPPER

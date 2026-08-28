@@ -493,9 +493,9 @@ MCP、历史记录。
 上游是一份共享订阅，所以上游返回的"还剩多少"是**整个平台**的。网关不转发它，改成回这个
 用户自己的配额：
 
-- `claude` 的 `/usage` 面板读 `GET /api/oauth/usage` —— 网关自己应答，不透传
 - 每个 `/v1/messages` 响应上的 `anthropic-ratelimit-unified-*` 头，按该用户的配额重写
 - Codex 的额度跟着响应体走（`rate_limits`），在流里摘掉
+- `GET /api/oauth/usage` 网关自己应答，不透传 —— 但客户端不往这儿发，见下
 
 CLI 那两条线是**平台的**窗口，不是每个人自己的：边界取上游响应头里的真实 reset
 （所有人一致），窗口里的数量是这个用户自己的消耗，分母是他的配额按窗口长度折算
@@ -507,13 +507,6 @@ CLI 那两条线是**平台的**窗口，不是每个人自己的：边界取上
 上游还没回过响应时（网关刚重启、用的是假上游）回落到配额周期本身，按长度落位：24 小时
 以内进「Current session」，其余进「Current week」。
 
-`claude` 的 `/usage` 面板是个例外：它**不经过我们**。实测——挂 HTTPS_PROXY 抓 CONNECT，
-那个请求直连 `api.anthropic.com:443`，用的是本机的 claude.ai 登录，`ANTHROPIC_BASE_URL`
-对它无效。
-
-而这条接法里那台机器在这个 profile 下没登录任何 claude.ai 账号，所以面板既没有额度数字，
-也不产生任何外联（实测：CONNECT 记录为空）。**用不着我们覆写，它根本不去问。**
-
 限额提醒走的是响应头，那条确实经过我们，而且确实被采信。把利用率回成 0.98，CLI 就发出：
 
 ```json
@@ -523,10 +516,45 @@ CLI 那两条线是**平台的**窗口，不是每个人自己的：边界取上
 
 这个 0.98 是网关按**该用户自己的配额**算出来的，跟共享订阅用了多少无关。
 
+### `/usage` 面板看不到数字，额度在状态栏
+
+`claude` 的 `/usage` 面板是个例外：它**不经过我们，也没法让它经过**。实测（2.1.250，挂
+HTTPS_PROXY 抓 CONNECT）：`HEAD /api/hello`、`POST /v1/messages` 都老实走 `ANTHROPIC_BASE_URL`，
+只有 `GET /api/oauth/usage` 直连 `api.anthropic.com:443`。二进制里那个请求走的是另一个 HTTP
+客户端，base 取 `getOauthConfig().BASE_API_URL`，release 版里就是硬编码的
+`https://api.anthropic.com`；唯一的开关 `CLAUDE_CODE_CUSTOM_OAUTH_URL` 带一张三个 Anthropic
+域名的白名单，填别的直接抛错。
+
+而且它不是安静地空着。我们发的那份凭据让会话算作订阅会话——那正是响应头被采信的前提——
+也正是面板决定要不要去问的判据。于是它去问了，问的是 Anthropic 没听说过的账号，面板显示：
+
+```
+Error: Usage endpoint is rate limited. Please try again in a moment.
+```
+
+（429 的文案；外联被掐断时是 `Error: Failed to load usage data`。）两句都没说出真正的原因，
+所以第一次看见的人会以为网关坏了。它没坏。
+
+**那两个数字改从状态栏看。** 安装脚本装一条：
+
+```
+5h 37% · 7d 12%
+```
+
+数据源就是上面那组响应头——网关按该用户配额重写、客户端采信、再喂进状态栏 JSON 的
+`rate_limits`，所以跟网页 `/usage` 是同一份账。脚本在 `~/.agentlodge/bin/statusline`，用 `sed`
+读，不依赖 `jq`。第一轮对话之前还没有响应头，这时它打空串而不是打个错。
+
+不想要就删掉 `~/.agentlodge/claude/settings.json` 里的 `statusLine`；反过来，那个文件里已经有
+`statusLine` 的话安装脚本不会覆盖它，重装也不会。
+
 ### 部署时要打通的三件事
 
 1. **Caddy 把 `/v1/*` 转到网关**（`docker/Caddyfile` 已写好，`flush_interval -1` 别漏）。
-   只放 `/v1/*` —— 网关上的 `/gate` 能改并发上限，虽自带鉴权，也没理由出现在公网路由表里。
+   另外 `/api/oauth/*` 也转给网关，且必须写在 `/api/*` 那条 handle **之前**——handle 是
+   先写先中，否则它会落到 app 上答 404。除这两条之外不再放别的：网关上的 `/gate` 能改并发
+   上限，虽自带鉴权，也没理由出现在公网路由表里。
+   改了 Caddyfile 要重建 web 镜像，`docker/web.Dockerfile` 把它烤进去了。
 2. **网关接上 `frontend` 网络**，否则 Caddy 够不着（`docker/compose.yml` 已改）。
    不开这个功能就把它删回去，网关退回只有内网可达。
 3. **`PUBLIC_GATEWAY_URL`** 告诉用户 BASE_URL 填什么。这是**第三个**网关地址，跟
