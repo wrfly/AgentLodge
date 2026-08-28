@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Gauge, Sparkle, Square } from 'lucide-react';
+import { ArrowUp, Brain, Gauge, Sparkle, Square } from 'lucide-react';
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
 import { groupByVendor } from '../lib/protocol';
@@ -44,6 +44,8 @@ export function Composer({ agent }: { agent: AgentId }) {
   const setModel = useChat((s) => s.setModel);
   const effort = useChat((s) => s.effort);
   const setEffort = useChat((s) => s.setEffort);
+  const thinking = useChat((s) => s.thinking);
+  const setThinking = useChat((s) => s.setThinking);
 
   const quota = useQuota((s) => s.quota);
   const blocked = Boolean(quota?.exceeded && quota?.hardStop);
@@ -81,6 +83,8 @@ export function Composer({ agent }: { agent: AgentId }) {
   };
 
   const canSend = value.trim().length > 0 && !streaming && !blocked;
+  /** The controls under the box all change the next turn, so none of them moves during one */
+  const locked = !activeId || streaming;
 
   return (
     <div className="pointer-events-none shrink-0 bg-bg pt-3">
@@ -116,7 +120,7 @@ export function Composer({ agent }: { agent: AgentId }) {
               vendors={modelTree}
               onChange={(id) => void setModel(id)}
               title={t("Switch model (affects later messages only)")}
-              disabled={!activeId || streaming}
+              disabled={locked}
             />
             <Picker
               icon={Gauge}
@@ -125,8 +129,29 @@ export function Composer({ agent }: { agent: AgentId }) {
               options={efforts}
               onChange={(id) => void setEffort(id)}
               title={t("Reasoning effort (affects later messages only)")}
-              disabled={!activeId || streaming}
+              disabled={locked}
             />
+            {/* Claude only. Codex asks for its reasoning a different way, through the
+                effort above, and a switch that did nothing would be worse than none. */}
+            {agent === 'claude' && (
+              <button
+                type="button"
+                onClick={() => void setThinking(!thinking)}
+                disabled={locked}
+                title={t('Show the thinking before the answer (affects later messages only)')}
+                aria-pressed={thinking}
+                className={clsx(
+                  'flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[12px] transition',
+                  locked
+                    ? 'cursor-not-allowed border-line text-faint'
+                    : 'border-line hover:border-line-strong hover:bg-bubble',
+                  thinking && !locked ? 'text-ink' : 'text-muted',
+                )}
+              >
+                <Brain size={12} className={clsx('shrink-0', thinking && !locked && 'text-accent')} />
+                <span className="font-mono">{t('Think')}</span>
+              </button>
+            )}
 
             <div className="flex-1" />
 

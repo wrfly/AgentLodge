@@ -33,6 +33,8 @@ export interface Principal {
   tid: string;
   agent: AgentId;
   kind: CredentialKind;
+  /** Whether this caller wants the agent's thinking; see RuntimeClaims. */
+  thinking: boolean;
   /** api-key only: attributes usage to a key and refreshes last_used */
   apiKeyId?: string;
 }
@@ -146,6 +148,9 @@ export async function resolve(
       tid: '',
       agent: wire === 'anthropic' ? 'claude' : 'codex',
       kind: 'api-key',
+      // Somebody's own CLI has no conversation and so no switch to read. It asked for
+      // thinking in the request it sent, and that is answer enough.
+      thinking: true,
       apiKeyId: key.id,
     };
   }

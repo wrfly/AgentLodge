@@ -100,7 +100,7 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -231,6 +231,15 @@ function migrate(d: DatabaseSync): void {
     // condition for naming it: it happens once, on the first turn, and never again.
     if (!columns(d, 'conversations').has('title_at')) {
       d.exec('alter table conversations add column title_at text');
+    }
+  }
+
+  if (from < 7) {
+    // The thinking switch. It defaults to on, so every conversation that already exists
+    // gets the behaviour it had — the CLI asks for thinking on every request, and nothing
+    // here has ever turned that off.
+    if (!columns(d, 'conversations').has('thinking')) {
+      d.exec('alter table conversations add column thinking integer not null default 1');
     }
   }
 

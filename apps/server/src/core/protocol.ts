@@ -143,6 +143,11 @@ export interface Conversation extends ConversationSummary {
   model?: string;
   /** Reasoning effort; empty leaves the CLI on its default */
   effort?: string;
+  /**
+   * Whether the upstream is asked for the agent's thinking. On unless it was turned off:
+   * the CLI asks for thinking on every request, and this is the switch that says no.
+   */
+  thinking: boolean;
   messages: StoredMessage[];
   totals: {
     inputTokens: number;

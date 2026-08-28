@@ -396,7 +396,8 @@ async function ask(userId: string, body: string, maxTokens: number): Promise<str
   if (!gatewayEnabled()) throw new Error('No upstream provider is enabled');
 
   const token = await signRuntimeToken(
-    { sub: userId, cid: '', tid: `recap-${crypto.randomUUID()}`, agent: 'claude' },
+    // Naming and summarising want a short answer, not a deliberation about one
+    { sub: userId, cid: '', tid: `recap-${crypto.randomUUID()}`, agent: 'claude', thinking: false },
     60_000,
   );
 

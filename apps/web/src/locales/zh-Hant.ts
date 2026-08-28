@@ -83,6 +83,8 @@ export const zhHant: Record<string, string> = {
   'Switch model (affects later messages only)': '切換模型（只影響之後的訊息）',
   Effort: '推理強度',
   'Reasoning effort (affects later messages only)': '推理強度（只影響之後的訊息）',
+  Think: '思考',
+  'Show the thinking before the answer (affects later messages only)': '回答前先顯示思考過程（只影響之後的訊息）',
   'Stop generating': '停止產生',
   Send: '傳送',
   'Your quota period has ended — ask an administrator to top it up': '你的配額週期已結束——請管理員充值',

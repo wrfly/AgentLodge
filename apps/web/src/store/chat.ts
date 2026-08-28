@@ -88,6 +88,8 @@ interface ChatState {
   model: string;
   /** Reasoning effort; an empty string leaves the CLI on its default */
   effort: string;
+  /** Whether the upstream is asked for the agent's thinking; on unless turned off */
+  thinking: boolean;
   /** Place in the queue at the gateway's concurrency gate; 0 means not queued */
   queuePosition: number;
   messages: ChatMessage[];
@@ -107,6 +109,7 @@ interface ChatState {
   rename: (id: string, title: string) => Promise<void>;
   setModel: (model: string) => Promise<void>;
   setEffort: (effort: string) => Promise<void>;
+  setThinking: (thinking: boolean) => Promise<void>;
   remove: (id: string) => Promise<void>;
   setSidebar: (open: boolean) => void;
   dismissError: () => void;
@@ -169,6 +172,7 @@ export const useChat = create<ChatState>((set, get) => ({
   title: '',
   model: '',
   effort: '',
+  thinking: true,
   queuePosition: 0,
   messages: [],
   streaming: false,
@@ -190,6 +194,7 @@ export const useChat = create<ChatState>((set, get) => ({
       title: '',
       model: '',
       effort: '',
+      thinking: true,
       streaming: false,
       error: null,
     });
@@ -208,6 +213,7 @@ export const useChat = create<ChatState>((set, get) => ({
       title: '',
       model: '',
       effort: '',
+      thinking: true,
       streaming: false,
       connected: false,
       error: null,
@@ -224,11 +230,12 @@ export const useChat = create<ChatState>((set, get) => ({
 
   async newConversation() {
     try {
-      // A new conversation inherits the current model and effort, rather than asking again every time
+      // A new conversation inherits the current settings, rather than asking again every time
       const conv = await api.createConversation(
         get().agent,
         get().model || undefined,
         get().effort || undefined,
+        get().thinking,
       );
       set((s) => ({
         conversations: [
@@ -246,6 +253,7 @@ export const useChat = create<ChatState>((set, get) => ({
         title: conv.title,
         model: conv.model ?? '',
         effort: conv.effort ?? '',
+        thinking: conv.thinking,
         messages: [],
         streaming: false,
         sidebarOpen: false,
@@ -265,6 +273,7 @@ export const useChat = create<ChatState>((set, get) => ({
         title: conv.title,
         model: conv.model ?? '',
         effort: conv.effort ?? '',
+        thinking: conv.thinking,
         messages: conv.messages.map(toChatMessage),
         streaming: conv.busy,
         loading: false,
@@ -338,6 +347,18 @@ export const useChat = create<ChatState>((set, get) => ({
       await api.setEffort(id, effort);
     } catch (err) {
       set({ effort: prev, error: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  async setThinking(thinking) {
+    const id = get().activeId;
+    if (!id) return;
+    const prev = get().thinking;
+    set({ thinking });
+    try {
+      await api.setThinking(id, thinking);
+    } catch (err) {
+      set({ thinking: prev, error: err instanceof Error ? err.message : String(err) });
     }
   },
 

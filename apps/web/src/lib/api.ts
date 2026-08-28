@@ -183,10 +183,10 @@ export const api = {
   listConversations: (agent: AgentId) =>
     request<ConversationSummary[]>(`/api/conversations?agent=${agent}`),
 
-  createConversation: (agent: AgentId, model?: string, effort?: string) =>
+  createConversation: (agent: AgentId, model?: string, effort?: string, thinking?: boolean) =>
     request<Conversation>('/api/conversations', {
       method: 'POST',
-      body: JSON.stringify({ agent, model, effort }),
+      body: JSON.stringify({ agent, model, effort, thinking }),
     }),
 
   getConversation: (id: string) =>
@@ -208,6 +208,12 @@ export const api = {
     request<Conversation>(`/api/conversations/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ effort }),
+    }),
+
+  setThinking: (id: string, thinking: boolean) =>
+    request<Conversation>(`/api/conversations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ thinking }),
     }),
 
   deleteConversation: (id: string) =>

@@ -443,6 +443,75 @@ export function withBillingSystem(body: unknown): unknown {
   if (first && typeof first.text === 'string' && first.text.startsWith('x-anthropic-billing-header:')) return b;
   return { ...b, system: [head, ...b.system] };
 }
+
+/* ---------------- Thinking ---------------- */
+
+/**
+ * How much thinking to ask for when the request has to be rewritten. Only the shape of the
+ * ask travels between vendors; the number is Anthropic's alone — DeepSeek documents
+ * budget_tokens as ignored — so this is a floor that keeps the request valid rather than a
+ * tuning knob.
+ */
+const THINKING_BUDGET = 8192;
+
+/**
+ * Whether this upstream understands `thinking: {"type": "adaptive"}`.
+ *
+ * Claude Code asks for thinking on every request, and since 2.1 it asks for it adaptively —
+ * the model decides per turn how much to spend. That word is Anthropic's own. DeepSeek's
+ * compatibility layer accepts a `thinking` field and reads `type` looking for `enabled`
+ * (its documentation adds that budget_tokens is ignored), so `adaptive` arrives as a value
+ * it does not recognise: the request succeeds, the answer comes back, and there is no
+ * reasoning in it. From the web interface that looked like "this deployment never shows
+ * the thinking".
+ *
+ * A host test rather than a provider setting, because the answer follows the vendor and not
+ * the deployment. Anything that is not the official endpoint is assumed to speak the older
+ * `enabled` dialect — which is the safe direction: a proxy that does understand `adaptive`
+ * still understands `enabled`, so the cost of being wrong here is a fixed budget instead of
+ * a chosen one, not a failed request.
+ */
+export function speaksAdaptiveThinking(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === 'anthropic.com' || host.endsWith('.anthropic.com');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The thinking directive this upstream is sent.
+ *
+ * **A body that never asked for thinking is left alone.** That is what keeps this from
+ * turning thinking on where nobody wanted it — our own calls, naming a conversation or
+ * summarising one, carry no `thinking` field and are not given one, and a Responses-wire
+ * request from Codex has no such field at all.
+ *
+ * So the switch is a veto, not a request: on means "send what the client asked for, in
+ * words this upstream knows", and off means "disabled", which both dialects read the same
+ * way.
+ */
+export function withThinking<T>(body: T, wanted: boolean, adaptive: boolean): T {
+  if (!body || typeof body !== 'object') return body;
+  const b = body as { thinking?: { type?: string }; max_tokens?: number };
+  if (!b.thinking) return body;
+
+  if (!wanted) return { ...b, thinking: { type: 'disabled' } } as T;
+  // Anything explicit stays: a client that named a budget knows what it wants, and only
+  // `adaptive` is the word the other dialect is missing
+  if (adaptive || b.thinking.type !== 'adaptive') return body;
+
+  // Anthropic wants a budget of at least 1024 and below max_tokens. Claude Code sends a
+  // max_tokens in the tens of thousands; below 1025 there is no number satisfying both, so
+  // the ask is left as it stands rather than rewritten into an invalid one — and a request
+  // that small is background work, not somebody waiting to read the reasoning.
+  const max = typeof b.max_tokens === 'number' ? b.max_tokens : 0;
+  if (max && max <= 1024) return body;
+  const budget = max ? Math.min(THINKING_BUDGET, max - 1) : THINKING_BUDGET;
+  return { ...b, thinking: { type: 'enabled', budget_tokens: budget } } as T;
+}
+
 const PASSTHROUGH_PREFIX = ['x-stainless-'];
 
 function passthrough(reqHeaders: Record<string, string | string[] | undefined>): Record<string, string> {

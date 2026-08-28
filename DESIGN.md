@@ -181,6 +181,27 @@ system 第一块的 `x-anthropic-billing-header:` 那行。客户端自己带了
 CLI 的请求安上 CLI 的身份是在瞎描述。DeepSeek 的兼容层走的是同一条 wire，因此也只拿到
 `anthropic-version` 和它自己的 key。
 
+**思考的方言。** Claude Code 每个请求都要思考，2.1 起要的是 `thinking: {"type":"adaptive"}`
+—— 花多少由模型自己定。这个词只有官方端点认识。DeepSeek 的兼容层收 `thinking`，但读 `type`
+是在找 `enabled`（文档另注明 `budget_tokens` 被忽略），于是 `adaptive` 落成一个它不认的值：
+请求成功、答案照回、里面没有思考。表现出来就是「这个部署从来不显示思考过程」，而不是任何报错。
+
+所以网关按上游改写这一个字段（`gateway/upstream.ts` 的 `withThinking`）：
+
+| 情况 | 发出去的 | 为什么 |
+|---|---|---|
+| 官方端点 | 原样 `adaptive` | 它自己的词，模型定预算比我们定好 |
+| 其它 anthropic-native 上游 | `{"type":"enabled","budget_tokens":…}` | 老方言两边都认，认错的代价是预算写死而不是请求失败 |
+| 对话把开关关了 | `{"type":"disabled"}` | 两种方言读法一致 |
+| **body 里本来就没有 `thinking`** | **不动** | 这条是防呆：命名对话、写摘要都不带这个字段，也就不会被硬塞上思考 |
+
+判据是 host 而不是 provider 上的一个设置：认不认 `adaptive` 跟着厂商走，不跟着部署走。
+
+开关本身是对话上的一列（`conversations.thinking`，默认开），签在票据里而不是每个请求去查库
+—— 一个 turn 用它开始时的那份设置，跟 model / effort 同一条规矩，否则答到一半改开关会让同
+一个 turn 里的请求形状变来变去。Codex 不显示这个开关：Responses wire 上根本没有 `thinking`
+这个字段，它的推理走 effort。
+
 ### 2.2c compose 形态下的逐跳链路
 
 §2.2 那张图画的是**逻辑**路径。拆成四个容器之后，每一跳落在哪个容器、哪张网络、
@@ -195,7 +216,7 @@ caddy      [frontend]          handle /api/* → app:8787（SSE 那条 flush_int
 app        [frontend+backend]  ROLE=app
   ① 验 access token
   ② quota.check(user) —— 超了 402，容器都不用拉
-  ③ signRuntimeToken{sub:user, cid, tid, agent}，TTL 20min
+  ③ signRuntimeToken{sub:user, cid, tid, agent, think}，TTL 20min
   ④ containers.ensure(user) ── 引擎 socket ──▶ run/start agentlodge-agent-<uid 前 12 位>
   ⑤ exec -i --workdir /workspace/<cid>
        -e ANTHROPIC_BASE_URL=http://gateway:8788

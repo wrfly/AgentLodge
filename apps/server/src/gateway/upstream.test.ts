@@ -9,7 +9,15 @@
  *
  * Run: npm -w @agentlodge/server run test:upstream
  */
-import { betaUrl, isOAuthToken, mergeBeta, outboundHeaders, withBillingSystem } from './upstream.js';
+import {
+  betaUrl,
+  isOAuthToken,
+  mergeBeta,
+  outboundHeaders,
+  speaksAdaptiveThinking,
+  withBillingSystem,
+  withThinking,
+} from './upstream.js';
 
 const API_KEY = 'sk-ant-api03-real-api-key';
 const OAUTH = 'sk-ant-oat01-real-oauth-token';
@@ -232,6 +240,60 @@ console.log('\n=== What the client specifies wins ===');
   const h = outboundHeaders({ 'anthropic-version': '2024-01-01', accept: 'text/event-stream' }, 'anthropic', API_KEY);
   ok('anthropic-version can be overridden', h['anthropic-version'] === '2024-01-01');
   ok('accept can be overridden', h.accept === 'text/event-stream');
+}
+
+console.log('\n=== Which upstreams know the word "adaptive" ===');
+ok('the official endpoint', speaksAdaptiveThinking('https://api.anthropic.com/v1/messages'));
+ok('a subdomain of it', speaksAdaptiveThinking('https://api.eu.anthropic.com/v1/messages'));
+ok('deepseek does not', !speaksAdaptiveThinking('https://api.deepseek.com/anthropic/v1/messages'));
+ok(
+  'and neither does a host that merely ends in the same letters',
+  !speaksAdaptiveThinking('https://notanthropic.com/v1/messages'),
+);
+ok('a url that will not parse is not the official endpoint', !speaksAdaptiveThinking('nonsense'));
+
+console.log('\n=== The thinking directive is translated, not invented ===');
+{
+  const cli = { model: 'x', max_tokens: 64000, thinking: { type: 'adaptive' } };
+
+  const official = withThinking(cli, true, true) as typeof cli;
+  ok('the official endpoint keeps adaptive', official.thinking.type === 'adaptive', JSON.stringify(official.thinking));
+  ok('and the body is not even copied', official === cli);
+
+  const deepseek = withThinking(cli, true, false) as { thinking: { type: string; budget_tokens?: number } };
+  ok('deepseek is asked in the dialect it reads', deepseek.thinking.type === 'enabled', JSON.stringify(deepseek.thinking));
+  ok('with a budget below max_tokens', deepseek.thinking.budget_tokens === 8192);
+  ok('the original is left alone', cli.thinking.type === 'adaptive');
+
+  const off = withThinking(cli, false, false) as { thinking: { type: string } };
+  ok('the switch off says so outright', off.thinking.type === 'disabled', JSON.stringify(off.thinking));
+  ok('and off means off on the official endpoint too', (withThinking(cli, false, true) as typeof off).thinking.type === 'disabled');
+}
+{
+  // The one that stops this turning thinking on where nobody asked: naming a conversation
+  // and summarising one send no thinking field, and a Responses-wire body has no such field
+  const ours = { model: 'x', max_tokens: 200 };
+  ok('a body that never asked is untouched with the switch on', withThinking(ours, true, false) === ours);
+  ok('and untouched with the switch off', withThinking(ours, false, false) === ours);
+
+  const explicit = { max_tokens: 64000, thinking: { type: 'enabled', budget_tokens: 2048 } };
+  ok(
+    'a client that named its own budget keeps it',
+    withThinking(explicit, true, false) === explicit,
+  );
+
+  const small = { max_tokens: 4000, thinking: { type: 'adaptive' } };
+  const clamped = withThinking(small, true, false) as unknown as { thinking: { budget_tokens: number } };
+  ok('a small max_tokens clamps the budget under it', clamped.thinking.budget_tokens === 3999, String(clamped.thinking.budget_tokens));
+
+  const tiny = { max_tokens: 512, thinking: { type: 'adaptive' } };
+  ok('a max_tokens with no room for a budget is left as it stands', withThinking(tiny, true, false) === tiny);
+
+  const noMax = { thinking: { type: 'adaptive' } };
+  const dflt = withThinking(noMax, true, false) as unknown as { thinking: { budget_tokens: number } };
+  ok('no max_tokens at all still produces a valid budget', dflt.thinking.budget_tokens === 8192);
+
+  ok('a non-object body is returned as it is', withThinking(null, true, false) === null);
 }
 
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);

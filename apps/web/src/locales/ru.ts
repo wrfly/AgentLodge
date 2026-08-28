@@ -89,6 +89,8 @@ export const ru: Record<string, string> = {
   'Switch model (affects later messages only)': 'Сменить модель (только для последующих сообщений)',
   Effort: 'Усилие',
   'Reasoning effort (affects later messages only)': 'Глубина рассуждений (только для последующих сообщений)',
+  Think: 'Мышление',
+  'Show the thinking before the answer (affects later messages only)': 'Показывать размышления перед ответом (только для последующих сообщений)',
   'Stop generating': 'Остановить генерацию',
   Send: 'Отправить',
   'Your quota period has ended — ask an administrator to top it up': 'Период квоты закончился — попросите администратора пополнить её',
