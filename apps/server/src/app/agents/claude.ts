@@ -28,6 +28,8 @@ interface RawStreamEvent {
       type: string;
       text?: string;
       thinking?: string;
+      /** What a subscription returns instead of the thinking: how much of it there was */
+      estimated_tokens?: number | null;
       partial_json?: string;
     };
   };
@@ -217,9 +219,21 @@ function runTurn(o: RunOptions): RunningTurn {
         if (d.type === 'text_delta' && d.text) {
           if (block?.kind === 'text') block.text += d.text;
           emit({ type: 'text.delta', blockId, text: d.text });
-        } else if (d.type === 'thinking_delta' && d.thinking) {
-          if (block?.kind === 'thinking') block.text += d.thinking;
-          emit({ type: 'thinking.delta', blockId, text: d.thinking });
+        } else if (d.type === 'thinking_delta') {
+          /*
+           * The text is empty on a subscription — every delta carries `thinking: ""` and an
+           * increment of `estimated_tokens` instead, so a turn's thinking is a number and
+           * not a transcript. Both are forwarded; which one is there decides what the
+           * interface can show.
+           */
+          const grew = typeof d.estimated_tokens === 'number' ? d.estimated_tokens : 0;
+          if (block?.kind === 'thinking') {
+            block.text += d.thinking ?? '';
+            if (grew) block.tokens = (block.tokens ?? 0) + grew;
+          }
+          if (d.thinking || grew) {
+            emit({ type: 'thinking.delta', blockId, text: d.thinking ?? '', tokens: grew || undefined });
+          }
         } else if (d.type === 'input_json_delta' && d.partial_json !== undefined) {
           toolInputBuf.set(blockId, (toolInputBuf.get(blockId) ?? '') + d.partial_json);
           emit({ type: 'tool.input.delta', blockId, partial: d.partial_json });
@@ -350,8 +364,15 @@ function runTurn(o: RunOptions): RunningTurn {
       const finalBlocks = order
         .map((id) => blocks.get(id))
         .filter((b): b is MessageBlock => Boolean(b))
-        // Drop entirely empty blocks, such as a thinking block carrying only a signature
-        .filter((b) => (b.kind === 'tool_use' ? true : b.text.trim().length > 0));
+        /*
+         * Drop blocks that say nothing at all — a thinking block carrying only a signature.
+         * One that carries a token count is not one of them: on a subscription that count
+         * is the whole of what the upstream returned, and dropping it is what left the
+         * interface with an empty panel to explain.
+         */
+        .filter((b) =>
+          b.kind === 'tool_use' ? true : b.text.trim().length > 0 || (b.kind === 'thinking' && Boolean(b.tokens)),
+        );
 
       resolve({ blocks: finalBlocks, usage, error: errorMessage, aborted });
     };

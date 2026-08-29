@@ -23,6 +23,8 @@ export interface LiveThinkingBlock {
   kind: 'thinking';
   blockId: number;
   text: string;
+  /** How much thinking the upstream reported when it did not report the thinking itself */
+  tokens?: number;
   streaming: boolean;
 }
 export interface LiveToolBlock {
@@ -444,6 +446,10 @@ export const useChat = create<ChatState>((set, get) => ({
             lastAssistant();
             const b = findBlock(messages, e.blockId);
             if (b && b.kind !== 'tool_use') b.text += e.text;
+            // A subscription reports the size of the thinking instead of the thinking
+            if (e.type === 'thinking.delta' && e.tokens && b?.kind === 'thinking') {
+              b.tokens = (b.tokens ?? 0) + e.tokens;
+            }
             break;
           }
 

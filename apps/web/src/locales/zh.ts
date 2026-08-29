@@ -44,6 +44,8 @@ export const zh: Record<string, string> = {
 
   // Chat: messages and tool cards
   'Thinking…': '思考中…',
+  'Thinking… ~{n} tokens': '思考中 · 约 {n} tokens',
+  'Thought for ~{n} tokens': '思考了约 {n} tokens',
   'Thought process': '思考过程',
   '(empty)': '(无内容)',
   'in {in} · cache read {read} · cache write {write} · out {out}': '输入 {in} · 缓存读 {read} · 缓存写 {write} · 输出 {out}',

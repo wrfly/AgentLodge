@@ -44,6 +44,8 @@ export const ru: Record<string, string> = {
 
   // Chat: messages and tool cards
   'Thinking…': 'Размышляет…',
+  'Thinking… ~{n} tokens': 'Думает… ~{n} токенов',
+  'Thought for ~{n} tokens': 'Обдумывал ~{n} токенов',
   'Thought process': 'Ход размышлений',
   '(empty)': '(пусто)',
   'in {in} · cache read {read} · cache write {write} · out {out}': 'вход {in} · чтение кэша {read} · запись кэша {write} · выход {out}',

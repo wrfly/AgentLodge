@@ -25,7 +25,7 @@ export type ServerEvent =
   | { type: 'turn.started'; turnId: string }
   | { type: 'block.start'; blockId: number; kind: BlockKind; toolId?: string; toolName?: string }
   | { type: 'text.delta'; blockId: number; text: string }
-  | { type: 'thinking.delta'; blockId: number; text: string }
+  | { type: 'thinking.delta'; blockId: number; text: string; tokens?: number }
   | { type: 'tool.input.delta'; blockId: number; partial: string }
   /** The authoritative, complete tool input from the assistant event; supersedes what streaming assembled */
   | { type: 'tool.input'; blockId: number; input: unknown }
@@ -97,6 +97,15 @@ export interface ThinkingBlock {
   kind: 'thinking';
   blockId: number;
   text: string;
+  /**
+   * How much thinking the upstream said it did, when it does not say what the thinking was.
+   *
+   * On a subscription the deltas arrive with `thinking: ""` and an `estimated_tokens`
+   * count — the reasoning is not returned, only its size — so a block with a count and no
+   * text is the ordinary case there, and the interface reports the size rather than an
+   * empty panel. Summed from the deltas, which are increments.
+   */
+  tokens?: number;
 }
 export interface ToolBlock {
   kind: 'tool_use';

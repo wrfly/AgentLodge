@@ -39,6 +39,8 @@ export const de: Record<string, string> = {
   Copy: 'Kopieren',
   'Custom — press Enter': 'Eigener Wert — Enter drücken',
   'Thinking…': 'Denkt nach …',
+  'Thinking… ~{n} tokens': 'Denkt nach … ~{n} Token',
+  'Thought for ~{n} tokens': 'Nachgedacht, ~{n} Token',
   'Thought process': 'Gedankengang',
   '(empty)': '(leer)',
   'in {in} · cache read {read} · cache write {write} · out {out}': 'ein {in} · Cache gelesen {read} · Cache geschrieben {write} · aus {out}',
