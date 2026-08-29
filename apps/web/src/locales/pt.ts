@@ -39,6 +39,8 @@ export const pt: Record<string, string> = {
   Copy: 'Copiar',
   'Custom — press Enter': 'Personalizado — prima Enter',
   'Thinking…': 'A pensar…',
+  'Thinking… ~{n} tokens': 'A pensar… ~{n} tokens',
+  'Thought for ~{n} tokens': 'Pensou ~{n} tokens',
   'Thought process': 'Raciocínio',
   '(empty)': '(vazio)',
   'in {in} · cache read {read} · cache write {write} · out {out}': 'entrada {in} · cache lida {read} · cache escrita {write} · saída {out}',

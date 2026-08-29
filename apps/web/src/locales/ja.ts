@@ -44,6 +44,8 @@ export const ja: Record<string, string> = {
 
   // Chat: messages and tool cards
   'Thinking…': '思考中…',
+  'Thinking… ~{n} tokens': '思考中 · 約 {n} トークン',
+  'Thought for ~{n} tokens': '約 {n} トークン分の思考',
   'Thought process': '思考の過程',
   '(empty)': '(内容なし)',
   'in {in} · cache read {read} · cache write {write} · out {out}': '入力 {in} · キャッシュ読取 {read} · キャッシュ書込 {write} · 出力 {out}',

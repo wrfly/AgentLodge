@@ -40,6 +40,8 @@ export const zhHant: Record<string, string> = {
   Copy: '複製',
   'Custom — press Enter': '自訂——按 Enter',
   'Thinking…': '思考中…',
+  'Thinking… ~{n} tokens': '思考中 · 約 {n} tokens',
+  'Thought for ~{n} tokens': '思考了約 {n} tokens',
   'Thought process': '思考過程',
   '(empty)': '（空）',
   'in {in} · cache read {read} · cache write {write} · out {out}': '入 {in} · 快取讀 {read} · 快取寫 {write} · 出 {out}',

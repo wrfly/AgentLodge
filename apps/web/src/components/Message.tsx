@@ -6,9 +6,43 @@ import { Markdown } from './Markdown';
 import { ToolCard } from './ToolCard';
 import { useT } from '../lib/i18n';
 
+/**
+ * The thinking, or what there is of it.
+ *
+ * A subscription does not return the reasoning — every delta arrives empty with a token
+ * count beside it — so with no text there is nothing to expand and the line says how much
+ * thinking there was. An upstream that does return it keeps the panel it always had.
+ */
 function ThinkingBlock({ block }: { block: Extract<LiveBlock, { kind: 'thinking' }> }) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const n = block.tokens ? block.tokens.toLocaleString() : '';
+
+  const label = block.streaming
+    ? n
+      ? t('Thinking… ~{n} tokens', { n })
+      : t('Thinking…')
+    : block.text
+      ? t('Thought process')
+      : n
+        ? t('Thought for ~{n} tokens', { n })
+        : t('Thought process');
+
+  const line = (
+    <>
+      <Brain size={13} />
+      <span className="italic">{label}</span>
+    </>
+  );
+
+  if (!block.text) {
+    return (
+      <div className="fade-up my-2 flex items-center gap-1.5 py-0.5 pl-[18px] text-[12.5px] text-faint">
+        {line}
+      </div>
+    );
+  }
+
   return (
     <div className="fade-up my-2">
       <button
@@ -16,12 +50,11 @@ function ThinkingBlock({ block }: { block: Extract<LiveBlock, { kind: 'thinking'
         className="flex items-center gap-1.5 rounded-md py-0.5 text-[12.5px] text-faint hover:text-muted"
       >
         <ChevronRight size={12} className={clsx('transition-transform', open && 'rotate-90')} />
-        <Brain size={13} />
-        <span className="italic">{block.streaming ? t('Thinking…') : t('Thought process')}</span>
+        {line}
       </button>
       {open && (
         <div className="mt-1.5 border-l-2 border-line pl-3 text-[13.5px] leading-[1.7] whitespace-pre-wrap text-muted italic">
-          {block.text || t('(empty)')}
+          {block.text}
         </div>
       )}
     </div>
