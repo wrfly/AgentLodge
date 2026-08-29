@@ -324,14 +324,6 @@ export function deriveTitle(text: string): string {
 }
 
 /**
- * Name a conversation after what it is about, once.
- *
- * Two things stop it. A title the user typed is theirs — an automatic one is a better
- * guess than the opening message, but it is still a guess. And `title_at`, once set, means
- * a model has already named this conversation: renaming it later costs another call and
- * moves a name the user has learned to recognise in their list.
- */
-/**
  * Record that a model was asked to name this one, without giving it a name.
  *
  * `title_at` is the guard on naming, and the question it has to answer is "has this been
@@ -348,6 +340,14 @@ export function markNamingTried(id: string): void {
   );
 }
 
+/**
+ * Name a conversation after what it is about, once.
+ *
+ * Two things stop it. A title the user typed is theirs — an automatic one is a better
+ * guess than the opening message, but it is still a guess. And `title_at`, once set, means
+ * a model has already named this conversation: renaming it later costs another call and
+ * moves a name the user has learned to recognise in their list.
+ */
 export function retitle(id: string, title: string): boolean {
   const now = nowIso();
   return (
