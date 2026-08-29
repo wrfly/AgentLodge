@@ -26,6 +26,15 @@ export interface AllowanceWindow {
   /** ISO 8601, converted from the unix seconds the headers carry */
   resetsAt: string | null;
   status: string | null;
+  /**
+   * When this window was last mentioned, which is not when the reading was taken.
+   *
+   * A response only carries the windows its own request counted against: `7d_oi` arrives
+   * on Claude Fable and on nothing else — 68 responses here, every one of them Fable —
+   * so the reading is as old as the last time somebody used that class of model, and the
+   * console says so rather than presenting it as current.
+   */
+  observedAt: string;
 }
 
 export interface Allowance {
@@ -82,7 +91,16 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
   });
   if (Object.keys(raw).length === 0) return; // Nothing said; keep the previous reading
 
-  const windows: Record<string, AllowanceWindow> = {};
+  /*
+   * Carried over rather than rebuilt. Each response names only the windows its own request
+   * counted against, so replacing the set wholesale meant Fable's weekly window lived until
+   * the next response from any other model — a few seconds, in practice, and never long
+   * enough for anybody to see it. A window is dropped only when the upstream it belongs to
+   * changes; until then the last reading stands with its own timestamp.
+   */
+  const carried = last && last.provider === provider && last.wire === wire ? last.windows : {};
+  const windows: Record<string, AllowanceWindow> = { ...carried };
+  const now = new Date().toISOString();
   for (const key of Object.keys(raw)) {
     // anthropic-ratelimit-unified-5h-utilization → 5h
     if (!key.startsWith(PREFIX)) continue;
@@ -92,7 +110,11 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
     const name = rest.slice(0, dash);
     const field = rest.slice(dash + 1);
     if (field !== 'utilization' && field !== 'reset' && field !== 'status') continue;
-    const w = (windows[name] ??= { utilization: null, resetsAt: null, status: null });
+    // A window this response mentions is this response's reading, not the carried one
+    const w = (windows[name] =
+      windows[name]?.observedAt === now
+        ? windows[name]
+        : { utilization: null, resetsAt: null, status: null, observedAt: now });
     if (field === 'utilization') w.utilization = num(raw[key]);
     else if (field === 'reset') w.resetsAt = isoFromEpoch(raw[key]);
     else w.status = raw[key] ?? null;
@@ -101,7 +123,7 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
   last = {
     provider,
     wire,
-    observedAt: new Date().toISOString(),
+    observedAt: now,
     status: raw[`${PREFIX}status`] ?? null,
     resetsAt: isoFromEpoch(raw[`${PREFIX}reset`]),
     representative: raw[`${PREFIX}representative-claim`] ?? null,

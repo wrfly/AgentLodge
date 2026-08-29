@@ -126,5 +126,34 @@ console.log('\n=== Junk in a header does not become a number ===');
   ok('an unparseable reset is null, not Invalid Date', snapshot()?.windows['5h']?.resetsAt === null);
 }
 
+console.log('\n=== A window nobody mentioned this time is still the last thing said ===');
+{
+  // Fable is the only model whose responses carry 7d_oi, so every other turn — including
+  // the naming call on haiku — used to wipe it a second after it arrived
+  record('Claude', 'anthropic', headers({
+    'anthropic-ratelimit-unified-5h-utilization': '0.10',
+    'anthropic-ratelimit-unified-7d-utilization': '0.40',
+    'anthropic-ratelimit-unified-7d_oi-utilization': '0.25',
+    'anthropic-ratelimit-unified-7d_oi-reset': '1788152400',
+  }));
+  const fable = snapshot()?.windows['7d_oi'];
+
+  record('Claude', 'anthropic', headers({
+    'anthropic-ratelimit-unified-5h-utilization': '0.11',
+    'anthropic-ratelimit-unified-7d-utilization': '0.41',
+  }));
+  const after = snapshot();
+
+  ok('the windows this response carried are current', after?.windows['5h']?.utilization === 0.11);
+  ok("the one it did not is still there", after?.windows['7d_oi']?.utilization === 0.25, JSON.stringify(after?.windows));
+  ok('with the reset it came with', after?.windows['7d_oi']?.resetsAt === fable?.resetsAt);
+  ok('and its own timestamp, not this response\'s', after?.windows['7d_oi']?.observedAt === fable?.observedAt);
+  ok('while a window this response did carry is stamped now', after?.windows['5h']?.observedAt === after?.observedAt);
+
+  // A different upstream is a different plan; nothing carries over
+  record('DeepSeek', 'anthropic', headers({ 'anthropic-ratelimit-unified-5h-utilization': '0.02' }));
+  ok('another provider starts clean', snapshot()?.windows['7d_oi'] === undefined, JSON.stringify(snapshot()?.windows));
+}
+
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

@@ -185,11 +185,17 @@ function Overview() {
   );
 }
 
-/** How the upstream names its own windows; anything else is shown by its raw key */
+/**
+ * How the upstream names its own windows; anything else is shown by its raw key.
+ *
+ * `7d_oi` is the weekly allowance for the heaviest models: it arrives on Claude Fable
+ * responses and on no others, which is how it was identified — the header set is not
+ * documented anywhere we can point at.
+ */
 const WINDOW_LABEL: Record<string, string> = {
   '5h': 'Rolling 5 hours',
   '7d': 'Rolling 7 days',
-  '7d_oi': 'Rolling 7 days, overage included',
+  '7d_oi': 'Rolling 7 days, premium models',
   overage: 'Overage',
 };
 
@@ -257,11 +263,15 @@ function UpstreamAllowanceCard() {
                     style={{ width: `${Math.min(Math.max((w.utilization ?? 0) * 100, 0), 100)}%` }}
                   />
                 </div>
-                {w.resetsAt && (
-                  <div className="mt-1 text-[11.5px] text-faint">
-                    {t('resets {t}', { t: fmtDate(w.resetsAt) })}
-                  </div>
-                )}
+                <div className="mt-1 flex flex-wrap gap-x-2 text-[11.5px] text-faint">
+                  {w.resetsAt && <span>{t('resets {t}', { t: fmtDate(w.resetsAt) })}</span>}
+                  {/* Only when this window is older than the reading it sits in: a window
+                      the upstream did not mention this time is somebody else's last turn,
+                      and how old it is decides whether the number means anything */}
+                  {w.observedAt && a.observedAt && w.observedAt !== a.observedAt && (
+                    <span>{t('read {t}', { t: fmtDate(w.observedAt) })}</span>
+                  )}
+                </div>
               </div>
             ))
           )}

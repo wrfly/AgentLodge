@@ -772,6 +772,8 @@ export interface UpstreamAllowanceWindow {
   utilization: number | null;
   resetsAt: string | null;
   status: string | null;
+  /** When this window was last mentioned; a window nobody has touched keeps its own age */
+  observedAt: string;
 }
 
 /**
