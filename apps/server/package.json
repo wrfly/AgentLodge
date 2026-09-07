@@ -17,6 +17,7 @@
     "test:providers": "tsx src/core/db/providers.test.ts",
     "test:pricing": "tsx src/core/db/pricing.test.ts",
     "test:upstream": "tsx src/gateway/upstream.test.ts",
+    "test:cli-version": "tsx src/gateway/cli-version.test.ts",
     "test:credential": "tsx src/core/credential.test.ts",
     "test:registry": "tsx src/app/agents/registry.test.ts",
     "test:i18n": "tsx src/core/i18n/i18n.test.ts",

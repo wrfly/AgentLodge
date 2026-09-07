@@ -181,6 +181,26 @@ system 第一块的 `x-anthropic-billing-header:` 那行。客户端自己带了
 CLI 的请求安上 CLI 的身份是在瞎描述。DeepSeek 的兼容层走的是同一条 wire，因此也只拿到
 `anthropic-version` 和它自己的 key。
 
+**补的那行里的版本号是活的，不是常量。** 上游按这个号做模型准入：版本不够就直接拒，
+`claude_code_version_too_old`，而且它读的是 billing 那行，不是 user-agent——用一个新版本的
+user-agent 配一个旧版本的 billing 行，照拒不误。写死一个数就是一个带延迟的 bug：上游哪天上线
+一个门槛更高的模型（fable-5.1 要 2.1.251），那模型对每个真实客户端都好用，唯独对我们自己那
+几个内部调用报一个「版本太旧」——旧的是部署里已经没人在跑的号。
+
+所以版本号**从流量里学**（`gateway/cli-version.ts`）：真实 Claude Code 每个请求都带自己的
+billing 行，网关原样透传，同时记下见过的最大值，之后自己的调用就报这个号。第一个升级的人把
+整个部署带上去，没人需要改任何东西。存在 settings 里而不是内存里——两个容器都要发上游请求，
+得说同一个数，重启也没必要重学。
+
+底线是 `CLI_VERSION`（`gateway/upstream.ts`），等于 agent 镜像装的那个版本，
+`scripts/check-cli-version.mjs` 盯着它和 `docker/agent.Dockerfile` 的 `ARG CLAUDE_VERSION`
+不许分叉。观测只往前不往后，所以客户端谎报版本最多把我们说新——那个方向解锁的是部署自己订阅
+上的模型，没别的代价——而不可能把我们拖到被拒的旧号上。
+
+代价写清楚：一个全新部署在第一个真实客户端进来之前只能报底线号，这期间它自己的内部调用用不了
+门槛更高的模型；如果一个部署的客户端全是 2.1.224 的 agent 容器，那它永远学不到更新的号——这是
+对的，那个 CLI 本来就用不了 fable-5.1，该动的是镜像。
+
 **思考的方言。** Claude Code 每个请求都要思考，2.1 起要的是 `thinking: {"type":"adaptive"}`
 —— 花多少由模型自己定。这个词只有官方端点认识。DeepSeek 的兼容层收 `thinking`，但读 `type`
 是在找 `enabled`（文档另注明 `budget_tokens` 被忽略），于是 `adaptive` 落成一个它不认的值：

@@ -456,6 +456,17 @@ codex -c model_provider=agentlodge \
 
 `Authorization: Bearer` 和 `x-api-key` 两种头都认。
 
+### `/model` 里为什么原本没有 Fable
+
+Claude Code 只在 base URL 恰好是 `api.anthropic.com` 时才把 Fable 摆进 `/model`——指向网关
+它连「这个账号有没有」都不问，直接不显示。同一个判断也压掉了 CLI 自己那次探测请求，所以从
+界面上看不出被拦在哪。
+
+包装脚本因此多导一个 `ANTHROPIC_DEFAULT_FABLE_MODEL='claude-fable-5-1'`：点名型号就绕过那个
+检查，用的还是选择器本来会用的那个 id。装过一次的用户重跑一遍安装命令即可。
+
+要 1M 上下文得显式选 `fable[1m]`，默认那档是 200k。
+
 ### 凭据为什么放在配置目录里
 
 **`ANTHROPIC_BASE_URL` 不是认证**。空配置目录下 `claude auth status` 回
@@ -1259,6 +1270,15 @@ label 里有。
 docker inspect docker.io/wrfly/agentlodge-agent:latest \
   --format '{{index .Config.Labels "dev.agentlodge.claude-code.version"}}'
 ```
+
+**这个版本号也是网关自称的底线。** 网关自己发起的上游请求（命名对话、写摘要、拉模型列表，
+以及任何指向本服务的第三方 SDK）背后没有 CLI，得自称一个 Claude Code 版本；上游按这个号做
+模型准入，版本不够直接拒。所以网关**从流量里学**：真实客户端每个请求都带自己的版本，见过的
+最大值就是之后自称的号（存在隐藏设置 `upstream.cliVersion` 里，两个容器共用）。第一个升级
+的人把整个部署带上去。
+
+要留意的只有一种情况：**一个部署如果只有 agent 容器在用**，它就学不到比镜像更新的号——这是
+对的，那个 CLI 本来也用不了新模型，该动的是镜像。
 
 部署本身不需要 clone 仓库。一条命令：
 

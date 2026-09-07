@@ -368,16 +368,31 @@ export function mergeBeta(fromClient: string | string[] | undefined, extra?: str
 const PASSTHROUGH_EXACT = new Set(['user-agent', 'x-app', 'x-claude-code-session-id']);
 
 /**
+ * Which Claude Code we say we are when the caller did not say.
+ *
+ * Kept equal to `ARG CLAUDE_VERSION` in docker/agent.Dockerfile by
+ * scripts/check-cli-version.mjs — that image is the one client this deployment is certain to
+ * have, which is what makes the number true rather than merely plausible.
+ *
+ * It is a floor, not the answer: gateway/cli-version.ts moves it forward as newer clients
+ * come through. Everything here takes the version as an argument so that this file stays a
+ * pure function of its inputs, with no database behind it.
+ */
+export const CLI_VERSION = '2.1.224';
+
+/**
  * What Claude Code calls itself, used when the caller said nothing.
  *
  * Three of our own callers reach the upstream without going through a CLI: naming a
  * conversation, summarising one, and pulling an upstream's model list. On a subscription
  * those land on the same OAuth credential as the agent containers, and a request that
  * carries the credential but describes itself as nothing at all is the odd one out. The
- * version is the one the agent image ships and the wording is what a captured request
- * carried; a client that sends its own user-agent keeps it, since the allowlist runs first.
+ * wording is what a captured request carried; a client that sends its own user-agent keeps
+ * it, since the allowlist runs first.
  */
-const CLI_USER_AGENT = 'claude-cli/2.1.224 (external, sdk-cli)';
+export function cliUserAgent(version: string): string {
+  return `claude-cli/${version} (external, sdk-cli)`;
+}
 
 /** What an HTTP client calls itself when nobody has given it a name */
 const BARE_RUNTIME = /^(node|undici|node-fetch|got|axios)(\/|$)/i;
@@ -403,8 +418,22 @@ const STAINLESS: Record<string, string> = {
 /** What marks a request as Claude Code's, alongside the OAuth beta */
 const CLAUDE_CODE_BETA = 'claude-code-20250219';
 
-/** The first system block Claude Code sends, which is how the upstream attributes the call */
-const BILLING_SYSTEM = 'x-anthropic-billing-header: cc_version=2.1.224.ddf; cc_entrypoint=sdk-cli;';
+/**
+ * The tail a captured billing line carried after the version. What it stands for is not
+ * documented anywhere we can read, so it is copied rather than explained.
+ */
+const CC_TAIL = '.ddf';
+
+/**
+ * The first system block Claude Code sends, which is how the upstream attributes the call.
+ *
+ * The version in it is not decorative — the upstream gates models on it, and answers a
+ * request for one that is too new with `claude_code_version_too_old` naming the number it
+ * read *here*, not the one in the user agent.
+ */
+export function billingLine(version: string): string {
+  return `x-anthropic-billing-header: cc_version=${version}${CC_TAIL}; cc_entrypoint=sdk-cli;`;
+}
 
 /**
  * The query Claude Code puts on /v1/messages.
@@ -426,11 +455,15 @@ type SystemBlock = { type: 'text'; text: string };
  * own calls — naming a conversation, summarising one — carry no system prompt at all, and
  * a subscription request with none is the one that does not look like the client holding
  * the credential.
+ *
+ * A client that already sent one keeps it whole, version and all. That is what makes
+ * gateway/cli-version.ts able to learn from it: what goes upstream on a real client's
+ * request is the real client's line, not ours.
  */
-export function withBillingSystem(body: unknown): unknown {
+export function withBillingSystem(body: unknown, version = CLI_VERSION): unknown {
   if (!body || typeof body !== 'object') return body;
   const b = body as { system?: string | SystemBlock[] };
-  const head: SystemBlock = { type: 'text', text: BILLING_SYSTEM };
+  const head: SystemBlock = { type: 'text', text: billingLine(version) };
 
   if (b.system === undefined) return { ...b, system: [head] };
   if (typeof b.system === 'string') {
@@ -558,6 +591,12 @@ export function outboundHeaders(
    * request gets one of its own.
    */
   session?: string,
+  /**
+   * Which Claude Code to claim to be, for the same requests that get the rest of the
+   * identity. Defaults to the baked floor so that callers with no database behind them —
+   * the model-list fetch — keep working without one.
+   */
+  version = CLI_VERSION,
 ): Record<string, string> {
   const accept = reqHeaders.accept;
   // The allowlist goes first and our own headers after, so ours always win on a name
@@ -585,7 +624,7 @@ export function outboundHeaders(
       // `??=` is not enough for this one: Node's fetch puts `user-agent: node` on every
       // request it makes, so our own callers arrive with the slot already filled by a
       // runtime that is not a client. A real client's name is left alone.
-      if (!h['user-agent'] || BARE_RUNTIME.test(h['user-agent'])) h['user-agent'] = CLI_USER_AGENT;
+      if (!h['user-agent'] || BARE_RUNTIME.test(h['user-agent'])) h['user-agent'] = cliUserAgent(version);
       h['x-app'] ??= 'cli';
       h['x-claude-code-session-id'] ??= session || crypto.randomUUID();
       // The whole set or none of it. Filled key by key, a caller that sent three of its
@@ -600,8 +639,9 @@ export function outboundHeaders(
 
     if (!oauth) h['x-api-key'] = apiKey;
 
-    const version = reqHeaders['anthropic-version'];
-    h['anthropic-version'] = (typeof version === 'string' ? version : undefined) ?? '2023-06-01';
+    // The API's own date-stamped version, unrelated to which Claude Code we claim to be
+    const apiVersion = reqHeaders['anthropic-version'];
+    h['anthropic-version'] = (typeof apiVersion === 'string' ? apiVersion : undefined) ?? '2023-06-01';
 
     // The two betas a subscription request carries. An API key gets neither: an endpoint
     // that is not Anthropic is reached on the same wire, and unknown betas are its problem.

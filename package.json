@@ -12,7 +12,7 @@
     "dev:server": "npm -w @agentlodge/server run dev",
     "dev:web": "npm -w @agentlodge/web run dev",
     "build": "npm -w @agentlodge/web run build && npm -w @agentlodge/server run build",
-    "typecheck": "node scripts/check-layers.mjs && node scripts/check-compose.mjs && node scripts/check-i18n.mjs && npm -w @agentlodge/server run typecheck && npm -w @agentlodge/web run typecheck",
+    "typecheck": "node scripts/check-layers.mjs && node scripts/check-compose.mjs && node scripts/check-cli-version.mjs && node scripts/check-i18n.mjs && npm -w @agentlodge/server run typecheck && npm -w @agentlodge/web run typecheck",
     "build:agent-image": "podman build -f docker/agent.Dockerfile -t agentlodge/agent:1.0 .",
     "agent:net": "podman network create --internal agentlodge-agent-net || true",
     "dev:mock": "node scripts/mock-upstream.mjs",
@@ -26,7 +26,8 @@
     "selftest": "bash scripts/selftest.sh",
     "check:i18n": "node scripts/check-i18n.mjs",
     "test": "node scripts/test-all.mjs",
-    "check:compose": "node scripts/check-compose.mjs"
+    "check:compose": "node scripts/check-compose.mjs",
+    "check:cli-version": "node scripts/check-cli-version.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

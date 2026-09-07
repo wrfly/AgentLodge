@@ -502,6 +502,7 @@ export const ja: Record<string, string> = {
   'resets {when}': '{when} にリセット',
   'Upstream 5-hour window reset': '上流の 5 時間ウィンドウのリセット',
   'Upstream weekly window reset': '上流の週次ウィンドウのリセット',
+  'Newest Claude Code version seen': '確認された最新の Claude Code バージョン',
   'Expires when that window resets — there is no separate clock to set.': 'そのウィンドウのリセット時に自動的に失効します（別途の期限設定は不要）。',
   // Memory
   'The assistant writes this as you talk, and reads it at the start of every conversation. Correct anything here, or add something it could not have picked up.': 'アシスタントが会話の中で書き留め、会話のたびに読み込みます。ここで内容を直したり、拾いようのない情報を足したりできます。',
