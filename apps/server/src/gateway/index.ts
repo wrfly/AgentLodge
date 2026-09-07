@@ -18,6 +18,7 @@ import {
   type Principal,
 } from '../core/credential.js';
 import { attachUser, requireAdmin } from '../core/auth/guard.js';
+import * as cliVersion from './cli-version.js';
 import * as credentialManager from '../core/credential-manager.js';
 import { installLocale, tr } from '../core/i18n/locale.js';
 import {
@@ -395,10 +396,19 @@ async function handleProxy(
      * anybody's own SDK against the same credential.
      */
     const asCli = target.wire === 'anthropic' && !target.translate && isOAuthToken(target.apiKey);
+    /*
+     * Which Claude Code to be, on the requests where we have to be one. Read from this
+     * request when it is a real client's — the version it states is newer than any we have
+     * seen soon enough after every upgrade — and otherwise the newest that came before it.
+     */
+    const cli = asCli ? cliVersion.observe(outbound) : undefined;
     const upstream = await fetch(asCli ? betaUrl(egress.url) : egress.url, {
       method: 'POST',
-      headers: { ...outboundHeaders(req.headers, target.wire, target.apiKey, claims.cid), ...egress.headers },
-      body: JSON.stringify(asCli ? withBillingSystem(outbound) : outbound),
+      headers: {
+        ...outboundHeaders(req.headers, target.wire, target.apiKey, claims.cid, cli),
+        ...egress.headers,
+      },
+      body: JSON.stringify(asCli ? withBillingSystem(outbound, cli) : outbound),
       signal: ac.signal,
     });
 
@@ -690,7 +700,10 @@ export function buildGateway(): FastifyInstance {
       try {
         const res = await fetch(egress.url, {
           method: 'POST',
-          headers: { ...outboundHeaders(req.headers, 'anthropic', target.apiKey, who.cid), ...egress.headers },
+          headers: {
+            ...outboundHeaders(req.headers, 'anthropic', target.apiKey, who.cid, cliVersion.current()),
+            ...egress.headers,
+          },
           body: JSON.stringify(req.body ?? {}),
           signal: AbortSignal.timeout(10_000),
         });

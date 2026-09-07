@@ -502,6 +502,7 @@ export const ru: Record<string, string> = {
   'resets {when}': 'сброс {when}',
   'Upstream 5-hour window reset': 'Сброс 5-часового окна апстрима',
   'Upstream weekly window reset': 'Сброс недельного окна апстрима',
+  'Newest Claude Code version seen': 'Новейшая замеченная версия Claude Code',
   'Expires when that window resets — there is no separate clock to set.': 'Истекает при сбросе этого окна — отдельный срок задавать не нужно.',
   // Memory
   'The assistant writes this as you talk, and reads it at the start of every conversation. Correct anything here, or add something it could not have picked up.': 'Ассистент записывает это по ходу разговора и перечитывает в начале каждого следующего. Здесь можно поправить любую запись или добавить то, о чём он не мог узнать.',

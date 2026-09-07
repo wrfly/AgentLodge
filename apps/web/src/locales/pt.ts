@@ -477,6 +477,7 @@ export const pt: Record<string, string> = {
   'resets {when}': 'é reposto {when}',
   'Upstream 5-hour window reset': 'Reposição da janela de 5 horas do fornecedor',
   'Upstream weekly window reset': 'Reposição da janela semanal do fornecedor',
+  'Newest Claude Code version seen': 'Versão mais recente do Claude Code observada',
   'Expires when that window resets — there is no separate clock to set.': 'Expira quando essa janela for reposta — não há outro relógio para acertar.',
   'The assistant writes this as you talk, and reads it at the start of every conversation. Correct anything here, or add something it could not have picked up.': 'O assistente escreve isto enquanto conversam, e lê-o no início de cada conversa. Corrija aqui o que estiver errado, ou acrescente o que ele não teria como saber.',
   'Add': 'Adicionar',

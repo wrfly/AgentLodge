@@ -10,7 +10,10 @@
  * Run: npm -w @agentlodge/server run test:upstream
  */
 import {
+  CLI_VERSION,
   betaUrl,
+  billingLine,
+  cliUserAgent,
   isOAuthToken,
   mergeBeta,
   outboundHeaders,
@@ -161,7 +164,7 @@ console.log('\n=== Only a subscription is dressed as the CLI ===');
   ok('and the key goes in both auth headers as before', key['x-api-key'] === API_KEY && key.authorization === `Bearer ${API_KEY}`);
 
   const runtime = outboundHeaders({ 'user-agent': 'node' }, 'anthropic', OAUTH, 'a-conversation-id');
-  ok('a runtime is not a client — node fetch fills that slot itself', runtime['user-agent'] === 'claude-cli/2.1.224 (external, sdk-cli)', runtime['user-agent']);
+  ok('a runtime is not a client — node fetch fills that slot itself', runtime['user-agent'] === `claude-cli/${CLI_VERSION} (external, sdk-cli)`, runtime['user-agent']);
   const named = outboundHeaders({ 'user-agent': 'my-own-client/1.0' }, 'anthropic', OAUTH, 'a-conversation-id');
   ok('a client that named itself keeps its name', named['user-agent'] === 'my-own-client/1.0');
 
@@ -186,6 +189,36 @@ console.log('\n=== The query and the billing line ===');
 
   const blocks = withBillingSystem({ system: [{ type: 'text', text: 'You are helpful.' }] }) as { system: Array<{ text: string }> };
   ok('otherwise it goes in front', blocks.system.length === 2 && blocks.system[0]?.text.startsWith('x-anthropic-billing-header:') === true);
+}
+
+console.log('\n=== Which Claude Code we say we are ===');
+{
+  /*
+   * The version in the billing line is not decorative: the upstream gates models on it, and
+   * answers a request for one that is too new with claude_code_version_too_old naming the
+   * number it read there. gateway/cli-version.ts moves it forward from what clients send, so
+   * both of these have to be built from an argument rather than baked.
+   */
+  ok('the line carries the version it was given', billingLine('2.1.263').includes('cc_version=2.1.263.ddf;'), billingLine('2.1.263'));
+  ok('and names the entrypoint, which is what we actually are', billingLine('2.1.263').includes('cc_entrypoint=sdk-cli;'));
+  ok('the user agent carries it too', cliUserAgent('2.1.263') === 'claude-cli/2.1.263 (external, sdk-cli)', cliUserAgent('2.1.263'));
+
+  const claimed = withBillingSystem({ model: 'claude-fable-5-1' }, '2.1.263') as { system: Array<{ text: string }> };
+  ok('a body with no line of its own gets the version we pass', claimed.system[0]?.text === billingLine('2.1.263'), JSON.stringify(claimed.system[0]));
+
+  const theirs = { system: [{ type: 'text', text: billingLine('2.1.240') }, { type: 'text', text: 'rest' }] };
+  ok('a client that sent one keeps its own version, whatever we would have claimed', withBillingSystem(theirs, '2.1.263') === theirs);
+
+  const h = outboundHeaders({}, 'anthropic', OAUTH, undefined, '2.1.263');
+  ok('the header follows the same version', h['user-agent'] === cliUserAgent('2.1.263'), h['user-agent']);
+
+  // The default is the baked floor, so a caller with no database behind it — the model-list
+  // fetch — keeps working unchanged
+  ok('with no version given, the floor', outboundHeaders({}, 'anthropic', OAUTH)['user-agent'] === cliUserAgent(CLI_VERSION));
+  ok(
+    'and the body gets the floor too',
+    (withBillingSystem({ model: 'x' }) as { system: Array<{ text: string }> }).system[0]?.text === billingLine(CLI_VERSION),
+  );
 }
 
 console.log('\n=== Anything that could change destination or identity is blocked ===');

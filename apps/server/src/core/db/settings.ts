@@ -317,6 +317,19 @@ export const SETTING_SPECS: SettingSpec[] = [
     hidden: true,
   },
   {
+    /*
+     * The newest Claude Code seen through the gateway, written the same way and for the same
+     * reason: observed from traffic, needed by both processes. It is what our own upstream
+     * calls claim to be, since the upstream gates models on that number — see
+     * gateway/cli-version.ts.
+     */
+    key: 'upstream.cliVersion',
+    label: 'Newest Claude Code version seen',
+    group: 'agents',
+    type: 'string',
+    hidden: true,
+  },
+  {
     /**
      * The model a conversation gets when nobody picks one, per agent.
      *

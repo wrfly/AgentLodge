@@ -477,6 +477,7 @@ export const de: Record<string, string> = {
   'resets {when}': 'wird {when} zurückgesetzt',
   'Upstream 5-hour window reset': 'Zurücksetzen des 5-Stunden-Fensters upstream',
   'Upstream weekly window reset': 'Zurücksetzen des Wochenfensters upstream',
+  'Newest Claude Code version seen': 'Neueste gesehene Claude-Code-Version',
   'Expires when that window resets — there is no separate clock to set.': 'Läuft ab, sobald dieses Fenster zurückgesetzt wird — es gibt keine eigene Uhr dafür.',
   'The assistant writes this as you talk, and reads it at the start of every conversation. Correct anything here, or add something it could not have picked up.': 'Der Assistent schreibt das im Gespräch mit und liest es zu Beginn jeder Unterhaltung. Korrigieren Sie hier, was nicht stimmt, oder ergänzen Sie, worauf er nicht kommen konnte.',
   'Add': 'Hinzufügen',

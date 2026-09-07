@@ -48,10 +48,10 @@ function sandbox(rcContents: string): { home: string; bin: string; rc: string; r
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentlodge-cli-'));
   const bin = path.join(home, 'fakebin');
   fs.mkdirSync(bin);
-  // Echoes back the two variables the wrapper is supposed to set
+  // Echoes back the variables the wrapper is supposed to set, and the two it must clear
   fs.writeFileSync(
     path.join(bin, 'claude'),
-    '#!/bin/sh\necho "CFG=$CLAUDE_CONFIG_DIR"\necho "BASE=$ANTHROPIC_BASE_URL"\necho "KEYVAR=${ANTHROPIC_API_KEY-unset}/${ANTHROPIC_AUTH_TOKEN-unset}"\necho "ARGS=$*"\n',
+    '#!/bin/sh\necho "CFG=$CLAUDE_CONFIG_DIR"\necho "BASE=$ANTHROPIC_BASE_URL"\necho "KEYVAR=${ANTHROPIC_API_KEY-unset}/${ANTHROPIC_AUTH_TOKEN-unset}"\necho "FABLE=${ANTHROPIC_DEFAULT_FABLE_MODEL-unset}"\necho "ARGS=$*"\n',
     { mode: 0o755 },
   );
   const rc = path.join(home, '.bashrc');
@@ -243,6 +243,11 @@ console.log('\n=== The wrapper sets the session up and steps aside ===');
   ok(
     'an exported key is cleared — it would outrank the credential file and skip the gateway',
     out.includes('KEYVAR=unset/unset'),
+    out,
+  );
+  ok(
+    'Fable is named outright — /model hides it behind a base-url check the gateway cannot pass',
+    out.includes('FABLE=claude-fable-5-1'),
     out,
   );
   ok('arguments are passed through', out.includes('ARGS=-p hi'), out);
