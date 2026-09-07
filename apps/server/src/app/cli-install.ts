@@ -204,6 +204,10 @@ mv "\\$TMP" "\\$ROOT/claude/.credentials.json"
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 export CLAUDE_CONFIG_DIR="\\$ROOT/claude"
 export ANTHROPIC_BASE_URL='\$BASE_URL'
+# Claude Code only offers Fable in /model when the base URL is api.anthropic.com — pointed at
+# a gateway it hides the model rather than ask whether the account has it. Naming the model
+# outright skips that check; it is the same id the picker would have used.
+export ANTHROPIC_DEFAULT_FABLE_MODEL='claude-fable-5-1'
 exec '\$REAL' "\\$@"
 WRAPPER
 chmod +x "\$ROOT/bin/claude"
