@@ -67,7 +67,8 @@ flowchart LR
 - [x] Billing by tokens or by money; the price table is editable and past bills keep the
       price of their time
 - [x] **Each user is shown their own allowance**, never the shared plan's — the response
-      headers are rewritten from their quota
+      headers are rewritten from their quota, and a user with no ceiling of their own is
+      shown their share of the pool, derived from the platform's total consumption
 - [x] **The administrator alone sees the upstream plan's real utilisation** and reset times
 
 **Isolation**

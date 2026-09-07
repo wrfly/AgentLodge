@@ -476,6 +476,7 @@ export const es: Record<string, string> = {
   '+{amount} topped up': '+{amount} recargado',
   'resets {when}': 'se reinicia {when}',
   'Upstream 5-hour window reset': 'Reinicio de la ventana de 5 horas del proveedor',
+  'Upstream weekly window reset': 'Reinicio de la ventana semanal del proveedor',
   'Expires when that window resets — there is no separate clock to set.': 'Caduca cuando esa ventana se reinicia — no hay otro reloj que ajustar.',
   'The assistant writes this as you talk, and reads it at the start of every conversation. Correct anything here, or add something it could not have picked up.': 'El asistente lo escribe mientras hablas, y lo lee al empezar cada conversación. Corrige aquí lo que haga falta, o añade algo que no pudiera deducir.',
   'Add': 'Añadir',

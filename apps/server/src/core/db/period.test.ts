@@ -1,4 +1,4 @@
-import { periodStartAt, periodEndAt, describeAnchor } from './period.js';
+import { periodStartAt, periodEndAt, describeAnchor, weekBoundsAt } from './period.js';
 
 let pass = 0, fail = 0;
 const fmt = (d: Date | null) =>
@@ -37,6 +37,41 @@ check('Thursday 18:00, exactly on it → that day',       periodStartAt('weekly'
 check('Monday 8/17 → the previous Thursday, 8/13',      periodStartAt('weekly', at('2026-08-17T09:00:00'), w), '2026-08-13 18:00');
 check('Sunday 8/23 → Thursday 8/20',        periodStartAt('weekly', at('2026-08-23T23:00:00'), w), '2026-08-20 18:00');
 check('the period ends the following Thursday',              periodEndAt('weekly', at('2026-08-21T10:00:00'), w),   '2026-08-27 18:00');
+
+console.log('\n=== Weekly: the window, which follows the upstream once it has spoken ===');
+{
+  const iso = (d: Date) => d.toISOString();
+  const say = (label: string, cond: boolean, detail = '') => {
+    if (cond) { pass++; console.log(`  ✓ ${label}`); }
+    else { fail++; console.log(`  ✗ ${label}${detail ? ` —— ${detail}` : ''}`); }
+  };
+
+  const observed = '2026-08-27T05:00:00.000Z';
+  const b = weekBoundsAt(at('2026-08-23T18:00:00Z'), observed);
+  say('it ends where the upstream said it would', iso(b.end) === observed, iso(b.end));
+  say('and began a week before that', iso(b.start) === '2026-08-20T05:00:00.000Z', iso(b.start));
+
+  // Nothing has gone through for a month: the cadence carries forward, it is not discarded
+  const stale = weekBoundsAt(at('2026-09-24T12:00:00Z'), observed);
+  const gap = stale.end.getTime() - Date.parse(observed);
+  say('a stale observation still sets the phase', gap % (7 * 24 * 3600_000) === 0, iso(stale.end));
+  say('and the window contains the moment asked about', stale.start <= at('2026-09-24T12:00:00Z') && at('2026-09-24T12:00:00Z') < stale.end);
+
+  /*
+   * The one that protects existing deployments. Until an upstream reading arrives the
+   * boundary must be exactly the administrator's configured week — falling back to an
+   * epoch-phased grid the way the 5-hour window does would silently move every deployment's
+   * weekly reset the moment this shipped.
+   */
+  const now = at('2026-08-21T10:00:00');
+  const none = weekBoundsAt(now, null, w);
+  say('with nothing observed it is the configured week, to the millisecond',
+    none.start.getTime() === periodStartAt('weekly', now, w).getTime(), fmt(none.start));
+  say('ending where that week ends',
+    none.end.getTime() === periodEndAt('weekly', now, w)!.getTime(), fmt(none.end));
+  say('an unparseable reading falls back the same way',
+    weekBoundsAt(now, 'not a date', w).start.getTime() === none.start.getTime());
+}
 
 console.log('\n=== Daily: anchored at 09:00 ===');
 const d9 = { dayOfMonth: 1, dayOfWeek: 1, hour: 9 };

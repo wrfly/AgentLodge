@@ -8,7 +8,23 @@
  *
  * Run: npm -w @agentlodge/server run test:upstream-allowance
  */
-import { record, recordCodex, reset, snapshot } from './upstream-allowance.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+/*
+ * A database, because record() writes the two resets it sees into settings — that is how the
+ * quota windows come to be cut on the upstream's own boundaries. Set up before the module
+ * loads: config reads DATA_DIR when it is imported, and static imports run first.
+ */
+const box = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-allowance-')));
+process.env.DATA_DIR = box;
+process.env.JWT_SECRET = 'test-only-not-a-real-secret';
+
+const { initDb } = await import('../core/db/index.js');
+initDb();
+const { getStringFresh, setSetting } = await import('../core/db/settings.js');
+const { record, recordCodex, reset, snapshot } = await import('./upstream-allowance.js');
 
 let pass = 0;
 let fail = 0;
@@ -153,6 +169,41 @@ console.log('\n=== A window nobody mentioned this time is still the last thing s
   // A different upstream is a different plan; nothing carries over
   record('DeepSeek', 'anthropic', headers({ 'anthropic-ratelimit-unified-5h-utilization': '0.02' }));
   ok('another provider starts clean', snapshot()?.windows['7d_oi'] === undefined, JSON.stringify(snapshot()?.windows));
+}
+
+console.log('\n=== The resets are written down, so the quota windows can follow them ===');
+{
+  reset(); // also clears what has already been persisted, so the next record() writes
+  setSetting('quota.windowResetAt', 'stale');
+  setSetting('quota.weekResetAt', 'stale');
+  record('anthropic-official', 'anthropic', headers(CAPTURED));
+  ok(
+    'the 5-hour reset is kept',
+    getStringFresh('quota.windowResetAt') === new Date(1787331600_000).toISOString(),
+    String(getStringFresh('quota.windowResetAt')),
+  );
+  ok(
+    'and the weekly one, which used to be the administrator’s calendar week',
+    getStringFresh('quota.weekResetAt') === new Date(1787547600_000).toISOString(),
+    String(getStringFresh('quota.weekResetAt')),
+  );
+}
+{
+  /*
+   * Every response for the next five hours repeats the same reset. Writing it each time
+   * would be a settings write per upstream call, on the response path.
+   */
+  setSetting('quota.weekResetAt', 'sentinel');
+  record('anthropic-official', 'anthropic', headers(CAPTURED));
+  ok('an unchanged reset is not written again', getStringFresh('quota.weekResetAt') === 'sentinel', String(getStringFresh('quota.weekResetAt')));
+
+  record('anthropic-official', 'anthropic', headers({ ...CAPTURED, 'anthropic-ratelimit-unified-7d-reset': '1788152400' }));
+  ok(
+    'a different one is',
+    getStringFresh('quota.weekResetAt') === new Date(1788152400_000).toISOString(),
+    String(getStringFresh('quota.weekResetAt')),
+  );
+  ok('and the 5-hour key it shares the response with is untouched by that', getStringFresh('quota.windowResetAt') === new Date(1787331600_000).toISOString());
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);

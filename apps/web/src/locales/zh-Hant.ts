@@ -477,6 +477,7 @@ export const zhHant: Record<string, string> = {
   '+{amount} topped up': '已充值 +{amount}',
   'resets {when}': '{when} 重置',
   'Upstream 5-hour window reset': '上游 5 小時視窗重置時刻',
+  'Upstream weekly window reset': '上游每週視窗重置時刻',
   'Expires when that window resets — there is no separate clock to set.': '視窗重置時自動失效，不用另外設有效期。',
   'The assistant writes this as you talk, and reads it at the start of every conversation. Correct anything here, or add something it could not have picked up.': '助手在對話過程中自己寫下這些，每次對話開始時再讀回去。這裡可以改任何一條，也可以補充它推不出來的事。',
   'Add': '新增',

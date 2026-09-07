@@ -1,4 +1,4 @@
-import type { QuotaStatus, QuotaWindow } from '../core/protocol.js';
+import type { QuotaScope, QuotaStatus, QuotaWindow } from '../core/protocol.js';
 
 /**
  * Telling a CLI how much of **its own** allowance is left.
@@ -50,6 +50,14 @@ import type { QuotaStatus, QuotaWindow } from '../core/protocol.js';
  * begins honouring ANTHROPIC_BASE_URL. The figures a user can actually read today are in
  * the status line — see the script app/cli-install.ts installs, which parses the very
  * headers `unifiedHeaders` writes back out of Claude Code's status line JSON.
+ *
+ * **A user with no quota of their own is not out of scope.** They are bounded by the shared
+ * subscription like everybody else, so what goes into the headers for them is their share of
+ * it — see pool-share.ts for the derivation and why it discloses nothing about the pool.
+ * `oauthUsage` is the one place that stays behind: the share has to be computed against a
+ * particular upstream and that endpoint has no request to take one from, so an unlimited
+ * window keeps returning `null` there, which its schema already reads as "no such window".
+ * Being unreachable from the CLI, it has nobody to disappoint.
  */
 
 /** Which of the quota's windows each of the client's two lines carries */
@@ -65,10 +73,26 @@ function epochSeconds(iso: string | null): number | null {
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
-/** allowed | allowed_warning | rejected — the three the client acts on */
-function statusOf(q: QuotaStatus): 'allowed' | 'allowed_warning' | 'rejected' {
+/** The three the client acts on, ordered by severity so a mixed set can be reduced */
+export type ClaimStatus = 'allowed' | 'allowed_warning' | 'rejected';
+const SEVERITY: ClaimStatus[] = ['allowed', 'allowed_warning', 'rejected'];
+const worst = (a: ClaimStatus, b: ClaimStatus): ClaimStatus =>
+  SEVERITY.indexOf(b) > SEVERITY.indexOf(a) ? b : a;
+
+function statusOf(q: QuotaStatus): ClaimStatus {
   if (q.exceeded) return 'rejected';
   return q.warning ? 'allowed_warning' : 'allowed';
+}
+
+/**
+ * What a window with no ceiling of its own is worth, measured against the pool it really
+ * sits in. Derived in pool-share.ts, which is where the reasoning lives.
+ */
+export interface PoolShare {
+  /** 0..1, this user's own consumption against the plan's derived ceiling */
+  utilization: number;
+  /** The pool's status, which is what actually decides whether the next call is refused */
+  status: ClaimStatus;
 }
 
 /**
@@ -79,21 +103,44 @@ function statusOf(q: QuotaStatus): 'allowed' | 'allowed_warning' | 'rejected' {
  * exact string match (`=== 'available'`, `=== 'true'`), so leaving them out is read as
  * "not applicable" rather than as a missing value.
  *
- * A window with no ceiling is left out entirely rather than sent as zero: the client skips
- * a window it has no figures for, which is exactly right for one that cannot run out.
+ * **A window with no ceiling still has one, it just is not ours.** Such a user is bounded by
+ * the shared subscription, and `share` carries what that bound is worth to them — their own
+ * consumption as a fraction of the plan, not the plan's own utilisation. Without a share the
+ * window is left out entirely, which is what a client does with a window it has no figures
+ * for and the right answer for one nothing is known about.
+ *
+ * The two fields of a shared window answer different questions on purpose. `utilization` is
+ * this user's: how much of the plan they personally burned. `status` is the pool's: whether
+ * anybody is about to be refused. A user at 5% of a plan that is 95% gone reads `5%` and
+ * still gets the warning, because both statements are true and only the second one is
+ * actionable.
  */
-export function unifiedHeaders(q: QuotaStatus): Record<string, string> {
-  const status = statusOf(q);
+export function unifiedHeaders(
+  q: QuotaStatus,
+  share?: Partial<Record<QuotaScope, PoolShare>>,
+): Record<string, string> {
+  const own = statusOf(q);
   const out: Record<string, string> = {};
   let representative: string | null = null;
+  let overall: ClaimStatus = own;
 
   for (const claim of CLAIMS) {
     const w: QuotaWindow = q.windows[claim.scope];
     const reset = epochSeconds(w.endsAt);
-    if (w.limit === null || reset === null) continue;
+    if (reset === null) continue;
+
+    // A ceiling of ours wins: it is the one being enforced, and it is exact
+    const s = w.limit !== null ? null : share?.[claim.scope];
+    if (w.limit === null && !s) continue;
+
+    const utilization = s ? s.utilization : w.ratio;
+    const status = s ? s.status : own;
     out[`anthropic-ratelimit-unified-${claim.header}-status`] = status;
-    out[`anthropic-ratelimit-unified-${claim.header}-utilization`] = w.ratio.toFixed(4);
+    out[`anthropic-ratelimit-unified-${claim.header}-utilization`] = utilization.toFixed(4);
+    // The quota window's own end, never the pool's: after quota.boundsOf started following
+    // the upstream the two agree, and a stale reading cannot put this one in the past
     out[`anthropic-ratelimit-unified-${claim.header}-reset`] = String(reset);
+    overall = worst(overall, status);
     // The first one listed is the short window, which is the one that bites first
     representative ??= claim.panel;
   }
@@ -101,7 +148,7 @@ export function unifiedHeaders(q: QuotaStatus): Record<string, string> {
   if (representative === null) return {};
   const scope = representative === 'five_hour' ? 'window' : 'week';
   return {
-    'anthropic-ratelimit-unified-status': status,
+    'anthropic-ratelimit-unified-status': overall,
     'anthropic-ratelimit-unified-reset': String(epochSeconds(q.windows[scope].endsAt)),
     'anthropic-ratelimit-unified-representative-claim': representative,
     ...out,

@@ -204,6 +204,35 @@ export function totalsAll(since?: string): Totals {
   );
 }
 
+/**
+ * Everybody's consumption over one window, optionally through one upstream.
+ *
+ * The upstream filter is the point of it. The allowance figures the gateway derives compare
+ * this against what a single subscription reports about itself, so counting turns that never
+ * touched that subscription would inflate the denominator — see gateway/pool-share.ts. A
+ * deployment routing half its traffic to a second provider would otherwise understate every
+ * user's share by roughly half.
+ */
+export function totalsAllInRange(range: Range, providerId?: string): Totals {
+  const [from, to] = bounds(range);
+  return toTotals(
+    providerId === undefined
+      ? get<TotalsRow>(
+          `select ${SUM()} from usage_records
+           where created_at >= ? and created_at < ?`,
+          from,
+          to,
+        )
+      : get<TotalsRow>(
+          `select ${SUM()} from usage_records
+           where provider_id = ? and created_at >= ? and created_at < ?`,
+          providerId,
+          from,
+          to,
+        ),
+  );
+}
+
 export interface DailyPoint extends Totals {
   day: string;
 }
