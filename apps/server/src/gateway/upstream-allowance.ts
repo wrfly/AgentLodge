@@ -133,25 +133,28 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
   };
 
   /*
-   * The 5-hour window's reset is not only the administrator's business: it is the boundary
-   * every user's quota is cut at, and quotas are computed in both containers. So it goes to
-   * the database — the one store the two share — and only when it changes, which is once
-   * every five hours rather than once a request.
+   * These two resets are not only the administrator's business: they are the boundaries
+   * every user's quota is cut at, and quotas are computed in both containers. So they go to
+   * the database — the one store the two share — and only when they change, which is once
+   * a window rather than once a request.
    */
-  const reset = windows['5h']?.resetsAt;
-  if (reset && reset !== lastPersisted) {
-    lastPersisted = reset;
-    try {
-      setSetting('quota.windowResetAt', reset);
-    } catch {
-      // A read-only or busy database must not take the response down with it; the window
-      // falls back to the clock, which is still the same for everybody
-    }
-  }
+  persist('quota.windowResetAt', windows['5h']?.resetsAt);
+  persist('quota.weekResetAt', windows['7d']?.resetsAt);
 }
 
-/** What was last written, so an unchanged reset does not write on every response */
-let lastPersisted: string | undefined;
+/** What was last written per key, so an unchanged reset does not write on every response */
+const lastPersisted = new Map<string, string>();
+
+function persist(key: string, reset: string | null | undefined): void {
+  if (!reset || lastPersisted.get(key) === reset) return;
+  lastPersisted.set(key, reset);
+  try {
+    setSetting(key, reset);
+  } catch {
+    // A read-only or busy database must not take the response down with it; the window
+    // falls back to the clock, which is still the same for everybody
+  }
+}
 
 /**
  * Codex's allowance, which arrives inside the response body rather than in headers.
@@ -181,4 +184,5 @@ export function snapshot(): Allowance | null {
 /** Test seam */
 export function reset(): void {
   last = null;
+  lastPersisted.clear();
 }

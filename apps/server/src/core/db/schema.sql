@@ -213,6 +213,10 @@ create table if not exists usage_records (
 create index if not exists idx_usage_user_day on usage_records(user_id, day);
 create index if not exists idx_usage_user_created on usage_records(user_id, created_at desc);
 create index if not exists idx_usage_conv on usage_records(conversation_id);
+-- The platform's total over one window through one upstream, which the gateway asks for on
+-- every response from a user with no ceiling of their own. The two above both lead with
+-- user_id and so cannot serve a query that spans every user.
+create index if not exists idx_usage_provider_created on usage_records(provider_id, created_at);
 
 /* ---------------- Price table ---------------- */
 

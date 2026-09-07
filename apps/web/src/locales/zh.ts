@@ -501,6 +501,7 @@ export const zh: Record<string, string> = {
   '+{amount} topped up': '已充值 +{amount}',
   'resets {when}': '{when} 重置',
   'Upstream 5-hour window reset': '上游 5 小时窗口重置时刻',
+  'Upstream weekly window reset': '上游每周窗口重置时刻',
   'Expires when that window resets — there is no separate clock to set.': '窗口重置时自动失效，不用另外设有效期。',
   // Memory
   'The assistant writes this as you talk, and reads it at the start of every conversation. Correct anything here, or add something it could not have picked up.': '助手在对话过程中自己写下这些，每次对话开始时再读回去。这里可以改任何一条，也可以补充它推不出来的事。',

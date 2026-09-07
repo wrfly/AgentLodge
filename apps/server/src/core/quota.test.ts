@@ -97,6 +97,26 @@ console.log('\n=== The 5-hour window follows the upstream, for everybody at once
   settings.setSetting('quota.windowResetAt', '2026-08-23T19:00:00.000Z');
 }
 
+console.log('\n=== And so does the week, once the upstream has stated one ===');
+{
+  const at = new Date('2026-08-23T18:00:00.000Z');
+  const configured = quota.boundsOf('week', at);
+
+  settings.setSetting('quota.weekResetAt', '2026-08-27T05:00:00.000Z');
+  const w = quota.boundsOf('week', at);
+  ok('the week ends where the upstream says its 7d does', w.end.toISOString() === '2026-08-27T05:00:00.000Z', w.end.toISOString());
+  ok('seven days after it began', w.end.getTime() - w.start.getTime() === 7 * 24 * 3600_000);
+  ok('which is not where the calendar week ended', configured.end.getTime() !== w.end.getTime(), configured.end.toISOString());
+
+  /*
+   * Cleared again, because everything below is written against the configured week — and
+   * because this is the guarantee for deployments that have never seen an upstream reading:
+   * without one, the boundary is exactly what it was before any of this existed.
+   */
+  settings.setSetting('quota.weekResetAt', '');
+  ok('with no reading it is the configured week again', quota.boundsOf('week', at).end.getTime() === configured.end.getTime());
+}
+
 console.log('\n=== Usage is counted inside those boundaries ===');
 {
   users.setQuota(alice, { window: 1000, week: null, month: null });

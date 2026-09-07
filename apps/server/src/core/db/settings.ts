@@ -309,6 +309,14 @@ export const SETTING_SPECS: SettingSpec[] = [
     hidden: true,
   },
   {
+    /* The weekly window's twin of the above, written and read the same way. */
+    key: 'quota.weekResetAt',
+    label: 'Upstream weekly window reset',
+    group: 'quota',
+    type: 'string',
+    hidden: true,
+  },
+  {
     /**
      * The model a conversation gets when nobody picks one, per agent.
      *

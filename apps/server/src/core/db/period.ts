@@ -97,6 +97,9 @@ export function rollingExpired(now: Date, spec: RollingSpec): boolean {
 /** What the upstream calls a 5-hour window, and what we mirror it with */
 export const WINDOW_MS = 5 * 60 * 60_000;
 
+/** The same, for the one the upstream calls `7d` */
+export const WEEK_MS = 7 * 24 * 60 * 60_000;
+
 export interface WindowBounds {
   start: Date;
   end: Date;
@@ -135,6 +138,37 @@ export function windowBoundsAt(
   const steps = Math.floor((now.getTime() - phase) / WINDOW_MS);
   const start = new Date(phase + steps * WINDOW_MS);
   return { start, end: new Date(start.getTime() + WINDOW_MS) };
+}
+
+/**
+ * The weekly window, on the upstream's cadence once it has stated one.
+ *
+ * Same phase-locking as the 5-hour window above, and for the same reason: a week cut on the
+ * administrator's calendar while the pool refills on the upstream's would count a user's
+ * consumption over one interval and compare it against a ceiling belonging to another.
+ *
+ * **The fallback is deliberately not the 5-hour one's.** With nothing observed, this returns
+ * the calendar week `periodStartAt('weekly')` has always returned, so a deployment whose
+ * upstream never reports a `7d` window — every non-Anthropic one — keeps exactly the
+ * boundaries it had. Falling back to an epoch-phased grid instead would silently move every
+ * existing deployment's weekly reset the moment this shipped.
+ */
+export function weekBoundsAt(
+  now: Date,
+  upstreamReset?: string | null,
+  anchorIn?: Partial<PeriodAnchor>,
+): WindowBounds {
+  const observed = upstreamReset ? new Date(upstreamReset).getTime() : NaN;
+  if (!Number.isFinite(observed)) {
+    const start = periodStartAt('weekly', now, anchorIn);
+    // Non-null for 'weekly'; the signature admits null only for 'total'
+    const end = periodEndAt('weekly', now, anchorIn) ?? new Date(start.getTime() + WEEK_MS);
+    return { start, end };
+  }
+
+  const steps = Math.floor((now.getTime() - observed) / WEEK_MS);
+  const start = new Date(observed + steps * WEEK_MS);
+  return { start, end: new Date(start.getTime() + WEEK_MS) };
 }
 
 export function periodStartAt(

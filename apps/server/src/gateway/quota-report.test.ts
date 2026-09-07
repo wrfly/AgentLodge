@@ -106,6 +106,59 @@ console.log('\n=== A window with no ceiling is left out, not sent as zero ===');
   ok('nothing limited means no headers at all', Object.keys(h).length === 0);
 }
 
+console.log('\n=== …unless the pool can say what it is worth ===');
+const FREE = { window: { limit: null }, week: { limit: null }, month: { limit: null } };
+{
+  const h = unifiedHeaders(q(FREE), { window: { utilization: 0.24, status: 'allowed' } });
+  ok('the unlimited window now reports the share', h['anthropic-ratelimit-unified-5h-utilization'] === '0.2400', String(h['anthropic-ratelimit-unified-5h-utilization']));
+  ok(
+    'reset stays the quota window’s end, not the pool’s',
+    h['anthropic-ratelimit-unified-5h-reset'] === String(Date.parse(ENDS.window) / 1000),
+  );
+  ok('it becomes the representative', h['anthropic-ratelimit-unified-representative-claim'] === 'five_hour');
+  ok('the window with neither ceiling nor share is still absent', h['anthropic-ratelimit-unified-7d-utilization'] === undefined);
+}
+{
+  // A ceiling of ours is exact and is the one being enforced; the derived figure is not used
+  const h = unifiedHeaders(q({ window: { limit: 1000, used: 250 } }), {
+    window: { utilization: 0.99, status: 'rejected' },
+  });
+  ok('a limited window ignores the share', h['anthropic-ratelimit-unified-5h-utilization'] === '0.2500', String(h['anthropic-ratelimit-unified-5h-utilization']));
+  ok('and keeps its own status', h['anthropic-ratelimit-unified-5h-status'] === 'allowed');
+}
+{
+  const h = unifiedHeaders(q({ window: { limit: null }, month: { limit: null } }), {
+    window: { utilization: 0.5, status: 'allowed_warning' },
+  });
+  ok('one derived and one measured travel together', h['anthropic-ratelimit-unified-5h-utilization'] === '0.5000' && h['anthropic-ratelimit-unified-7d-utilization'] === '0.2500');
+  ok('each carries its own status', h['anthropic-ratelimit-unified-5h-status'] === 'allowed_warning' && h['anthropic-ratelimit-unified-7d-status'] === 'allowed');
+}
+{
+  /*
+   * The point of relaying the pool's status: a user with no ceiling is `allowed` by every
+   * measure of ours right up to the moment the shared plan refuses them. Without this the
+   * CLI has nothing to raise a rate_limit_event from.
+   */
+  const h = unifiedHeaders(q(FREE), { window: { utilization: 0.3, status: 'rejected' } });
+  ok('the top-level status takes the most severe of the lot', h['anthropic-ratelimit-unified-status'] === 'rejected', String(h['anthropic-ratelimit-unified-status']));
+}
+{
+  const h = unifiedHeaders(q({ window: { used: 1000 }, week: { limit: null } }), {
+    week: { utilization: 0.1, status: 'allowed' },
+  });
+  ok('and a calm pool does not soften our own refusal', h['anthropic-ratelimit-unified-status'] === 'rejected', String(h['anthropic-ratelimit-unified-status']));
+}
+{
+  // The regression guard: everything above this section describes the no-share behaviour
+  const cases = [q(), q({ window: { limit: null } }), q(FREE), q({ window: { used: 950 } })];
+  const same = cases.every((c) => JSON.stringify(unifiedHeaders(c)) === JSON.stringify(unifiedHeaders(c, {})));
+  ok('a deployment with nothing to derive gets byte-identical headers', same);
+  ok(
+    'and so does a share for a window that has none',
+    JSON.stringify(unifiedHeaders(q(FREE))) === JSON.stringify(unifiedHeaders(q(FREE), { month: { utilization: 0.9, status: 'rejected' } })),
+  );
+}
+
 console.log('\n=== /api/oauth/usage: a percentage, and ISO 8601 ===');
 {
   const u = oauthUsage(q({ window: { limit: 1000, used: 250 } }));

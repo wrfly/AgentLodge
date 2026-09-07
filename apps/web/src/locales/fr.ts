@@ -476,6 +476,7 @@ export const fr: Record<string, string> = {
   '+{amount} topped up': '+{amount} rechargé',
   'resets {when}': 'réinitialisation {when}',
   'Upstream 5-hour window reset': 'Réinitialisation de la fenêtre de 5 heures en amont',
+  'Upstream weekly window reset': 'Réinitialisation de la fenêtre hebdomadaire en amont',
   'Expires when that window resets — there is no separate clock to set.': 'Expire à la réinitialisation de cette fenêtre — il n\'y a pas d\'horloge distincte à régler.',
   'The assistant writes this as you talk, and reads it at the start of every conversation. Correct anything here, or add something it could not have picked up.': 'L\'assistant l\'écrit au fil de la conversation et le relit au début de chaque nouvelle. Corrigez ici ce qui ne va pas, ou ajoutez ce qu\'il ne pouvait pas deviner.',
   'Add': 'Ajouter',

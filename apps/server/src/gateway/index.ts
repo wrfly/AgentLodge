@@ -49,6 +49,7 @@ import {
   unifiedHeaders,
 } from './quota-report.js';
 import * as allowance from './upstream-allowance.js';
+import { poolShare } from './pool-share.js';
 import { fetchModels } from './models.js';
 import { startModelRefresh } from './model-refresh.js';
 import * as modelsRepo from '../core/db/models.js';
@@ -206,6 +207,16 @@ function credentialOf(req: FastifyRequest): string | undefined {
   return (req.raw as RawWithCredential)[PATH_CREDENTIAL] ?? tokenFromHeaders(req.headers);
 }
 
+/**
+ * The allowance headers for one response, written at both places a response is started.
+ *
+ * The share is only derived for windows that have no ceiling of their own, so a deployment
+ * that limits everybody never reaches the extra query; see pool-share.ts.
+ */
+function allowanceHeaders(status: quota.QuotaStatus, target: Resolved): Record<string, string> {
+  return unifiedHeaders(status, poolShare(status, target.provider));
+}
+
 async function handleProxy(
   req: FastifyRequest,
   reply: FastifyReply,
@@ -349,7 +360,7 @@ async function handleProxy(
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache, no-transform',
         connection: 'keep-alive',
-        ...(wire === 'anthropic' ? unifiedHeaders(verdict.status) : {}),
+        ...(wire === 'anthropic' ? allowanceHeaders(verdict.status, target) : {}),
       });
       reply.raw.write(stream);
       reply.raw.end();
@@ -406,7 +417,8 @@ async function handleProxy(
      * The upstream's own headers are not forwarded — only the ones below are written, and
      * that is deliberate: a shared subscription's allowance headers describe the pool, so
      * relaying them would show every user the whole platform's consumption. The allowance
-     * this user gets told about is their own quota. See quota-report.ts.
+     * this user gets told about is their own quota, and where they have no quota, their own
+     * share of the pool rather than the pool. See quota-report.ts and pool-share.ts.
      *
      * The figure is the one the quota gate read on the way in, which does not yet include
      * this request — deliberately, since it has not been billed either. Reading it again
@@ -416,7 +428,7 @@ async function handleProxy(
       'content-type': ct,
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
-      ...(wire === 'anthropic' ? unifiedHeaders(verdict.status) : {}),
+      ...(wire === 'anthropic' ? allowanceHeaders(verdict.status, target) : {}),
     });
 
     if (!upstream.body) {

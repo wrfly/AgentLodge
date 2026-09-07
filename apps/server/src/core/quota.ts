@@ -1,6 +1,6 @@
 import * as usersRepo from './db/users.js';
 import * as usageRepo from './db/usage.js';
-import { WINDOW_MS, periodEndAt, periodStartAt, windowBoundsAt } from './db/period.js';
+import { WINDOW_MS, periodEndAt, periodStartAt, weekBoundsAt, windowBoundsAt } from './db/period.js';
 import { quotaAnchor } from './db/settings.js';
 import { getStringFresh } from './db/settings.js';
 import type { QuotaScope, QuotaStatus, QuotaWindow } from './protocol.js';
@@ -27,17 +27,26 @@ export function scopeLabel(scope: QuotaScope): string {
   return scope === 'window' ? '5-hour window' : scope === 'week' ? 'week' : 'month';
 }
 
-/** Where each window begins and ends. The 5-hour one follows the upstream; see period.ts. */
+/**
+ * Where each window begins and ends.
+ *
+ * The two the upstream also has — 5 hours and a week — follow its cadence rather than the
+ * calendar, so that consumption is counted over the same interval the pool refills on. Until
+ * an upstream has reported one, each falls back to what it did before; see period.ts. The
+ * month is ours alone and stays on the administrator's anchor.
+ */
 export function boundsOf(scope: QuotaScope, now = new Date()): { start: Date; end: Date } {
   if (scope === 'window') {
     return windowBoundsAt(now, getStringFresh('quota.windowResetAt'), quotaAnchor());
   }
-  const period = scope === 'week' ? 'weekly' : 'monthly';
+  if (scope === 'week') {
+    return weekBoundsAt(now, getStringFresh('quota.weekResetAt'), quotaAnchor());
+  }
   const anchor = quotaAnchor();
-  const start = periodStartAt(period, now, anchor);
+  const start = periodStartAt('monthly', now, anchor);
   // Both have an end; the fallback is only there because the signature allows null for
   // 'total', which is not a scope any more
-  const end = periodEndAt(period, now, anchor) ?? new Date(start.getTime() + WINDOW_MS);
+  const end = periodEndAt('monthly', now, anchor) ?? new Date(start.getTime() + WINDOW_MS);
   return { start, end };
 }
 
