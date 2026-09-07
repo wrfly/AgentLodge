@@ -147,9 +147,11 @@ const lastPersisted = new Map<string, string>();
 
 function persist(key: string, reset: string | null | undefined): void {
   if (!reset || lastPersisted.get(key) === reset) return;
-  lastPersisted.set(key, reset);
   try {
     setSetting(key, reset);
+    // Only after it landed: marking first meant one busy database lost the boundary for the
+    // whole window, since every later response would see the value as already written
+    lastPersisted.set(key, reset);
   } catch {
     // A read-only or busy database must not take the response down with it; the window
     // falls back to the clock, which is still the same for everybody
