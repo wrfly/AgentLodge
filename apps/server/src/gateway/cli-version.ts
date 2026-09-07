@@ -92,10 +92,19 @@ export function versionOf(body: unknown): string | null {
   return v ? head(v) : null;
 }
 
-/** What to send today: the newest version seen so far, or the floor if none beat it */
+/**
+ * What to send today: the newest version seen so far, or the floor if none beat it.
+ *
+ * The stored value goes through `head` on the way out rather than being returned as it
+ * stands. `observe` only ever writes something already normalised, but this is a settings
+ * row like any other, and what comes back from it is about to be pasted into a header the
+ * upstream parses — so the guarantee is made here, where the value leaves the store, rather
+ * than assumed of everything that could have written it.
+ */
 export function current(): string {
   const stored = read();
-  return stored !== undefined && newer(stored, CLI_VERSION) ? stored : CLI_VERSION;
+  const v = stored === undefined ? null : head(stored);
+  return v !== null && newer(v, CLI_VERSION) ? v : CLI_VERSION;
 }
 
 /**

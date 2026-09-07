@@ -465,6 +465,11 @@ Claude Code 只在 base URL 恰好是 `api.anthropic.com` 时才把 Fable 摆进
 包装脚本因此多导一个 `ANTHROPIC_DEFAULT_FABLE_MODEL='claude-fable-5-1'`：点名型号就绕过那个
 检查，用的还是选择器本来会用的那个 id。装过一次的用户重跑一遍安装命令即可。
 
+**被卡住的只有「列出来」和别名。** 写全的型号 id 一直是通的——
+`claude --model claude-fable-5-1` 不带这个变量也能跑（实测过）。所以后台模型表里填
+`claude-fable-5-1` 就够了，网页对话和 agent 容器都不需要额外配环境变量；填**别名 `fable`**
+才要，跟 `opus`/`sonnet` 在第三方端点上要 `ANTHROPIC_DEFAULT_*_MODEL` 是同一件事。
+
 要 1M 上下文得显式选 `fable[1m]`，默认那档是 200k。
 
 ### 凭据为什么放在配置目录里

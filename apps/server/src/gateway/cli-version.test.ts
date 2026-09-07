@@ -137,6 +137,28 @@ console.log('\n=== It never goes backwards ===');
   ok('a version below the floor cannot pull us under it', current() === CLI_VERSION, current());
 }
 
+console.log('\n=== A stored value that is not a version ===');
+{
+  /*
+   * Nothing writes this by hand, but it is a settings row like any other and the console can
+   * reach it. Whatever is in there, the answer has to be a version the upstream will accept —
+   * sending it garbage would refuse every model, not just the gated ones.
+   */
+  for (const junk of ['garbage', '', 'v2.1.263', ' ', 'latest']) {
+    setSetting(SETTING, junk);
+    ok(`${JSON.stringify(junk)} begins with no version, so the floor`, current() === CLI_VERSION, current());
+  }
+
+  // One that does begin with a version keeps it, and loses everything after — the value is
+  // about to be pasted into a header the upstream parses
+  setSetting(SETTING, '2.1.263; cc_entrypoint=evil;');
+  ok('a version with something appended is cut back to the version', current() === '2.1.263', current());
+  ok('so the line it produces has one entrypoint', billingLine(current()).match(/cc_entrypoint=/g)?.length === 1, billingLine(current()));
+
+  setSetting(SETTING, CLI_VERSION);
+  ok('and a stored value equal to the floor is simply the floor', current() === CLI_VERSION);
+}
+
 console.log('\n=== Segment by segment, not as text ===');
 {
   // Above the floor throughout, or the floor answers before the comparison gets a turn
