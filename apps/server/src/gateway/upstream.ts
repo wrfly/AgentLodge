@@ -350,22 +350,30 @@ export function mergeBeta(fromClient: string | string[] | undefined, extra?: str
 }
 
 /**
- * Client headers that may go upstream unchanged: the ones that only say who sent this.
+ * Client headers that may go upstream unchanged.
  *
- * The test is **could this header change where the request goes or who it claims to be**.
- * Anything that could, stays out:
+ * Two survive, and both are opaque: `x-app` is the constant `cli`, and
+ * `x-claude-code-session-id` is a uuid the upstream uses to group one session's requests
+ * without reading bodies. Neither says anything about the machine that sent it.
+ *
+ * **The caller's description of its own machine does not travel.** `user-agent` and the
+ * `x-stainless-*` set carry the operating system, CPU architecture and Node version of
+ * wherever the request came from, and on the bring-your-own-CLI path that is somebody's
+ * laptop. Forwarding it filed a row of personal machine profiles against this deployment's
+ * credential, which nobody asked for and no page here ever mentioned. What goes out
+ * instead is one identity for the whole deployment: this process's own runtime, described
+ * truthfully, and the Claude Code version observed from real clients. One deployment, one
+ * client, and end users told apart by `metadata.user_id` below, which is the field the API
+ * documents for exactly that.
+ *
+ * The rest stay out because they could change where the request goes or who it claims to be:
  *   x-forwarded-*            decides where the audit proxy relays to; changing it is SSRF
  *   authorization/x-api-key  the credential itself, which has to become the upstream's
  *   host/content-length/connection/accept-encoding/transfer-encoding
  *                            hop-by-hop, recomputed by the outbound layer
  *   anthropic-*              computed here: version has a default, beta is merged
- *
- * Forwarding them is not cosmetic: what runs in an agent container **really is Claude
- * Code**, and with a key read from a file we are holding its OAuth credential too. Letting
- * the upstream see a client identity that matches the credential is more truthful than
- * sending an anonymous user agent.
  */
-const PASSTHROUGH_EXACT = new Set(['user-agent', 'x-app', 'x-claude-code-session-id']);
+const PASSTHROUGH_EXACT = new Set(['x-app', 'x-claude-code-session-id']);
 
 /**
  * Which Claude Code we say we are when the caller did not say.
@@ -393,9 +401,6 @@ export const CLI_VERSION = '2.1.224';
 export function cliUserAgent(version: string): string {
   return `claude-cli/${version} (external, sdk-cli)`;
 }
-
-/** What an HTTP client calls itself when nobody has given it a name */
-const BARE_RUNTIME = /^(node|undici|node-fetch|got|axios)(\/|$)/i;
 
 /**
  * The SDK's description of itself, which Claude Code sends because it is built on that SDK.
@@ -545,16 +550,59 @@ export function withThinking<T>(body: T, wanted: boolean, adaptive: boolean): T 
   return { ...b, thinking: { type: 'enabled', budget_tokens: budget } } as T;
 }
 
-const PASSTHROUGH_PREFIX = ['x-stainless-'];
-
 function passthrough(reqHeaders: Record<string, string | string[] | undefined>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [rawKey, v] of Object.entries(reqHeaders)) {
     if (typeof v !== 'string') continue;
     const k = rawKey.toLowerCase();
-    if (PASSTHROUGH_EXACT.has(k) || PASSTHROUGH_PREFIX.some((pre) => k.startsWith(pre))) out[k] = v;
+    if (PASSTHROUGH_EXACT.has(k)) out[k] = v;
   }
   return out;
+}
+
+/* ---------------- Who the end user is ---------------- */
+
+/**
+ * The stable, opaque identifier for one user of this deployment.
+ *
+ * `metadata.user_id` is documented as "an external identifier for the user who is
+ * associated with the request … a uuid, hash value, or other opaque identifier", which the
+ * upstream may use to detect abuse, and it must carry no name, address or phone number.
+ * With many people behind one credential, it is the one field that tells the upstream they
+ * are many rather than one.
+ *
+ * A hash rather than the user id itself: the id appears in our own URLs and logs, and there
+ * is no reason for a third party to be able to line the two up. Salted with the deployment's
+ * signing key, so two deployments never produce the same value for the same person, and
+ * rotating that key rotates these too.
+ */
+export function endUserId(userId: string): string {
+  return crypto.createHash('sha256').update(`${config.jwtSecret}:agentlodge-end-user:${userId}`).digest('hex');
+}
+
+/**
+ * Attribute the request to the end user it belongs to.
+ *
+ * **This overwrites a field that is already there.** A real Claude Code fills
+ * `metadata.user_id` with a JSON blob of its own — measured:
+ *
+ *     {"device_id":"094aec26…","account_uuid":"d5ebd251-…","session_id":"53dca3aa-…"}
+ *
+ * a fingerprint of the machine and, on the bring-your-own-CLI path, the caller's own Claude
+ * account. Relaying that upstream on this deployment's credential hands a third party one
+ * user's account identity attached to another party's billing, for no purpose either of
+ * them chose. Replacing it costs nothing in compatibility, since the field travelled on
+ * every request already, and it gives the upstream something better than a device: the
+ * person, stable across their machines and meaningless off this deployment.
+ *
+ * Anthropic Messages only. The OpenAI wires have a `user` field that means much the same,
+ * but a body sent to a third party is not the place to add a field it never received —
+ * dropping the machine headers above already closes the leak there.
+ */
+export function withEndUser<T>(body: T, wire: Wire, id: string): T {
+  if (wire !== 'anthropic' || !body || typeof body !== 'object') return body;
+  const b = body as { metadata?: Record<string, unknown> };
+  return { ...b, metadata: { ...(b.metadata ?? {}), user_id: id } } as T;
 }
 
 /**
@@ -621,20 +669,14 @@ export function outboundHeaders(
      * gain. DeepSeek's compatibility layer, reached on this same wire, gets neither.
      */
     if (oauth) {
-      // `??=` is not enough for this one: Node's fetch puts `user-agent: node` on every
-      // request it makes, so our own callers arrive with the slot already filled by a
-      // runtime that is not a client. A real client's name is left alone.
-      if (!h['user-agent'] || BARE_RUNTIME.test(h['user-agent'])) h['user-agent'] = cliUserAgent(version);
+      // Written rather than filled in: the caller's own user-agent and x-stainless-* no
+      // longer reach here (see PASSTHROUGH_EXACT), so every request on this credential
+      // describes the same client — this process's real runtime, and the newest Claude
+      // Code seen through the gateway.
+      h['user-agent'] = cliUserAgent(version);
       h['x-app'] ??= 'cli';
       h['x-claude-code-session-id'] ??= session || crypto.randomUUID();
-      // The whole set or none of it. Filled key by key, a caller that sent three of its
-      // own got the rest from this host: `x-stainless-lang: python` alongside a Node
-      // runtime version and this machine's OS is a fingerprint no real client produces,
-      // which is the opposite of what describing yourself as one is for. A caller that
-      // named itself is left to describe itself completely.
-      if (!Object.keys(h).some((k) => k.startsWith('x-stainless-'))) {
-        for (const [k, v] of Object.entries(STAINLESS)) h[k] = v;
-      }
+      for (const [k, v] of Object.entries(STAINLESS)) h[k] = v;
     }
 
     if (!oauth) h['x-api-key'] = apiKey;
