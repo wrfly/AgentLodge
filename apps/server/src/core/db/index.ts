@@ -61,6 +61,12 @@ export function initDb(): DatabaseSync {
   // database.
   db.exec('pragma busy_timeout = 5000');
   ensureWal(db);
+  // WAL's default is a full fsync on every commit. NORMAL syncs at checkpoints instead,
+  // which under WAL cannot corrupt the file: a power cut loses at most the last few
+  // transactions — a handful of usage rows and a last-seen time — never the database.
+  // The gateway writes a row per upstream call, so this is the difference between an
+  // fsync per call and none.
+  db.exec('pragma synchronous = normal');
 
   // schema.sql lives under src/; the path is the same from dist/ because the build copies it
   const schemaPath = [

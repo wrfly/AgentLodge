@@ -11,6 +11,7 @@ import * as providersRepo from './core/db/providers.js';
 import * as usersRepo from './core/db/users.js';
 import * as invitesRepo from './core/db/invites.js';
 import * as sessionsRepo from './core/db/sessions.js';
+import * as audit from './core/db/audit.js';
 import { listAgents } from './app/agents/registry.js';
 import { attachUser, requireUser } from './core/auth/guard.js';
 import { installLocale } from './core/i18n/locale.js';
@@ -186,6 +187,7 @@ app.get('/api/agents', { preHandler: requireUser }, async () => listAgents());
 // its job either
 if (config.role !== 'gateway') {
   setInterval(() => void sessionsRepo.pruneExpired(), 3600_000).unref();
+  setInterval(() => void audit.prune(config.auditLogRetentionDays), 3600_000).unref();
   setInterval(() => void containers.reapIdle(), 5 * 60_000).unref();
 }
 
@@ -255,6 +257,14 @@ const containerProbe = await containers.probe();
 console.log(
   `  container isolation ${containers.enabled() ? (containerProbe.ok ? '✓ ' : '✗ ') : '— '}${containerProbe.detail}`,
 );
+// What the engine still has from before this process started: containers to track, and
+// turns that were running when the previous process went away
+if (runsApp && containerProbe.ok) {
+  const found = await containers.reconcile();
+  if (found.running || found.strays) {
+    console.log(`  containers          ${found.running} running from before this start, ${found.strays} stray turn(s) ended`);
+  }
+}
 for (const a of await listAgents()) {
   const mark = a.availability.available ? '✓' : '✗';
   const detail = a.availability.available

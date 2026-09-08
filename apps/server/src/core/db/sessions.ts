@@ -146,11 +146,14 @@ export function touch(id: string): void {
 
 export function pruneExpired(): number {
   const cutoff = new Date(Date.now() - 7 * 86400_000).toISOString();
-  return run(
+  const n = run(
     'delete from auth_sessions where expires_at < ? or (revoked_at is not null and revoked_at < ?)',
     nowIso(),
     cutoff,
   ).changes;
+  // A reset link lives half an hour; a week after that the row says nothing
+  run('delete from password_resets where expires_at < ?', cutoff);
+  return n;
 }
 
 /* ---------------- Password reset ---------------- */
