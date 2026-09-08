@@ -849,16 +849,12 @@ docker/               镜像与 compose
 
 **「网关」这个词只指一个东西**：`apps/server/src/gateway`，AgentLodge 的计量网关。
 
-历史上有三个东西都叫过 gateway，混淆过好几次。现在剩两个，按职责区分：
+叫过 gateway 的东西不止一个，混淆过好几次。这两个按职责区分：
 
 | 现名 | 曾用名 | 它管什么 | 认得出「谁」在调用吗 |
 |---|---|---|---|
 | `src/gateway` | — | 计量、配额、并发、协议翻译；每次请求向 credential-manager 换一个短命 token | ✅ 票据里有 userId |
 | `trace-proxy/` | `proxy` | 抓报文，只观察不决策 | ❌ 看到的票据是不透明的 |
-
-第三个是凭据注入代理 `credential-proxy/`（曾用名 `gateway/auth`）：容器拿一个固定的
-`GATEWAY_TOKEN` 打它，它换成真 key 转发。凭据存储拆进 credential-manager、计量网关自己接上
-那个 socket 之后，它剩下的只是一份重复的 usage 解析，已经删掉。
 
 判据就一条：**认不认得出用户**。认得出才谈得上按人计费、单用户配额、公平队列；
 认不出的那个只管观察，串在计量网关的上游侧。
