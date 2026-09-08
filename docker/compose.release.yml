@@ -33,6 +33,9 @@
 # `master` is the rolling build of the branch, and a version number (`1.2.3`) pins this
 # deployment where it is. `latest` exists only once a v* tag has been cut.
 x-data-dir: &data-dir ${DATA_DIR:?must be an absolute path on the host, e.g. /srv/agentlodge/data}
+# The one corner of it the credential manager may read: the key files, not the database
+# and every workspace beside them
+x-secrets-dir: &secrets-dir ${DATA_DIR:?must be an absolute path on the host, e.g. /srv/agentlodge/data}/secrets
 x-audit-proxy-url: &audit-proxy-url ${AUDIT_PROXY_URL:-http://audit:8796}
 x-audit-admin-token: &audit-admin-token ${AUDIT_ADMIN_TOKEN:?must be set, e.g. openssl rand -base64 32}
 
@@ -78,7 +81,19 @@ services:
       - ${PODMAN_SOCK:-/var/run/docker.sock}:/run/podman/podman.sock
     networks: [frontend, backend]
     depends_on: [gateway]
-    security_opt: ["label=disable"]
+    security_opt: ["label=disable", "no-new-privileges:true"]
+    # Nothing in here needs a capability: the socket is reached through its group and the
+    # files it writes are its own. The memory limit is a ceiling on a fault, not a budget,
+    # and the log cap is what keeps a chatty month from filling the disk.
+    cap_drop: [ALL]
+    mem_limit: 1g
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   gateway:
@@ -114,6 +129,16 @@ services:
         bind: { create_host_path: true }
     networks: [agent-net, frontend, backend]
     depends_on: [audit]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/api/hello').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   audit:
@@ -136,6 +161,10 @@ services:
     volumes:
       - agentlodge-audit:/traces
     networks: [backend]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
     restart: unless-stopped
 
   caddy:
@@ -150,6 +179,12 @@ services:
       - caddy-data:/data
     networks: [frontend]
     depends_on: [app]
+    # Root inside, so binding 80 and 443 is the one capability it keeps
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
     restart: unless-stopped
 
   # Not a service anybody uses: it exists so that `up` pulls the agent image onto this
@@ -176,10 +211,10 @@ services:
       - ${CODEX_CREDENTIALS_DIR:-${HOME}/.codex}:/input-codex:ro
       # Key files that something else writes and rotates — a docker secret, a
       # secret-manager sidecar, another container. Read-only: this service reads them and
-      # never writes back.
+      # never writes back. Only secrets/, not the data directory around it.
       - type: bind
-        source: *data-dir
-        target: /data
+        source: *secrets-dir
+        target: /data/secrets
         read_only: true
         bind: { create_host_path: true }
       - type: bind

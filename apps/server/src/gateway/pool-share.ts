@@ -1,3 +1,4 @@
+import { config } from '../core/config.js';
 import * as usageRepo from '../core/db/usage.js';
 import type { QuotaScope, QuotaStatus } from '../core/protocol.js';
 import type { ClaimStatus, PoolShare } from './quota-report.js';
@@ -53,6 +54,32 @@ const claimStatus = (s: string | null): ClaimStatus =>
   s === 'allowed_warning' || s === 'rejected' ? s : 'allowed';
 
 /**
+ * Everybody's consumption over a window, reused for a few seconds.
+ *
+ * The query behind it walks every user's rows in the window, and it is asked for on every
+ * response to a user with no ceiling of their own — at ten users that is nothing, at a
+ * hundred it is the most expensive thing on the response path. The figure is a denominator
+ * that nobody is shown, so a few seconds of staleness changes nothing anyone can see.
+ */
+const totals = new Map<string, { at: number; value: usageRepo.Totals }>();
+
+function poolTotals(range: { from: string; to: string }, providerId: string): usageRepo.Totals {
+  const ttl = config.poolShareCacheMs;
+  const key = `${providerId}|${range.from}|${range.to}`;
+  const hit = ttl > 0 ? totals.get(key) : undefined;
+  if (hit && Date.now() - hit.at < ttl) return hit.value;
+  const value = usageRepo.totalsAllInRange(range, providerId);
+  if (ttl > 0) {
+    totals.set(key, { at: Date.now(), value });
+    // Windows roll over; the keys of the old ones would otherwise stay for ever
+    if (totals.size > 32) {
+      for (const [k, v] of totals) if (Date.now() - v.at >= ttl) totals.delete(k);
+    }
+  }
+  return value;
+}
+
+/**
  * @param provider the upstream this request is going to. Both fields are needed and they are
  * different things: the reading is filed under the provider's `name`, the usage rows under
  * its `id`.
@@ -86,7 +113,7 @@ export function poolShare(
      * comparable at all: a numerator counted over our week and a utilisation reported over
      * theirs would divide by the wrong denominator.
      */
-    const all = usageRepo.totalsAllInRange({ from: w.startsAt, to: w.endsAt }, provider.id);
+    const all = poolTotals({ from: w.startsAt, to: w.endsAt }, provider.id);
     const total = q.limitKind === 'cost' ? all.costMicro : all.billableTokens;
     /*
      * Nobody has spent anything yet, so neither has this user.

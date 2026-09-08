@@ -66,6 +66,7 @@ export const fr: Record<string, string> = {
   'Timed out waiting in the queue; try again': 'Délai d\'attente dépassé dans la file ; réessayez',
   'The audit proxy is unreachable ({url}); the request was not sent': 'Le proxy d\'audit est injoignable ({url}) ; la requête n\'a pas été envoyée',
   'The upstream request failed': 'La requête vers le fournisseur a échoué',
+  'The upstream did not answer in time; try again': 'Le fournisseur n’a pas répondu à temps ; réessayez',
   'The password has to be at least 8 characters': 'Le mot de passe doit comporter au moins 8 caractères',
   'That password is too long': 'Ce mot de passe est trop long',
   'The password cannot be all digits': 'Le mot de passe ne peut pas être composé uniquement de chiffres',

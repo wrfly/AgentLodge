@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import type { HighlighterCore } from 'shiki/core';
 import { useT } from '../lib/i18n';
+import { StreamingContext } from '../lib/streaming';
 
 /**
  * The language set is spelled out on purpose: a bare import('shiki') pulls every
@@ -38,7 +39,8 @@ const LANG_LOADERS = {
   dockerfile: () => import('@shikijs/langs/dockerfile'),
 } as const;
 
-const LANGS = Object.keys(LANG_LOADERS) as Array<keyof typeof LANG_LOADERS>;
+type Lang = keyof typeof LANG_LOADERS;
+const LANGS = Object.keys(LANG_LOADERS) as Lang[];
 
 const ALIAS: Record<string, string> = {
   js: 'javascript', ts: 'typescript', py: 'python', sh: 'bash', zsh: 'bash',
@@ -50,28 +52,51 @@ let highlighterPromise: Promise<HighlighterCore> | null = null;
 function getHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
     highlighterPromise = (async () => {
-      const [{ createHighlighterCore }, { createOnigurumaEngine }] = await Promise.all([
+      const [{ createHighlighterCore }, { createJavaScriptRegexEngine }] = await Promise.all([
         import('shiki/core'),
-        import('shiki/engine/oniguruma'),
+        import('shiki/engine/javascript'),
       ]);
       return createHighlighterCore({
         themes: [
           import('@shikijs/themes/github-light'),
           import('@shikijs/themes/github-dark'),
         ],
-        langs: Object.values(LANG_LOADERS),
-        engine: createOnigurumaEngine(import('shiki/wasm')),
+        // Grammars are loaded as they are asked for — see ensureLanguage. Handing the whole
+        // table over here made the first code block on a page download every one of them,
+        // cpp's 700K included, before a single line was coloured.
+        langs: [],
+        // The JavaScript engine rather than the WebAssembly one: 600K of wasm gone from
+        // the first paint. `forgiving` skips a grammar rule it cannot compile instead of
+        // failing the whole block.
+        engine: createJavaScriptRegexEngine({ forgiving: true }),
       });
     })();
   }
   return highlighterPromise;
 }
 
-function normalize(lang?: string): string {
+/** Each grammar once, however many blocks ask for it at the same time */
+const loading = new Map<Lang, Promise<void>>();
+function ensureLanguage(hl: HighlighterCore, lang: Lang): Promise<void> {
+  let p = loading.get(lang);
+  if (!p) {
+    p = hl.loadLanguage(LANG_LOADERS[lang]).catch((err: unknown) => {
+      loading.delete(lang);
+      throw err;
+    });
+    loading.set(lang, p);
+  }
+  return p;
+}
+
+function normalize(lang?: string): Lang | 'text' {
   const l = (lang ?? '').toLowerCase().trim();
   const mapped = ALIAS[l] ?? l;
-  return (LANGS as string[]).includes(mapped) ? mapped : 'text';
+  return (LANGS as string[]).includes(mapped) ? (mapped as Lang) : 'text';
 }
+
+/** While a block is still streaming, highlight it at most this often */
+const STREAMING_EVERY_MS = 300;
 
 export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const t = useT();
@@ -79,27 +104,41 @@ export function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | null>(null);
   const language = normalize(lang);
+  const streaming = useContext(StreamingContext);
+  const lastRun = useRef(0);
 
   useEffect(() => {
     let alive = true;
-    getHighlighter()
-      .then((hl) =>
-        hl.codeToHtml(code, {
-          lang: language,
-          themes: { light: 'github-light', dark: 'github-dark' },
-          defaultColor: false,
-        }),
-      )
-      .then((out) => {
-        if (alive) setHtml(out);
-      })
-      .catch(() => {
-        /* Fall back to plain text if highlighting fails */
-      });
+    /*
+     * A highlight re-parses the whole block, and while the block is streaming there is a
+     * new `code` on every frame — so a long block cost its length squared. Throttled
+     * rather than debounced: the colours still appear while the text is arriving, just
+     * not on every delta, and the final text is highlighted at once.
+     */
+    const delay = streaming ? Math.max(0, STREAMING_EVERY_MS - (Date.now() - lastRun.current)) : 0;
+    const handle = window.setTimeout(() => {
+      lastRun.current = Date.now();
+      getHighlighter()
+        .then(async (hl) => {
+          if (language !== 'text') await ensureLanguage(hl, language);
+          return hl.codeToHtml(code, {
+            lang: language,
+            themes: { light: 'github-light', dark: 'github-dark' },
+            defaultColor: false,
+          });
+        })
+        .then((out) => {
+          if (alive) setHtml(out);
+        })
+        .catch(() => {
+          /* Fall back to plain text if highlighting fails */
+        });
+    }, delay);
     return () => {
       alive = false;
+      window.clearTimeout(handle);
     };
-  }, [code, language]);
+  }, [code, language, streaming]);
 
   useEffect(
     () => () => {

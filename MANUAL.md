@@ -829,24 +829,27 @@ workspaces/<userId>/<convId>/AGENTS.md    上面这些渲染成一整份，给 c
 ```
 apps/server/          AgentLodge 后端（三层，见下）
 apps/web/             React SPA
+credential-manager/   上游凭据的唯一存放处（Go，只暴露一个 Unix socket）
 trace-proxy/          抓包用的透明代理（独立上游项目，可整个替换）
-credential-proxy/     凭据注入代理（独立项目，管钥匙不管人）
 scripts/              假上游 · 分层检查 · trace-proxy 的 CJS 标记
 docker/               镜像与 compose
 ```
 
 **「网关」这个词只指一个东西**：`apps/server/src/gateway`，AgentLodge 的计量网关。
 
-历史上有三个东西都叫过 gateway，混淆过好几次，现在按职责区分开了：
+历史上有三个东西都叫过 gateway，混淆过好几次。现在剩两个，按职责区分：
 
 | 现名 | 曾用名 | 它管什么 | 认得出「谁」在调用吗 |
 |---|---|---|---|
-| `src/gateway` | — | 计量、配额、并发、协议翻译 | ✅ 票据里有 userId |
-| `credential-proxy/` | `gateway/auth` | 保管 API key / 订阅凭据，自动刷 token | ❌ 单一 `GATEWAY_TOKEN` |
+| `src/gateway` | — | 计量、配额、并发、协议翻译；每次请求向 credential-manager 换一个短命 token | ✅ 票据里有 userId |
 | `trace-proxy/` | `proxy` | 抓报文，只观察不决策 | ❌ 看到的票据是不透明的 |
 
+第三个是凭据注入代理 `credential-proxy/`（曾用名 `gateway/auth`）：容器拿一个固定的
+`GATEWAY_TOKEN` 打它，它换成真 key 转发。凭据存储拆进 credential-manager、计量网关自己接上
+那个 socket 之后，它剩下的只是一份重复的 usage 解析，已经删掉。
+
 判据就一条：**认不认得出用户**。认得出才谈得上按人计费、单用户配额、公平队列；
-认不出的那两个各管一层别的事，可以串在计量网关的上游侧。
+认不出的那个只管观察，串在计量网关的上游侧。
 
 ## 代码结构
 
@@ -966,6 +969,10 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 | `GATEWAY_INTERNAL_URL` | 自动推导 | **本进程**访问网关的地址（后台读闸门）；同上 |
 | `MAX_UPSTREAM_CONCURRENCY` | `3` | **每条上游**的 in-flight 上限，后台可热调。每条上游一个池子，各自计数 |
 | `PER_USER_INFLIGHT_MAX` | `2` | 单用户最多占几个 slot |
+| `UPSTREAM_HEADERS_TIMEOUT_MS` | `90000` | 上游多久没给响应头就放弃，回 504（CLI 会重试） |
+| `UPSTREAM_IDLE_TIMEOUT_MS` | `180000` | 流式响应中途多久没有字节就断开 |
+| `POOL_SHARE_CACHE_MS` | `5000` | 无上限用户份额的分母（全平台该窗口用量）复用多久；0 关掉 |
+| `AUDIT_LOG_RETENTION_DAYS` | `365` | 后台审计日志保留天数；0 永久保留 |
 | `USE_CONTAINERS` | `false` | 开启每用户容器隔离 |
 | `AGENT_NETWORK` | 空 | 容器网络名；Linux 上设成 internal 网络 |
 | `CONTAINER_IDLE_MS` | `1800000` | 空闲多久停掉容器 |
@@ -1430,5 +1437,4 @@ app 和内网：那两个不在这张网上，所以 agent 的可达范围跟任
   —— turn 结束时 app 侧还会统一推一次，所以只是少了实时性。真修法是把总线换成
   跨进程实现（同 M5 Redis 那件事）
 - 长会话没有虚拟滚动
-- 标题用首条消息截断，不是 AI 生成
 - `protocol.ts` 在 server 和 web 各有一份副本，改动要同步两处 —— `npm run typecheck` 会逐字比对这两份，漂了就报错

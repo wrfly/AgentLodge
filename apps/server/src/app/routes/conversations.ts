@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
-import { liveStartSeq, subscribe } from '../../core/events.js';
+import { currentSeq, dropChannel, liveStartSeq, subscribe } from '../../core/events.js';
 import { defaultAgent, isAgentId, isEnabledAgent } from '../agents/registry.js';
 import * as convRepo from '../../core/db/conversations.js';
 import * as turns from '../turns.js';
@@ -79,6 +79,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
     turns.abortConversation(id);
     convRepo.remove(id, req.user!.id);
+    dropChannel(id);
     // The working directory goes with it, or disk use only ever grows
     await fs.rm(turns.workspaceDir(req.user!.id, id), { recursive: true, force: true });
     return reply.code(204).send();
@@ -135,8 +136,12 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const headerId = req.headers['last-event-id'];
     const resumeId = (Array.isArray(headerId) ? headerId[0] : headerId) ?? query.lastEventId;
     // A Last-Event-ID means this is a reconnect, so resume from there; otherwise replay only
-    // the turn currently running
-    const afterSeq = resumeId !== undefined ? Number(resumeId) : liveStartSeq(id);
+    // the turn currently running. An id past the current sequence belongs to a channel that
+    // has since been dropped and made afresh (events.ts sweeps idle ones), so as far as
+    // replay is concerned this is a first connection.
+    const resumeSeq = resumeId !== undefined ? Number(resumeId) : NaN;
+    const afterSeq =
+      Number.isFinite(resumeSeq) && resumeSeq <= currentSeq(id) ? resumeSeq : liveStartSeq(id);
 
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',

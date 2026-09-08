@@ -210,15 +210,27 @@ export class UpstreamGate {
     }
   }
 
+  /**
+   * The first waiter whose user is under their cap, in arrival order.
+   *
+   * A user at the cap is stepped over, not moved: their requests keep their place for
+   * when a slot of theirs frees up, and the people behind them are not held back. The
+   * previous version put the capped request at the back and stopped looking, which left
+   * a free slot idle while an under-cap user sat second in line — until one of the capped
+   * user's own requests happened to finish. Nearly all traffic is priority 0 (see
+   * isBackground in index.ts), so this lane, not the round robin below, is what decides
+   * who waits.
+   */
   private takeHiPri(): Waiter | undefined {
-    while (this.hiPri.length) {
-      const w = this.hiPri.shift()!;
-      if (w.settled) continue;
-      if ((this.userInflight.get(w.userId) ?? 0) >= this.cfg.perUserInflightMax) {
-        // This user is at their limit; put it back and let somebody else go
-        this.hiPri.push(w);
-        return undefined;
+    for (let i = 0; i < this.hiPri.length; i++) {
+      const w = this.hiPri[i]!;
+      if (w.settled) {
+        this.hiPri.splice(i, 1);
+        i -= 1;
+        continue;
       }
+      if ((this.userInflight.get(w.userId) ?? 0) >= this.cfg.perUserInflightMax) continue;
+      this.hiPri.splice(i, 1);
       return w;
     }
     return undefined;

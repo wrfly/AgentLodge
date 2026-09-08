@@ -162,21 +162,6 @@ export async function startTurn(
   await memory.snapshot(userId, 'agent');
   await memory.linkInto(cwd, userId);
 
-  const isFirst = conv.messageCount === 0;
-  const userMessage = convRepo.appendMessage(conversationId, userId, {
-    role: 'user',
-    blocks: [{ kind: 'text', blockId: 0, text }],
-    createdAt: new Date().toISOString(),
-  })!;
-
-  if (isFirst) {
-    const title = convRepo.deriveTitle(text);
-    convRepo.update(conversationId, userId, { title });
-    publish(conversationId, { type: 'title.updated', conversationId, title });
-  }
-
-  publish(conversationId, { type: 'turn.started', turnId });
-
   // A ticket is only signed when the gateway is enabled; with no active upstream the CLI
   // uses its own configuration
   const viaGateway = gatewayEnabled();
@@ -193,8 +178,16 @@ export async function startTurn(
       )
     : undefined;
 
-  // Container mode: make sure this user's container is up and convert host paths to
-  // container paths
+  /*
+   * Container mode: make sure this user's container is up and convert host paths to
+   * container paths.
+   *
+   * Before the message is stored and before turn.started goes out. This is the one step
+   * that can fail for reasons of its own — the engine down, the image missing — and it
+   * used to run after both: the caller got a 500, the user's message was already in the
+   * conversation, and the interface, told a turn had started and never told otherwise,
+   * sat on "Thinking" until the page was reloaded.
+   */
   let containerName: string | undefined;
   let containerCwd: string | undefined;
   if (containers.enabled()) {
@@ -202,6 +195,21 @@ export async function startTurn(
     containerCwd = containers.toContainerPath(userId, cwd);
     containers.touch(userId);
   }
+
+  const isFirst = conv.messageCount === 0;
+  const userMessage = convRepo.appendMessage(conversationId, userId, {
+    role: 'user',
+    blocks: [{ kind: 'text', blockId: 0, text }],
+    createdAt: new Date().toISOString(),
+  })!;
+
+  if (isFirst) {
+    const title = convRepo.deriveTitle(text);
+    convRepo.update(conversationId, userId, { title });
+    publish(conversationId, { type: 'title.updated', conversationId, title });
+  }
+
+  publish(conversationId, { type: 'turn.started', turnId });
 
   const startRun = (resumeSessionId?: string) =>
     adapter.run({

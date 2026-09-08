@@ -12,35 +12,32 @@
 
 ```mermaid
 flowchart LR
-    subgraph U[入口]
+    subgraph IN[入口]
         W["网页对话<br/>高仿 Claude 界面"]
-        C["CLI<br/>claude / codex"]
+        C["自带 CLI<br/>照常敲 claude / codex"]
         A["兼容 API<br/>Anthropic Messages · OpenAI Responses"]
     end
 
-    subgraph L[AgentLodge]
-        direction TB
-        GW["计量网关<br/>鉴权 · 配额闸门 · 并发限速 · 审计"]
-        G1["用户 A 容器<br/>Claude Code / Codex + 独立工作区"]
-        G2["用户 B 容器<br/>Claude Code / Codex + 独立工作区"]
-        G3["用户 C 容器 ······"]
-        GW --> G1
-        GW --> G2
-        GW --> G3
+    subgraph AL[AgentLodge]
+        APP["应用服务<br/>账号 · 会话 · 记忆"]
+        BOX["每用户一个沙箱容器<br/>Claude Code / Codex<br/>独立工作区 · 容器内无凭据"]
+        GW["计量网关<br/>鉴权 · 配额 · 并发 · 审计"]
+        CM["credential-manager<br/>唯一持有上游凭据"]
     end
 
-    subgraph U0[上游 · 可切换]
+    subgraph UP[上游 · 可多条并存]
         DS["DeepSeek API"]
         CL["Claude / Codex API"]
         SB["订阅"]
     end
 
-    W --> GW
+    W --> APP --> BOX --> GW
     C --> GW
     A --> GW
-    GW --> DS
-    GW --> CL
-    GW --> SB
+    CM -. 每次请求换一个短命 token .-> GW
+    GW --> DS & CL & SB
+    C ~~~ APP
+    A ~~~ APP
 ```
 
 ## 功能特性

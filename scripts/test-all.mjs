@@ -18,7 +18,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** Workspaces that carry their own `test:*` scripts */
 const PACKAGES = [
   { dir: 'apps/server', label: 'server' },
-  { dir: 'credential-proxy', label: 'credential-proxy' },
 ];
 
 /**
@@ -39,8 +38,8 @@ for (const pkg of PACKAGES) {
   const file = path.join(root, pkg.dir, 'package.json');
   if (!fs.existsSync(file)) continue;
   const scripts = JSON.parse(fs.readFileSync(file, 'utf8')).scripts ?? {};
-  // `test:*` and a plain `test` alike — credential-proxy has one suite and calls it `test`,
-  // and picking only the prefixed form silently skipped it
+  // `test:*` and a plain `test` alike: a package with one suite tends to call it `test`,
+  // and picking only the prefixed form once silently skipped exactly that
   const names = Object.keys(scripts)
     .filter((s) => s === 'test' || s.startsWith('test:'))
     .sort();

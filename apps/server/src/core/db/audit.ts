@@ -57,3 +57,10 @@ export function list(limit = 200): AuditEntry[] {
     createdAt: r.created_at,
   }));
 }
+
+/** Drop entries older than the retention, in days. 0 keeps everything. */
+export function prune(days: number): number {
+  if (!Number.isFinite(days) || days <= 0) return 0;
+  const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
+  return run('delete from audit_logs where created_at < ?', cutoff).changes;
+}

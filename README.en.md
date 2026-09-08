@@ -17,35 +17,32 @@ and other upstreams.
 
 ```mermaid
 flowchart LR
-    subgraph U[Entry points]
+    subgraph IN[Entry points]
         W["Web chat<br/>a Claude-style UI"]
-        C["CLI<br/>claude / codex"]
+        C["Your own CLI<br/>claude / codex, as usual"]
         A["Compatible APIs<br/>Anthropic Messages · OpenAI Responses"]
     end
 
-    subgraph L[AgentLodge]
-        direction TB
-        GW["Metering gateway<br/>auth · quota gate · concurrency · audit"]
-        G1["User A container<br/>Claude Code / Codex + own workspace"]
-        G2["User B container<br/>Claude Code / Codex + own workspace"]
-        G3["User C container ······"]
-        GW --> G1
-        GW --> G2
-        GW --> G3
+    subgraph AL[AgentLodge]
+        APP["Application<br/>accounts · chats · memory"]
+        BOX["One container per user<br/>Claude Code / Codex<br/>own workspace · no credentials"]
+        GW["Metering gateway<br/>auth · quota · limits · audit"]
+        CM["credential-manager<br/>holds every upstream credential"]
     end
 
-    subgraph U0[Upstream · switchable]
+    subgraph UP[Upstream · several at once]
         DS["DeepSeek API"]
         CL["Claude / Codex API"]
         SB["Subscriptions"]
     end
 
-    W --> GW
+    W --> APP --> BOX --> GW
     C --> GW
     A --> GW
-    GW --> DS
-    GW --> CL
-    GW --> SB
+    CM -. short-lived token per request .-> GW
+    GW --> DS & CL & SB
+    C ~~~ APP
+    A ~~~ APP
 ```
 
 ## Features

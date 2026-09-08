@@ -36,9 +36,31 @@ export async function attachUser(req: FastifyRequest): Promise<void> {
   // replay cleanup — stops working immediately
   if (!sessionsRepo.isActive(claims.sid)) return;
 
-  sessionsRepo.touch(claims.sid);
+  touch(claims.sid);
   req.user = { id: user.id, role: user.role, sessionId: claims.sid };
 }
+
+/**
+ * When each session's last-seen was last written.
+ *
+ * Every authenticated request used to write the row, which made the busiest write in the
+ * database the one with the least in it: a stream of polls and deltas recording that a
+ * session is still here, once per request. Once a minute says the same thing.
+ */
+const touched = new Map<string, number>();
+const TOUCH_EVERY_MS = 60_000;
+
+function touch(sid: string): void {
+  const now = Date.now();
+  if ((touched.get(sid) ?? 0) + TOUCH_EVERY_MS > now) return;
+  touched.set(sid, now);
+  sessionsRepo.touch(sid);
+}
+
+setInterval(() => {
+  const stale = Date.now() - 10 * TOUCH_EVERY_MS;
+  for (const [sid, at] of touched) if (at < stale) touched.delete(sid);
+}, 10 * TOUCH_EVERY_MS).unref();
 
 export async function requireUser(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   if (!req.user) {

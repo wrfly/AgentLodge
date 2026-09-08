@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config, hostWorkspace, paths } from '../core/config.js';
+import * as usersRepo from '../core/db/users.js';
 
 const run = promisify(execFile);
 
@@ -35,7 +36,8 @@ const state = new Map<string, ContainerInfo>();
 /** Concurrent creation requests for one user collapse into a single one */
 const pending = new Map<string, Promise<string>>();
 
-const containerName = (userId: string): string => `agentlodge-agent-${userId.slice(0, 12)}`;
+const NAME_PREFIX = 'agentlodge-agent-';
+const containerName = (userId: string): string => `${NAME_PREFIX}${userId.slice(0, 12)}`;
 
 /**
  * A persistent HOME per user, unaffected by stopping or removing the container.
@@ -89,9 +91,20 @@ async function exists(name: string): Promise<'running' | 'stopped' | 'absent'> {
   try {
     const out = await podman(['inspect', '--format', '{{.State.Status}}', name], 15_000);
     return out === 'running' ? 'running' : 'stopped';
-  } catch {
-    return 'absent';
+  } catch (e) {
+    // Only "there is no such container" means absent. Every other failure — the engine
+    // down, a 15s timeout — used to read as absent too, and the `create` that followed
+    // failed on a name already in use, which pointed everyone at the wrong problem.
+    if (isNoSuchContainer(e)) return 'absent';
+    throw e;
   }
+}
+
+/** podman: `no container with name or ID "x" found: no such container`; docker: `No such object: x` */
+function isNoSuchContainer(e: unknown): boolean {
+  const err = e as { stderr?: string; message?: string };
+  const text = `${err?.stderr ?? ''} ${err?.message ?? ''}`;
+  return /no such (container|object)|no container with (name|id)/i.test(text);
 }
 
 async function create(userId: string): Promise<void> {
@@ -260,6 +273,73 @@ export async function reapIdle(): Promise<number> {
     n += 1;
   }
   return n;
+}
+
+/**
+ * A shell script that signals every process in a container whose environment carries a
+ * turn marker — one turn's exactly, or every turn's when `marker` is null.
+ *
+ * `pkill -f` matches command lines, and the marker is deliberately not on one (launch.ts).
+ * /proc/<pid>/environ is readable for the container's own uid, which is what everything in
+ * there runs as. The marker is a uuid and the signal is ours, so neither needs escaping.
+ */
+export function signalScript(marker: string | null, sig: 'INT' | 'KILL'): string {
+  const pattern = marker ? `AGENTLODGE_TURN=${marker}` : '^AGENTLODGE_TURN=';
+  const flag = marker ? '-qx' : '-q';
+  return [
+    'for p in /proc/[0-9]*; do',
+    `  if tr '\\0' '\\n' < "$p/environ" 2>/dev/null | grep ${flag} '${pattern}'; then`,
+    `    kill -${sig} "\${p#/proc/}" 2>/dev/null`,
+    '  fi',
+    'done',
+  ].join('\n');
+}
+
+/** Deliver a signal to a turn's processes inside the container. Best effort: a container that is gone has nothing to signal. */
+export async function signalTurn(
+  containerName: string,
+  marker: string | null,
+  signal: 'SIGINT' | 'SIGKILL',
+): Promise<void> {
+  const script = signalScript(marker, signal === 'SIGKILL' ? 'KILL' : 'INT');
+  await podman(['exec', containerName, 'sh', '-c', script], 15_000).catch(() => {});
+}
+
+/**
+ * What the engine still has of ours, after a restart.
+ *
+ * `state` is this process's memory, and a restart emptied it while the containers stayed
+ * up: an idle one then ran until its owner spoke again, and a turn that was in flight kept
+ * its CLI going with nobody reading the answer. The containers are found by their name
+ * prefix and matched to users by it; the strays by the marker every turn's processes carry.
+ */
+export async function reconcile(): Promise<{ running: number; strays: number }> {
+  const none = { running: 0, strays: 0 };
+  if (!enabled()) return none;
+  let out: string;
+  try {
+    out = await podman(['ps', '-a', '--filter', `name=${NAME_PREFIX}`, '--format', '{{.Names}} {{.State}}'], 15_000);
+  } catch {
+    return none;
+  }
+  const users = usersRepo.list();
+  const found = { running: 0, strays: 0 };
+  for (const line of out.split('\n')) {
+    const [name, status] = line.trim().split(/\s+/);
+    if (!name?.startsWith(NAME_PREFIX)) continue;
+    const short = name.slice(NAME_PREFIX.length);
+    const user = users.find((u) => u.id.startsWith(short));
+    if (!user) continue;
+    if (status !== 'running') continue;
+    found.running += 1;
+    // Counted as active from now: the reaper stops it after the usual idle period
+    state.set(user.id, { name, running: true, lastActiveAt: Date.now(), startedAt: new Date().toISOString() });
+    // A turn the previous process was running is still a process in there, billing its
+    // owner for an answer that will never be stored. End it.
+    await signalTurn(name, null, 'SIGINT');
+    found.strays += 1;
+  }
+  return found;
 }
 
 export function list(): ContainerInfo[] {

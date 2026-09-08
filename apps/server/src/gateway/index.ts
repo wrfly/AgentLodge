@@ -4,7 +4,7 @@ import { auditProxyBase, auditProxyEnabled, requiresAuditProxy } from '../core/e
 import * as usageRepo from '../core/db/usage.js';
 import * as quota from '../core/quota.js';
 import * as trace from '../core/trace.js';
-import { publish } from '../core/events.js';
+import { hasListeners, publish } from '../core/events.js';
 import {
   GatePool,
   AbortedError,
@@ -88,6 +88,17 @@ function anthropicError(type: string, message: string) {
 }
 function openaiError(type: string, message: string, code?: string) {
   return { error: { message, type, code: code ?? type, param: null } };
+}
+
+/**
+ * An upstream that went quiet: no headers within the bound, or a stream that stopped.
+ * Carried as the abort reason so the catch in handleProxy can tell it from the client
+ * leaving, which uses the same controller and has to stay silent.
+ */
+class UpstreamTimeout extends Error {
+  constructor(readonly phase: 'headers' | 'body') {
+    super(`The upstream timed out (${phase})`);
+  }
 }
 
 function sendError(
@@ -325,7 +336,7 @@ async function handleProxy(
       priority: isBackground ? 1 : 0,
       signal: ac.signal,
       onQueued: (position) => {
-        if (claims.cid) {
+        if (claims.cid && hasListeners(claims.cid)) {
           publish(claims.cid, { type: 'queue.waiting', turnId: claims.tid, position });
         }
       },
@@ -402,15 +413,30 @@ async function handleProxy(
      * seen soon enough after every upgrade — and otherwise the newest that came before it.
      */
     const cli = asCli ? cliVersion.observe(outbound) : undefined;
-    const upstream = await fetch(asCli ? betaUrl(egress.url) : egress.url, {
-      method: 'POST',
-      headers: {
-        ...outboundHeaders(req.headers, target.wire, target.apiKey, claims.cid, cli),
-        ...egress.headers,
-      },
-      body: JSON.stringify(asCli ? withBillingSystem(outbound, cli) : outbound),
-      signal: ac.signal,
-    });
+    /*
+     * The headers have to arrive within a bound. The only abort until now was the client
+     * going away, so an upstream that accepted the connection and never answered held its
+     * slot and the CLI until the CLI's own ten-minute limit. The timer covers the headers
+     * alone; a stream that has started is watched by the idle timer below instead.
+     */
+    const headersTimer = setTimeout(
+      () => ac.abort(new UpstreamTimeout('headers')),
+      config.upstreamHeadersTimeoutMs,
+    );
+    let upstream: Response;
+    try {
+      upstream = await fetch(asCli ? betaUrl(egress.url) : egress.url, {
+        method: 'POST',
+        headers: {
+          ...outboundHeaders(req.headers, target.wire, target.apiKey, claims.cid, cli),
+          ...egress.headers,
+        },
+        body: JSON.stringify(asCli ? withBillingSystem(outbound, cli) : outbound),
+        signal: ac.signal,
+      });
+    } finally {
+      clearTimeout(headersTimer);
+    }
 
     status = upstream.status;
     /*
@@ -466,26 +492,34 @@ async function handleProxy(
           : null;
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!acc.ttftMs) acc.ttftMs = Date.now() - startedAt;
-        const text = decoder.decode(value, { stream: true });
-        sniffer.push(text);
-        // The other end has gone; stop writing and finish so the slot is returned
-        if (reply.raw.destroyed || ac.signal.aborted) {
-          await reader.cancel().catch(() => {});
-          break;
+      // A stream that goes quiet is ended rather than held open: the CLI sees a truncated
+      // answer and retries, instead of waiting on a connection that will never finish
+      const idle = setTimeout(() => ac.abort(new UpstreamTimeout('body')), config.upstreamIdleTimeoutMs);
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          idle.refresh();
+          if (!acc.ttftMs) acc.ttftMs = Date.now() - startedAt;
+          const text = decoder.decode(value, { stream: true });
+          sniffer.push(text);
+          // The other end has gone; stop writing and finish so the slot is returned
+          if (reply.raw.destroyed || ac.signal.aborted) {
+            await reader.cancel().catch(() => {});
+            break;
+          }
+          // Untouched paths write the original bytes, not the decoded text, so a relay that
+          // rewrites nothing stays byte-identical
+          reply.raw.write(
+            translator
+              ? Buffer.from(translator.push(text))
+              : scrubber
+                ? Buffer.from(scrubber.push(text))
+                : Buffer.from(value),
+          );
         }
-        // Untouched paths write the original bytes, not the decoded text, so a relay that
-        // rewrites nothing stays byte-identical
-        reply.raw.write(
-          translator
-            ? Buffer.from(translator.push(text))
-            : scrubber
-              ? Buffer.from(scrubber.push(text))
-              : Buffer.from(value),
-        );
+      } finally {
+        clearTimeout(idle);
       }
       if (!reply.raw.destroyed) {
         if (translator) reply.raw.write(Buffer.from(translator.end()));
@@ -508,17 +542,25 @@ async function handleProxy(
       reply.raw.end();
     }
   } catch (err) {
-    if (!ac.signal.aborted) {
-      req.log.error({ err }, 'gateway upstream failed');
+    // The client leaving and a timeout abort the same controller; the reason tells them apart
+    const timedOut = ac.signal.aborted && ac.signal.reason instanceof UpstreamTimeout ? ac.signal.reason : null;
+    if (!ac.signal.aborted || timedOut) {
+      req.log.error({ err, phase: timedOut?.phase }, timedOut ? 'gateway upstream timed out' : 'gateway upstream failed');
+      // For the trace: a request that never got a status still needs to say what happened
+      if (timedOut && !status) status = 504;
       if (!reply.raw.headersSent) {
         // A dead proxy and a dead upstream have to be told apart: one is our component,
         // the other is theirs. Reporting both as "the upstream request failed" sends
         // whoever is on call to the provider's status page while the problem is here.
         const viaProxy = auditProxyBase();
-        const msg = viaProxy
-          ? tr(req, 'The audit proxy is unreachable ({url}); the request was not sent', { url: viaProxy })
-          : tr(req, 'The upstream request failed');
-        reply.raw.writeHead(502, { 'content-type': 'application/json' });
+        const msg = timedOut
+          ? tr(req, 'The upstream did not answer in time; try again')
+          : viaProxy
+            ? tr(req, 'The audit proxy is unreachable ({url}); the request was not sent', { url: viaProxy })
+            : tr(req, 'The upstream request failed');
+        // 504 for a timeout: a 5xx the CLI retries, which for an upstream that is merely
+        // slow is the right reflex
+        reply.raw.writeHead(timedOut ? 504 : 502, { 'content-type': 'application/json' });
         reply.raw.write(
           JSON.stringify(
             wire === 'anthropic' ? anthropicError('api_error', msg) : openaiError('server_error', msg),
@@ -612,8 +654,12 @@ function settle(
   // Once ROLE=gateway is split out, this push never reaches a browser — the app still
   // pushes once when the turn ends (see turns.ts), so what is lost is the live refresh
   // during a turn. queue.waiting disappears entirely for the same reason. The real fix is
-  // a cross-process event bus; a warning is logged about this at startup.
-  if (claims.cid) {
+  // a cross-process event bus.
+  //
+  // Only when somebody is listening. The status behind the event is three aggregate
+  // queries, and in the gateway process there is never a listener — so this used to be
+  // three queries per upstream call spent on an event delivered to an empty map.
+  if (claims.cid && hasListeners(claims.cid)) {
     publish(claims.cid, { type: 'quota.updated', quota: quota.status(claims.sub) });
   }
 }

@@ -798,7 +798,12 @@ env = {
 ```
 
 ### 6.5 中断
-`POST /api/conversations/:id/abort` → app 给那一轮的 `exec` 子进程发 `SIGINT`，3s 后 `SIGKILL`。
+`POST /api/conversations/:id/abort` → app 发 `SIGINT`，3s 后 `SIGKILL`。宿主机模式发给子进程；
+容器模式下子进程只是 `podman exec` 的客户端，没有 TTY 的 exec **不转发信号**，杀掉客户端只是断开
+附着，容器里的 CLI 会带着还有二十分钟寿命的票据继续跑、继续计费。所以每一轮启动时给容器内进程
+带一个只有这一轮才有的环境变量标记（`AGENTLODGE_TURN`），中断时 `podman exec` 进去，按标记找到
+这一轮的全部进程（CLI 和它起的工具子进程）发信号；超时同理。app 重启后也会进每个还在跑的容器
+把上一个进程留下的这类进程清掉（`containers.reconcile`）。
 **已消耗的 token 照常计费**（网关早就记账了）。消息落库时标记 `aborted`。
 
 ### 6.6 会话 ID 管理
@@ -1026,6 +1031,12 @@ pickRoundRobin:
 ```
 
 **为什么要用户级轮转**：一个 agent 循环会连续快速地发起多次调用。若用全局 FIFO，一个用户跑长任务时会持续占满队列前排。轮转让每个活跃用户在每一"轮"里都能拿到一次机会。
+
+**快车道实际怎么排**：交互式请求（priority 0）几乎是全部流量——只有 max_tokens ≤ 512 且不带
+tools 的后台调用走轮转队列——所以真正决定谁等的是快车道自己的规则：按到达顺序，**跳过**已到
+`PER_USER_INFLIGHT_MAX` 的用户取下一个。跳过而不是挪到队尾：被跳过的保留位置，等自己的 slot
+空出来再进，后面的人也不用陪他等。之前的实现是把他挪到队尾然后停止本轮调度，结果是一个空 slot
+闲着、排在他后面的人等到他自己的某个请求结束才进得去。
 
 #### Lease 生命周期与释放（最易出 bug 的地方）
 
@@ -1522,7 +1533,6 @@ AgentLodge/
 │   └── server/           # 一个包，内部分三层（§2.1b），靠 ROLE 决定跑哪一半
 │       └── src/{core,app,gateway}/
 ├── trace-proxy/          # 审计代理，零依赖，纯 Node 内置模块
-├── credential-proxy/     # 独立的凭据注入网关，可选
 ├── credential-manager/   # Go 写的凭据管理服务，存放全部上游凭据
 ├── docker/               # Dockerfile、compose、Caddyfile
 └── scripts/              # 结构检查、假上游、冒烟自测、项目页截图
@@ -1569,32 +1579,34 @@ agent-net  agent 容器 ↔ gateway
 
 | 风险 | 缓解 |
 |---|---|
-| 用户诱导 Claude 执行恶意命令 | 容器隔离 + 非 root + CapDrop ALL + no-new-privileges + 只读 rootfs |
-| 容器逃逸 | Podman rootless 模式；不挂载任何 socket 到 agent 容器 |
+| 用户诱导 Claude 执行恶意命令 | 容器隔离 + 非 root + CapDrop ALL + no-new-privileges + 内存/CPU/PID 限额。rootfs **不是**只读的：agent 要能装包 |
+| 容器逃逸 | Podman rootless 模式；agent 容器不挂任何 socket。app 容器挂着引擎 socket（它要建容器），这等于宿主机 root——compose 里它自己 CapDrop ALL、no-new-privileges、非 root 运行，但 socket 本身没有再收窄 |
 | 窃取上游凭据 | 值只存在于 credential-manager 里，加密落盘；网关每次请求换一个几小时寿命的 access token，refresh token 不过 socket；容器只有 20 分钟有效、绑死 (user, conversation, turn) 的 runtime token |
-| 绕过计量 | agent-net 是 internal 网络，唯一可达目标是 proxy |
-| 挖矿/资源滥用 | CPU/内存/PID/文件描述符全部限死；异常 CPU 持续高占用告警 |
-| 磁盘打满 | 每用户 volume 配额 + 定时 du 检查 |
+| 绕过计量 | 容器里没有 key，只有票据；agent-net 上唯一的自己人是网关。**不是**靠没有外网——agent 有外网，见 §2.6b |
+| 挖矿/资源滥用 | CPU/内存/PID 限额（`containers.ts`）。没有告警，靠宿主机监控或 `podman stats` |
+| 磁盘打满 | 没有每用户配额，也没有 du 检查。工作目录随对话删除；每用户 trace 保留 50 条；审计代理按天/条数/GB 保留；app/gateway 的容器日志按 20MB×5 轮转 |
 | 越权访问他人会话 | 所有查询强制 `where user_id = :me`；用 UUID 而非自增 ID |
 | 暴力破解 | 登录接口 IP + 账号双维度限流；失败 5 次锁定 15 分钟 |
-| SSE ticket 泄漏 | 60s 有效、一次性、绑定 user + IP |
-| 提示注入导致数据外泄 | 容器无外网，Claude 拿不到数据也发不出去 |
-| 依赖供应链 | 镜像 pin 版本 + `npm ci` + 定期 `npm audit` |
+| SSE ticket 泄漏 | 60s 有效、一次性、绑定 user（不绑 IP）。网页端实际用 fetch 带 Authorization 连 SSE，ticket 只给 `<a download>` 这类带不了头的入口 |
+| 提示注入导致数据外泄 | 容器里只有本人的工作目录和本轮票据，能带走的只有他自己的东西；不是靠没有外网 |
+| 依赖供应链 | 镜像 pin 版本 + `npm ci`；`npm audit` 手动跑，CI 没有卡它 |
 
 ---
 
 ## 14. 可观测性
 
-- **指标**（Prometheus 格式，`/metrics`）：
-  - `upstream_gate_active` / `_queued` / `_effective_max`
-  - `upstream_queue_wait_ms`（直方图）
-  - `upstream_requests_total{status}`、`upstream_throttled_total`
-  - `turn_duration_ms`、`turn_api_calls`
-  - `container_running`、`container_cold_start_ms`
-  - `tokens_total{user,type}`、`cost_micro_total`
-  - `deepseek_balance`
-- **日志**：pino JSON 结构化，全链路 `traceId = turnId`
-- **告警**：余额低、drift > 5%、闸门排队 p95 > 30s、容器重启风暴、上游 429 激增
+现状，不是规划：
+
+- **后台**：`/gate` 给每条上游的 in-flight、排队数、有效上限、p50/p95 等待时间；
+  `/upstream-allowance` 给订阅套餐的真实利用率和重置时刻；总览页给用量和排行
+- **日志**：Fastify 自带的 pino，`LOG_LEVEL` 控制（默认 `warn`），JSON 一行一条。
+  没有贯穿全链路的 traceId
+- **每用户 trace**：网关把每次上游调用的结构化摘要落到 `traces/<userId>/`，每人保留 50 条，
+  `/traces` 页面只能看自己的
+- **容器**：app 和 gateway 有 healthcheck（compose），agent 容器日志按 10MB 截断
+
+没有的：Prometheus `/metrics`、告警（余额低、排队 p95、429 激增）。要接监控，先从 `/gate`
+和 `/upstream-allowance` 两个已有的 JSON 端点拉。
 
 ---
 

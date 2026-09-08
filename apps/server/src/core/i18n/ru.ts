@@ -66,6 +66,7 @@ export const ru: Record<string, string> = {
   'Timed out waiting in the queue; try again': 'Истекло время ожидания в очереди; повторите',
   'The audit proxy is unreachable ({url}); the request was not sent': 'Прокси аудита недоступен ({url}); запрос не отправлен',
   'The upstream request failed': 'Запрос к провайдеру не удался',
+  'The upstream did not answer in time; try again': 'Провайдер не ответил вовремя; попробуйте ещё раз',
   'The password has to be at least 8 characters': 'Пароль должен быть не короче 8 символов',
   'That password is too long': 'Пароль слишком длинный',
   'The password cannot be all digits': 'Пароль не может состоять только из цифр',

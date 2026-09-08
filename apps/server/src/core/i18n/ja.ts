@@ -66,6 +66,7 @@ export const ja: Record<string, string> = {
   'Timed out waiting in the queue; try again': 'キューの待機がタイムアウトしました。再試行してください',
   'The audit proxy is unreachable ({url}); the request was not sent': '監査プロキシに到達できません（{url}）。リクエストは送信されていません',
   'The upstream request failed': '上流へのリクエストが失敗しました',
+  'The upstream did not answer in time; try again': '上流が時間内に応答しませんでした。もう一度お試しください',
   'The password has to be at least 8 characters': 'パスワードは 8 文字以上である必要があります',
   'That password is too long': 'パスワードが長すぎます',
   'The password cannot be all digits': 'パスワードを数字だけにはできません',
