@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { Brain, ChevronRight, CircleAlert, OctagonX } from 'lucide-react';
 import clsx from 'clsx';
 import { useChat, type ChatMessage, type LiveBlock } from '../store/chat';
 import { Markdown } from './Markdown';
 import { ToolCard } from './ToolCard';
 import { useT } from '../lib/i18n';
+import { StreamingContext } from '../lib/streaming';
 
 /**
  * The thinking, or what there is of it.
@@ -106,7 +107,12 @@ function PendingIndicator() {
   );
 }
 
-export function Message({ message }: { message: ChatMessage }) {
+/**
+ * Memoised on the message object. The store clones only the message a frame touched
+ * (chat.ts, _applyBatch), so every earlier message arrives here as the same object as
+ * last time and is skipped — without this, each delta re-rendered the whole transcript.
+ */
+export const Message = memo(function Message({ message }: { message: ChatMessage }) {
   const t = useT();
   if (message.role === 'user') {
     const text = message.blocks.map((b) => (b.kind === 'tool_use' ? '' : b.text)).join('');
@@ -130,7 +136,9 @@ export function Message({ message }: { message: ChatMessage }) {
         if (block.kind === 'thinking') return <ThinkingBlock key={block.blockId} block={block} />;
         return (
           <div key={block.blockId} className="fade-up">
-            <Markdown text={block.text} />
+            <StreamingContext.Provider value={block.streaming}>
+              <Markdown text={block.text} />
+            </StreamingContext.Provider>
             {block.streaming && <span className="caret" />}
           </div>
         );
@@ -153,4 +161,4 @@ export function Message({ message }: { message: ChatMessage }) {
       {message.usage && !message.pending && <UsageFooter usage={message.usage} />}
     </div>
   );
-}
+});
