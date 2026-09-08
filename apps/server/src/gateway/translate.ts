@@ -8,10 +8,10 @@
  * The translation happens in the gateway and neither end knows: the CLI believes it is
  * talking to Anthropic, the local model believes it is talking to an OpenAI client.
  *
- * Covered: system, multi-turn messages, text blocks, tool definitions, tool_use,
+ * Covered: system, multi-turn messages, text blocks, images, tool definitions, tool_use,
  * tool_result, streaming deltas, usage.
- * Not covered: image input, thinking blocks, prompt cache control — none of which a local
- * model has a concept of anyway.
+ * Not covered: thinking blocks and prompt cache control, which the other side has no
+ * concept of.
  */
 
 /* ---------------- Types ---------------- */
@@ -25,6 +25,8 @@ interface AnthropicBlock {
   tool_use_id?: string;
   content?: unknown;
   is_error?: boolean;
+  /** `image` blocks: base64 data with its media type, or a URL the other end fetches */
+  source?: { type?: string; media_type?: string; data?: string; url?: string };
 }
 
 interface AnthropicMessage {
@@ -45,9 +47,14 @@ export interface AnthropicRequest {
   tool_choice?: { type?: string; name?: string };
 }
 
+/** OpenAI's multimodal message content: the array form, used only when there is an image */
+type ChatPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string | null;
+  content: string | ChatPart[] | null;
   tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
   tool_call_id?: string;
 }
@@ -69,6 +76,69 @@ const textOf = (content: unknown): string => {
     .join('\n');
 };
 
+/**
+ * An Anthropic image block as OpenAI addresses one.
+ *
+ * Base64 becomes a data URL, which is what every OpenAI-compatible endpoint that reads
+ * images accepts; a URL source is passed along as it stands. A block with neither is
+ * dropped rather than sent as `data:;base64,`, which some endpoints answer with a 400.
+ */
+function imagePart(source: AnthropicBlock['source']): ChatPart | null {
+  if (!source) return null;
+  if (source.type === 'url' && source.url) return { type: 'image_url', image_url: { url: source.url } };
+  if (source.data) {
+    const media = source.media_type || 'image/png';
+    return { type: 'image_url', image_url: { url: `data:${media};base64,${source.data}` } };
+  }
+  return null;
+}
+
+/**
+ * A message's content, in the form the other end needs.
+ *
+ * A string whenever there is no image, which is the shape a text-only endpoint such as
+ * Ollama's older API expects; the array form only when an image is actually present, so
+ * nothing changes for the conversations that do not carry one.
+ *
+ * Images used to fall out here: everything that was not text or a tool result was mapped
+ * to '' and filtered away, so a request with a screenshot in it reached the model as the
+ * words around the screenshot, with nothing to say the picture had gone.
+ */
+function contentOf(content: unknown): string | ChatPart[] {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+
+  const parts: ChatPart[] = [];
+  for (const b of content) {
+    const blk = b as AnthropicBlock;
+    if (blk.type === 'image') {
+      const part = imagePart(blk.source);
+      if (part) parts.push(part);
+    } else if (blk.type === 'text' && blk.text) {
+      parts.push({ type: 'text', text: blk.text });
+    } else if (blk.type === 'tool_result') {
+      const inner = contentOf(blk.content);
+      if (typeof inner === 'string') {
+        if (inner) parts.push({ type: 'text', text: inner });
+      } else {
+        parts.push(...inner);
+      }
+    }
+  }
+
+  if (!parts.some((p) => p.type === 'image_url')) {
+    return parts.map((p) => (p.type === 'text' ? p.text : '')).filter(Boolean).join('\n');
+  }
+  return parts;
+}
+
+/** Whatever is left once the images are taken out, for the places that can only hold text */
+function flatten(content: string | ChatPart[]): string {
+  return typeof content === 'string'
+    ? content
+    : content.map((p) => (p.type === 'text' ? p.text : '')).filter(Boolean).join('\n');
+}
+
 export function anthropicRequestToChat(body: AnthropicRequest, model: string): unknown {
   const messages: ChatMessage[] = [];
 
@@ -84,31 +154,38 @@ export function anthropicRequestToChat(body: AnthropicRequest, model: string): u
     }
 
     // A tool_result has to become its own role:'tool' message — that is how OpenAI
-    // expresses it
+    // expresses it. A tool role holds text only there, so an image a tool returned is
+    // lifted into a user message of its own rather than dropped.
     const toolResults = blocks.filter((b) => b.type === 'tool_result');
     for (const t of toolResults) {
+      const inner = contentOf(t.content);
       messages.push({
         role: 'tool',
         tool_call_id: t.tool_use_id ?? '',
-        content: textOf(t.content) || (t.is_error ? '(the tool failed)' : ''),
+        content: flatten(inner) || (t.is_error ? '(the tool failed)' : ''),
       });
+      const images = typeof inner === 'string' ? [] : inner.filter((p) => p.type === 'image_url');
+      if (images.length) messages.push({ role: 'user', content: images });
     }
 
     const toolUses = blocks.filter((b) => b.type === 'tool_use');
-    const text = textOf(blocks.filter((b) => b.type === 'text'));
+    const content = contentOf(blocks.filter((b) => b.type === 'text' || b.type === 'image'));
+    const hasContent = typeof content === 'string' ? content.length > 0 : content.length > 0;
 
     if (toolUses.length) {
       messages.push({
+        // An assistant turn cannot carry an image on this side; the tool calls are what
+        // matters in it, and the text beside them is kept
+        content: flatten(content) || null,
         role: 'assistant',
-        content: text || null,
         tool_calls: toolUses.map((t) => ({
           id: t.id ?? '',
           type: 'function' as const,
           function: { name: t.name ?? '', arguments: JSON.stringify(t.input ?? {}) },
         })),
       });
-    } else if (text || !toolResults.length) {
-      messages.push({ role: m.role, content: text });
+    } else if (hasContent || !toolResults.length) {
+      messages.push({ role: m.role, content });
     }
   }
 
@@ -369,7 +446,8 @@ export function chatResponseToAnthropic(text: string, model: string): string {
 interface ResponsesInputItem {
   type?: string;
   role?: string;
-  content?: { type?: string; text?: string }[];
+  /** `input_image` carries `image_url`, which is already a URL or a data URL */
+  content?: { type?: string; text?: string; image_url?: string }[];
   name?: string;
   arguments?: string;
   call_id?: string;
@@ -417,15 +495,19 @@ export function responsesRequestToChat(body: ResponsesRequest, model: string): u
       continue;
     }
 
-    const text = (item.content ?? [])
-      .map((c) => c.text ?? '')
-      .filter(Boolean)
-      .join('\n');
-    if (!text) continue;
+    const parts: ChatPart[] = [];
+    for (const c of item.content ?? []) {
+      if (c.image_url) parts.push({ type: 'image_url', image_url: { url: c.image_url } });
+      else if (c.text) parts.push({ type: 'text', text: c.text });
+    }
+    if (!parts.length) continue;
 
     // The developer role is specific to Responses; on the chat side it becomes system
     const role = item.role === 'assistant' ? 'assistant' : item.role === 'developer' ? 'system' : 'user';
-    messages.push({ role, content: text });
+    // A system turn holds text only, and the array form is reserved for the images that
+    // need it, so a text-only endpoint sees exactly what it saw before
+    const images = parts.some((p) => p.type === 'image_url');
+    messages.push({ role, content: images && role !== 'system' ? parts : flatten(parts) });
   }
 
   return {
