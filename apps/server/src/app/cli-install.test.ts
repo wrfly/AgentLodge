@@ -51,7 +51,7 @@ function sandbox(rcContents: string): { home: string; bin: string; rc: string; r
   // Echoes back the variables the wrapper is supposed to set, and the two it must clear
   fs.writeFileSync(
     path.join(bin, 'claude'),
-    '#!/bin/sh\necho "CFG=$CLAUDE_CONFIG_DIR"\necho "BASE=$ANTHROPIC_BASE_URL"\necho "KEYVAR=${ANTHROPIC_API_KEY-unset}/${ANTHROPIC_AUTH_TOKEN-unset}"\necho "FABLE=${ANTHROPIC_DEFAULT_FABLE_MODEL-unset}"\necho "ARGS=$*"\n',
+    '#!/bin/sh\necho "CFG=$CLAUDE_CONFIG_DIR"\necho "BASE=$ANTHROPIC_BASE_URL"\necho "KEYVAR=${ANTHROPIC_API_KEY-unset}/${ANTHROPIC_AUTH_TOKEN-unset}"\necho "FABLE=${ANTHROPIC_DEFAULT_FABLE_MODEL-unset}"\necho "DISCOVERY=${CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY-unset}"\necho "ARGS=$*"\n',
     { mode: 0o755 },
   );
   const rc = path.join(home, '.bashrc');
@@ -245,8 +245,18 @@ console.log('\n=== The wrapper sets the session up and steps aside ===');
     out.includes('KEYVAR=unset/unset'),
     out,
   );
+  /*
+   * Setting ours here instead is what would fill /model from the gateway, and it costs the
+   * /usage panel: the session becomes API-billed and the plan bar gives way to this
+   * session's token counts. The full model id works either way, so the panel wins.
+   */
   ok(
-    'Fable is named outright — /model hides it behind a base-url check the gateway cannot pass',
+    'and ours is not put back — that trade is documented, not made by accident',
+    out.includes('DISCOVERY=unset'),
+    out,
+  );
+  ok(
+    'the fable alias resolves to a real name',
     out.includes('FABLE=claude-fable-5-1'),
     out,
   );

@@ -456,21 +456,33 @@ codex -c model_provider=agentlodge \
 
 `Authorization: Bearer` 和 `x-api-key` 两种头都认。
 
-### `/model` 里为什么原本没有 Fable
+### `/model` 里为什么只有内置那几项
 
-Claude Code 只在 base URL 恰好是 `api.anthropic.com` 时才把 Fable 摆进 `/model`——指向网关
-它连「这个账号有没有」都不问，直接不显示。同一个判断也压掉了 CLI 自己那次探测请求，所以从
-界面上看不出被拦在哪。
+菜单是客户端自己的一张表：Default / Opus / Sonnet / Sonnet 1M / Haiku。部署里配了什么模型，
+它不知道，也不会去问——除非同时给它两样东西：
 
-包装脚本因此多导一个 `ANTHROPIC_DEFAULT_FABLE_MODEL='claude-fable-5-1'`：点名型号就绕过那个
-检查，用的还是选择器本来会用的那个 id。装过一次的用户重跑一遍安装命令即可。
+```sh
+export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
+export ANTHROPIC_AUTH_TOKEN="$(cat ~/.agentlodge/key)"
+```
 
-**被卡住的只有「列出来」和别名。** 写全的型号 id 一直是通的——
-`claude --model claude-fable-5-1` 不带这个变量也能跑（实测过）。所以后台模型表里填
-`claude-fable-5-1` 就够了，网页对话和 agent 容器都不需要额外配环境变量；填**别名 `fable`**
-才要，跟 `opus`/`sonnet` 在第三方端点上要 `ANTHROPIC_DEFAULT_*_MODEL` 是同一件事。
+那样它会向网关要 `/v1/models?limit=1000`，把 id 里含 `claude` 或 `anthropic` 的
+（`/(claude|anthropic)/i`）放进菜单的「From gateway」一组，缓存在
+`~/.agentlodge/claude/cache/gateway-models.json`。
 
-要 1M 上下文得显式选 `fable[1m]`，默认那档是 200k。
+**包装脚本不这么做，因为代价是 `/usage`。** 第二个变量一设，会话就从订阅变成 API 计费：
+标题从 `Claude Max` 变成 `API Usage Billing`，`/usage` 不再显示套餐用量条和重置时间，只剩下
+本次会话的 token 计数。状态栏那两个百分比还在（它读的是响应头），但换不回那个面板。
+
+**要用某个模型，写全名就行**，跟菜单没关系：
+
+```sh
+claude --model claude-fable-5-1        # 启动时
+/model claude-fable-5-1                # 会话里，直接打，不从菜单选
+```
+
+别名 `fable` 也能用，包装脚本导了 `ANTHROPIC_DEFAULT_FABLE_MODEL`。要 1M 上下文得显式选
+`fable[1m]`，默认那档是 200k。
 
 ### 凭据为什么放在配置目录里
 

@@ -11,6 +11,18 @@
  * send are honoured. Nothing rides in a URL either, so the key stays out of shell history
  * and screenshots.
  *
+ * **Why the key is not also exported as ANTHROPIC_AUTH_TOKEN.** That is the one thing that
+ * would put this deployment's models in `/model`: with it set, and with
+ * CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY, the CLI asks the gateway for
+ * `/v1/models?limit=1000` and offers what comes back — measured on 2.1.263, all eleven
+ * names cached in `cache/gateway-models.json`. It also turns the session into an API-billed
+ * one: `auth status` drops to `authMethod: "oauth_token"` with no subscriptionType, the
+ * header reads `API Usage Billing` instead of `Claude Max`, and `/usage` stops showing the
+ * plan — the bar and the reset date give way to this session's token counts. The status
+ * line survives it (`rate_limits` still arrives), the model menu is not worth the panel,
+ * and a model can always be named in full: `--model claude-fable-5-1`, or
+ * `/model claude-fable-5-1` mid-session.
+ *
  * **What that costs: the `/usage` panel shows an error.** Being a subscription session is
  * what makes the allowance headers count, and it is also what makes the panel try. Measured
  * on 2.1.250, with HTTPS_PROXY logging CONNECT: opening `/usage` reaches for
@@ -200,13 +212,13 @@ printf '{"claudeAiOauth":{"accessToken":"%s","refreshToken":"","expiresAt":%s,"s
   "\\$(cat "\\$ROOT/key")" "\\$(( \\$(date +%s) * 1000 + ${VALID_MS} ))" > "\\$TMP"
 mv "\\$TMP" "\\$ROOT/claude/.credentials.json"
 # A key exported in the environment outranks the credential file and would send the session
-# straight upstream instead of here, with no quota and no accounting.
+# straight upstream instead of here, with no quota and no accounting. Ours is not put back
+# in either: see the note about /usage above.
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 export CLAUDE_CONFIG_DIR="\\$ROOT/claude"
 export ANTHROPIC_BASE_URL='\$BASE_URL'
-# Claude Code only offers Fable in /model when the base URL is api.anthropic.com — pointed at
-# a gateway it hides the model rather than ask whether the account has it. Naming the model
-# outright skips that check; it is the same id the picker would have used.
+# The fable alias, so --model fable resolves to a name this deployment actually serves. The
+# full id works without it, in this session and in any other.
 export ANTHROPIC_DEFAULT_FABLE_MODEL='claude-fable-5-1'
 exec '\$REAL' "\\$@"
 WRAPPER
