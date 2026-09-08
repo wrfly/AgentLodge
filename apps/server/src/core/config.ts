@@ -145,6 +145,22 @@ export const config = {
   /** How many slots one user may hold at once, so nobody monopolises them */
   perUserInflightMax: Number(process.env.PER_USER_INFLIGHT_MAX ?? 2),
 
+  /**
+   * How long the upstream may take to start answering, and how long a stream may then go
+   * quiet. Without either, an upstream that accepted the connection and never answered
+   * held its slot and the CLI until the CLI's own ten-minute limit gave up.
+   */
+  upstreamHeadersTimeoutMs: Number(process.env.UPSTREAM_HEADERS_TIMEOUT_MS ?? 90_000),
+  upstreamIdleTimeoutMs: Number(process.env.UPSTREAM_IDLE_TIMEOUT_MS ?? 180_000),
+
+  /**
+   * How long the platform-wide total behind a pool share is reused. It is one scan over
+   * every user's rows in the window, asked for on every response to a user with no ceiling
+   * of their own; a few seconds of staleness in a denominator nobody sees costs nothing.
+   * 0 disables it.
+   */
+  poolShareCacheMs: Number(process.env.POOL_SHARE_CACHE_MS ?? 5_000),
+
   /** How long a runtime token lives — slightly longer than one turn's timeout */
   runtimeTokenTtlMs: Number(process.env.RUNTIME_TOKEN_TTL_MS ?? 20 * 60 * 1000),
 
@@ -174,6 +190,8 @@ export const config = {
 
   /** Record per-user upstream request traces, so a user can see what they sent. Off writes nothing at all. */
   traceRequests: process.env.TRACE_REQUESTS !== 'false',
+  /** Days the console's audit log is kept; 0 keeps it forever */
+  auditLogRetentionDays: Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 365),
   podmanBin: process.env.PODMAN_BIN ?? 'podman',
   agentImage: process.env.AGENT_IMAGE ?? 'agentlodge/agent:1.0',
   /** Name of the internal network. Empty uses the default network, which is not advisable: containers can reach the internet. */

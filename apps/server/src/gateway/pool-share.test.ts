@@ -19,6 +19,8 @@ process.env.TZ = 'UTC';
 const box = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-pool-share-')));
 process.env.DATA_DIR = box;
 process.env.JWT_SECRET = 'test-only-not-a-real-secret';
+// The test inserts rows and expects the next share to see them
+process.env.POOL_SHARE_CACHE_MS = '0';
 
 const { initDb, run } = await import('../core/db/index.js');
 initDb();

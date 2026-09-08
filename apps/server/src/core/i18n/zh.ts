@@ -66,6 +66,7 @@ export const zh: Record<string, string> = {
   'Timed out waiting in the queue; try again': '排队超时，请重试',
   'The audit proxy is unreachable ({url}); the request was not sent': '审计代理不可达（{url}），请求未发出',
   'The upstream request failed': '上游请求失败',
+  'The upstream did not answer in time; try again': '上游没有及时响应，请重试',
   'The password has to be at least 8 characters': '密码至少 8 位',
   'That password is too long': '密码过长',
   'The password cannot be all digits': '密码不能全是数字',

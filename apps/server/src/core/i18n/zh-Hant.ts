@@ -70,6 +70,7 @@ export const zhHant: Record<string, string> = {
   'Timed out waiting in the queue; try again': '排隊逾時，請重試',
   'The audit proxy is unreachable ({url}); the request was not sent': '連不上稽核代理（{url}），請求未送出',
   'The upstream request failed': '上游請求失敗',
+  'The upstream did not answer in time; try again': '上游沒有及時回應，請重試',
   'The password has to be at least 8 characters': '密碼至少 8 個字元',
   'That password is too long': '密碼太長',
   'The password cannot be all digits': '密碼不能全是數字',
