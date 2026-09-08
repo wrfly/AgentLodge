@@ -30,7 +30,10 @@ fs.writeFileSync(
     'printf "%s\\n" "$*" >> "$PODMAN_LOG"',
     'case "$1" in',
     // exists(): no status configured means "absent", which is a non-zero inspect
-    '  inspect) [ -n "$FAKE_STATUS" ] || exit 1; echo "$FAKE_STATUS"; exit 0 ;;',
+    // An engine error is any other failure; a missing container is the message the real
+    // engines print for one
+    '  inspect) [ -z "$FAKE_ENGINE_ERR" ] || { echo "$FAKE_ENGINE_ERR" >&2; exit 125; }; [ -n "$FAKE_STATUS" ] || { echo "Error: no container with name or ID found: no such container" >&2; exit 125; }; echo "$FAKE_STATUS"; exit 0 ;;',
+    '  ps) printf "%s\\n" "$FAKE_PS"; exit 0 ;;',
     '  start) [ -z "$FAKE_START_ERR" ] || { echo "$FAKE_START_ERR" >&2; exit 125; }; exit 0 ;;',
     '  *) exit 0 ;;',
     'esac',
@@ -41,6 +44,8 @@ fs.writeFileSync(
 process.env.PODMAN_LOG = log;
 process.env.PODMAN_BIN = fake;
 process.env.AGENT_NETWORK = 'agentlodge-agent-net';
+// reconcile() is a no-op with isolation off, which is the default
+process.env.USE_CONTAINERS = 'true';
 process.env.DATA_DIR = box;
 process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 
@@ -118,6 +123,59 @@ console.log('\n=== Any other start failure is reported, not papered over ===');
   ok('ensure fails', threw);
   ok('the container is kept', !calls.some((c) => c.startsWith('rm ')), JSON.stringify(calls));
   ok('and nothing is rebuilt', !calls.some((c) => c.startsWith('run ')), JSON.stringify(calls));
+}
+
+console.log('\n=== An engine that cannot be reached is not "no such container" ===');
+{
+  process.env.FAKE_STATUS = '';
+  process.env.FAKE_ENGINE_ERR = 'Cannot connect to Podman. Please verify your connection to the Linux system';
+  let threw = false;
+  try {
+    await containers.ensure('user-noengine');
+  } catch {
+    threw = true;
+  }
+  const calls = argv();
+  ok('ensure fails', threw);
+  ok(
+    'and nothing is created over a container that may well exist',
+    !calls.some((c) => c.startsWith('run ')),
+    JSON.stringify(calls),
+  );
+  process.env.FAKE_ENGINE_ERR = '';
+}
+
+console.log('\n=== Ending a turn reaches inside the container ===');
+{
+  const script = containers.signalScript('abc-123', 'INT');
+  ok('the marker is matched whole', script.includes("'AGENTLODGE_TURN=abc-123'"), script);
+  ok('with the signal asked for', script.includes('kill -INT'), script);
+  const all = containers.signalScript(null, 'KILL');
+  ok('a prefix ends every turn there is', all.includes("'^AGENTLODGE_TURN='") && all.includes('kill -KILL'), all);
+
+  await containers.signalTurn('agentlodge-agent-x', 'abc-123', 'SIGKILL');
+  const calls = argv();
+  ok(
+    'delivered with exec, as a shell script',
+    calls.some((c) => c.startsWith('exec agentlodge-agent-x sh -c ')),
+    JSON.stringify(calls),
+  );
+}
+
+console.log('\n=== After a restart, what the engine still has is picked up ===');
+{
+  const { initDb } = await import('../core/db/index.js');
+  const users = await import('../core/db/users.js');
+  initDb();
+  const u = users.create({ email: 'restart@example.com', username: 'restart', passwordHash: 'x', role: 'user' });
+  const mine = `agentlodge-agent-${u.id.slice(0, 12)}`;
+  process.env.FAKE_PS = `${mine} running\nagentlodge-agent-000000000000 running\n`;
+  const found = await containers.reconcile();
+  const calls = argv();
+  ok('a running container of a known user is tracked again', containers.list().some((c) => c.name === mine), JSON.stringify(containers.list()));
+  ok('and counted', found.running === 1, JSON.stringify(found));
+  ok('any turn still running in it is ended', calls.some((c) => c.startsWith(`exec ${mine} sh -c `)), JSON.stringify(calls));
+  ok('a container nobody owns is left alone', !calls.some((c) => c.includes('agentlodge-agent-000000000000')), JSON.stringify(calls));
 }
 
 fs.rmSync(box, { recursive: true, force: true });

@@ -6,7 +6,7 @@ import { config } from '../../core/config.js';
 import type { MessageBlock, ToolBlock, TurnUsage } from '../../core/protocol.js';
 import { probeBin } from './probe.js';
 import { codexProviderArgs } from './provider.js';
-import { launch } from './launch.js';
+import { launch, terminate } from './launch.js';
 import * as models from '../../core/db/models.js';
 import type {
   AgentAdapter,
@@ -286,10 +286,10 @@ function runTurn(o: RunOptions): RunningTurn {
 
   function kill() {
     if (child.exitCode !== null || child.signalCode !== null) return;
-    child.kill('SIGINT');
-    setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-    }, 3000).unref();
+    terminate(child, 'SIGINT');
+    // The escalation is aimed at the CLI, not at the child: in container mode the child is
+    // the exec client and is gone at once, while the CLI inside may still be mid tool call
+    setTimeout(() => terminate(child, 'SIGKILL'), 3000).unref();
   }
 
   const done = new Promise<TurnResult>((resolve) => {
