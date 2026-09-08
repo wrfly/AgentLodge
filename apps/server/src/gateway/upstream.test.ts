@@ -366,6 +366,33 @@ console.log('\n=== The caller\'s machine does not travel ===');
   ok('and no user agent is invented', k['user-agent'] === undefined, String(k['user-agent']));
 }
 
+console.log('\n=== Claude Code\'s own headers stay on the wire that knows them ===');
+{
+  const fromCli = {
+    'x-app': 'cli',
+    'x-claude-code-session-id': 'sess-abc',
+    'anthropic-beta': 'context-management-2025-06-27',
+  };
+
+  // An upstream on this wire serves Claude Code and knows what these mean
+  const messages = outboundHeaders(fromCli, 'anthropic', API_KEY, 'conv-1');
+  ok('the Anthropic wire still gets them', messages['x-app'] === 'cli' && messages['x-claude-code-session-id'] === 'sess-abc');
+  // The protocol version and the beta list are the upstream's business, not ours: a
+  // compatibility layer reads the version, and the guide for gateways is explicit that
+  // stripping the beta header while forwarding the body fields it pairs with produces a
+  // hard 400 rather than quietly turning the feature off
+  ok('with the protocol version', messages['anthropic-version'] === '2023-06-01');
+  ok('and its betas forwarded verbatim', (messages['anthropic-beta'] ?? '').includes('context-management-2025-06-27'));
+
+  for (const wire of ['chat', 'responses'] as const) {
+    const h = outboundHeaders(fromCli, wire, API_KEY, 'conv-1');
+    ok(`${wire}: no x-app — an OpenAI-shaped endpoint has no use for it`, h['x-app'] === undefined, JSON.stringify(h));
+    ok(`${wire}: no session id to group one person's turns by`, h['x-claude-code-session-id'] === undefined, JSON.stringify(h));
+    ok(`${wire}: and none of the Anthropic protocol headers`, h['anthropic-version'] === undefined && h['anthropic-beta'] === undefined, JSON.stringify(h));
+    ok(`${wire}: the credential and the content type still go`, h.authorization === `Bearer ${API_KEY}` && h['content-type'] === 'application/json');
+  }
+}
+
 console.log('\n=== metadata.user_id names the person, not the machine ===');
 {
   /*

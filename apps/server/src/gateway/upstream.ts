@@ -356,6 +356,12 @@ export function mergeBeta(fromClient: string | string[] | undefined, extra?: str
  * `x-claude-code-session-id` is a uuid the upstream uses to group one session's requests
  * without reading bodies. Neither says anything about the machine that sent it.
  *
+ * **And both travel on the Anthropic wire only.** They are Claude Code's own convention:
+ * an upstream reached on that wire is one that serves Claude Code and already knows what
+ * they mean, while an OpenAI-compatible endpoint, a local model or a Responses upstream
+ * has no use for either. Sending them there told a third party that this is Claude Code
+ * traffic and handed it a key to group one person's turns, in exchange for nothing.
+ *
  * **The caller's description of its own machine does not travel.** `user-agent` and the
  * `x-stainless-*` set carry the operating system, CPU architecture and Node version of
  * wherever the request came from, and on the bring-your-own-CLI path that is somebody's
@@ -651,7 +657,7 @@ export function outboundHeaders(
   // collision — otherwise a container sending an authorization could displace the upstream
   // credential
   const h: Record<string, string> = {
-    ...passthrough(reqHeaders),
+    ...(wire === 'anthropic' ? passthrough(reqHeaders) : {}),
     authorization: `Bearer ${apiKey}`,
     'content-type': 'application/json',
     accept: (typeof accept === 'string' ? accept : undefined) ?? 'application/json',
