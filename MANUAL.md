@@ -1437,4 +1437,5 @@ app 和内网：那两个不在这张网上，所以 agent 的可达范围跟任
   —— turn 结束时 app 侧还会统一推一次，所以只是少了实时性。真修法是把总线换成
   跨进程实现（同 M5 Redis 那件事）
 - 长会话没有虚拟滚动
+- 翻译到 OpenAI 协议时，thinking 块和 prompt cache 标记不带过去（图片带）
 - `protocol.ts` 在 server 和 web 各有一份副本，改动要同步两处 —— `npm run typecheck` 会逐字比对这两份，漂了就报错

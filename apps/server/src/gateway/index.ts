@@ -29,7 +29,9 @@ import {
   outboundHeaders,
   resolveUpstream,
   speaksAdaptiveThinking,
+  endUserId,
   withBillingSystem,
+  withEndUser,
   withThinking,
   type Resolved,
 } from './upstream.js';
@@ -414,6 +416,12 @@ async function handleProxy(
      */
     const cli = asCli ? cliVersion.observe(outbound) : undefined;
     /*
+     * Whose request this is, in the field the API keeps for it. After observe(), which
+     * reads what the client actually sent, and after any translation, so the body being
+     * attributed is the one going out.
+     */
+    const attributed = withEndUser(outbound, target.wire, endUserId(claims.sub));
+    /*
      * The headers have to arrive within a bound. The only abort until now was the client
      * going away, so an upstream that accepted the connection and never answered held its
      * slot and the CLI until the CLI's own ten-minute limit. The timer covers the headers
@@ -431,7 +439,7 @@ async function handleProxy(
           ...outboundHeaders(req.headers, target.wire, target.apiKey, claims.cid, cli),
           ...egress.headers,
         },
-        body: JSON.stringify(asCli ? withBillingSystem(outbound, cli) : outbound),
+        body: JSON.stringify(asCli ? withBillingSystem(attributed, cli) : attributed),
         signal: ac.signal,
       });
     } finally {

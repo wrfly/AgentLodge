@@ -14,11 +14,13 @@ import {
   betaUrl,
   billingLine,
   cliUserAgent,
+  endUserId,
   isOAuthToken,
   mergeBeta,
   outboundHeaders,
   speaksAdaptiveThinking,
   withBillingSystem,
+  withEndUser,
   withThinking,
 } from './upstream.js';
 
@@ -85,7 +87,7 @@ ok('mergeBeta drops empty segments', mergeBeta('a,,b , ') === 'a,b', String(merg
 ok('mergeBeta returns undefined when everything is empty', mergeBeta('') === undefined);
 ok('mergeBeta de-duplicates', mergeBeta('a,b', 'a') === 'a,b', String(mergeBeta('a,b', 'a')));
 
-console.log('\n=== Identity headers pass through ===');
+console.log('\n=== Only the opaque identity headers pass through ===');
 {
   const h = outboundHeaders(
     {
@@ -98,10 +100,14 @@ console.log('\n=== Identity headers pass through ===');
     'anthropic',
     API_KEY,
   );
-  ok('user-agent passes through', h['user-agent'] === 'claude-cli/2.1.238 (external, cli)');
   ok('x-app passes through', h['x-app'] === 'cli');
-  ok('x-claude-code-session-id passes through', h['x-claude-code-session-id'] === 'sess-123');
-  ok('the whole x-stainless-* family passes through', h['x-stainless-arch'] === 'x64' && h['x-stainless-runtime-version'] === 'v26.3.0');
+  ok('x-claude-code-session-id passes through — a uuid says nothing about a machine', h['x-claude-code-session-id'] === 'sess-123');
+  // These two describe the machine the request came from, which on the bring-your-own-CLI
+  // path is somebody's laptop. They used to travel; the person is named in
+  // metadata.user_id instead.
+  ok('the architecture does not', h['x-stainless-arch'] === undefined, String(h['x-stainless-arch']));
+  ok('nor the runtime version', h['x-stainless-runtime-version'] === undefined, String(h['x-stainless-runtime-version']));
+  ok('nor the user agent', h['user-agent'] === undefined, String(h['user-agent']));
 }
 
 console.log('\n=== What the caller did not say about itself ===');
@@ -121,7 +127,8 @@ console.log('\n=== What the caller did not say about itself ===');
     OAUTH,
     'a-conversation-id',
   );
-  ok('a client that describes itself keeps its own words', own['user-agent'] === 'my-own-client/1.0' && own['x-app'] === 'something');
+  ok('a client naming itself no longer displaces the deployment\'s identity', own['user-agent'] === cliUserAgent(CLI_VERSION), own['user-agent']);
+  ok('though x-app, being a constant, is left as sent', own['x-app'] === 'something');
   ok('including its session', own['x-claude-code-session-id'] === 'sess-9');
 
   const chat = outboundHeaders({}, 'chat', OAUTH, 'a-conversation-id');
@@ -141,13 +148,12 @@ console.log('\n=== A subscription request is sent as Claude Code ===');
   ok('an api key gets no claude-code beta — the endpoint may not be Anthropic', key['anthropic-beta'] === undefined, String(key['anthropic-beta']));
 
   const own = outboundHeaders({ 'x-stainless-lang': 'python', 'anthropic-beta': 'mine-2026-01-01' }, 'anthropic', OAUTH);
-  ok('an sdk that names itself is left alone', own['x-stainless-lang'] === 'python');
-  // And nothing of ours is mixed in with it. Filling the rest of the family from this
-  // host would put a Node runtime version next to lang=python — a client that does not
-  // exist, which is worse than either identity on its own.
+  // The set is written whole, so there is no half-and-half to produce: a python lang beside
+  // this host's Node version would be a client that does not exist.
+  ok('an sdk naming itself does not get a say', own['x-stainless-lang'] === 'js', String(own['x-stainless-lang']));
   ok(
-    'and the rest of the family is not filled in around it',
-    own['x-stainless-runtime'] === undefined && own['x-stainless-os'] === undefined,
+    'and the family is this deployment\'s throughout',
+    own['x-stainless-runtime'] === 'node' && own['x-stainless-runtime-version'] === process.version,
     JSON.stringify(own),
   );
   ok('and its betas are merged, not replaced', (own['anthropic-beta'] ?? '').split(',').includes('mine-2026-01-01'), own['anthropic-beta']);
@@ -166,7 +172,7 @@ console.log('\n=== Only a subscription is dressed as the CLI ===');
   const runtime = outboundHeaders({ 'user-agent': 'node' }, 'anthropic', OAUTH, 'a-conversation-id');
   ok('a runtime is not a client — node fetch fills that slot itself', runtime['user-agent'] === `claude-cli/${CLI_VERSION} (external, sdk-cli)`, runtime['user-agent']);
   const named = outboundHeaders({ 'user-agent': 'my-own-client/1.0' }, 'anthropic', OAUTH, 'a-conversation-id');
-  ok('a client that named itself keeps its name', named['user-agent'] === 'my-own-client/1.0');
+  ok('and so does a client that named itself', named['user-agent'] === `claude-cli/${CLI_VERSION} (external, sdk-cli)`, named['user-agent']);
 
   const sub = outboundHeaders({}, 'anthropic', OAUTH, 'a-conversation-id');
   ok('a subscription gets the whole identity', sub['user-agent']?.startsWith('claude-cli/') === true && sub['x-app'] === 'cli' && sub['x-stainless-lang'] === 'js');
@@ -327,6 +333,72 @@ console.log('\n=== The thinking directive is translated, not invented ===');
   ok('no max_tokens at all still produces a valid budget', dflt.thinking.budget_tokens === 8192);
 
   ok('a non-object body is returned as it is', withThinking(null, true, false) === null);
+}
+
+console.log('\n=== The caller\'s machine does not travel ===');
+{
+  // What a real Claude Code on somebody's own laptop says about itself
+  const fromLaptop = {
+    'user-agent': 'claude-cli/2.1.263 (external, cli)',
+    'x-app': 'cli',
+    'x-claude-code-session-id': 'sess-abc',
+    'x-stainless-os': 'MacOS',
+    'x-stainless-arch': 'arm64',
+    'x-stainless-runtime-version': 'v24.1.0',
+    'x-stainless-lang': 'python',
+  };
+  const h = outboundHeaders(fromLaptop, 'anthropic', 'sk-ant-oat-x', 'conv-1', '2.1.263');
+
+  ok('their Node version stays home', h['x-stainless-runtime-version'] === process.version, String(h['x-stainless-runtime-version']));
+  ok('and the language they claimed does not survive', h['x-stainless-lang'] === 'js', String(h['x-stainless-lang']));
+  ok(
+    'the user agent is the deployment\'s own, at the version asked for',
+    h['user-agent'] === cliUserAgent('2.1.263'),
+    String(h['user-agent']),
+  );
+  ok('the session id, being opaque, still goes through', h['x-claude-code-session-id'] === 'sess-abc');
+  ok('and so does x-app', h['x-app'] === 'cli');
+
+  // An API key is billed to whoever sends it and nothing upstream asks who that is, so no
+  // identity is invented there — but the caller's machine must not leak either
+  const k = outboundHeaders(fromLaptop, 'anthropic', 'sk-ant-api-x');
+  ok('on an API key nothing describes the caller\'s machine', k['x-stainless-os'] === undefined && k['x-stainless-arch'] === undefined, JSON.stringify(k));
+  ok('and no user agent is invented', k['user-agent'] === undefined, String(k['user-agent']));
+}
+
+console.log('\n=== metadata.user_id names the person, not the machine ===');
+{
+  /*
+   * The shape a real Claude Code sends, from a capture in trace-proxy: a fingerprint of the
+   * machine and the caller's own account uuid, as a JSON string.
+   */
+  const body = {
+    model: 'claude-x',
+    metadata: {
+      user_id: JSON.stringify({ device_id: '094aec26', account_uuid: 'd5ebd251', session_id: '53dca3aa' }),
+    },
+  };
+  const out = withEndUser(body, 'anthropic', endUserId('user-1'));
+
+  ok('the device fingerprint is gone', !out.metadata.user_id.includes('094aec26'), out.metadata.user_id);
+  ok('so is the account uuid', !out.metadata.user_id.includes('d5ebd251'), out.metadata.user_id);
+  ok('what is left is opaque, and far inside the 512 the API allows', /^[0-9a-f]{64}$/.test(out.metadata.user_id));
+  ok('one person gets one value, every time', endUserId('user-1') === endUserId('user-1'));
+  ok('two people never share one', endUserId('user-1') !== endUserId('user-2'));
+  ok('and our own id cannot be read back out of it', !endUserId('user-1').includes('user-1'));
+
+  // The generic returns what it was given, so the added key needs a type to be read back
+  type WithMeta = { metadata: Record<string, unknown> };
+  const added = withEndUser<WithMeta>({ model: 'm' } as unknown as WithMeta, 'anthropic', 'abc');
+  ok('a body that carried no metadata gets one', added.metadata.user_id === 'abc');
+  const kept = withEndUser<WithMeta>({ metadata: { other: 1 } }, 'anthropic', 'abc');
+  ok('anything else in metadata is kept', kept.metadata.other === 1);
+
+  // Dropping the machine headers is what closes this on the other wires; a body bound for a
+  // third party is not the place to add a field it never received
+  const chat = withEndUser({ model: 'm' }, 'chat', 'abc');
+  ok('the OpenAI wires are left as they are', !('metadata' in chat), JSON.stringify(chat));
+  ok('and a body that is not an object survives', withEndUser(null, 'anthropic', 'abc') === null);
 }
 
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);

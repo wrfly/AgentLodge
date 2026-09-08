@@ -1522,6 +1522,15 @@ POST   /api/admin/credentials/login/finish  { loginId, code }
 
 ## 12. 部署
 
+> **出站身份**：网关对上游只呈现一个客户端。调用方自报的 `user-agent` 和 `x-stainless-*`
+> 不转发——那几个头里是他机器的操作系统、架构和 Node 版本，自带 CLI 的用户就是他自己的笔记本，
+> 转发等于把一排个人机器画像记在部署方的凭据下。发出去的是本进程的真实运行时和从真实客户端
+> 观察到的 CLI 版本。区分人靠 `metadata.user_id`，官方文档说这个字段就是"与请求关联的最终用户，
+> 用 uuid 或哈希，别放姓名邮箱"，上限 512 字符。真实 Claude Code 本来就在这个字段里塞一串 JSON
+> （实测：`device_id` + `account_uuid` + `session_id`），所以这是覆盖而不是新增，没有兼容性风险。
+> 覆盖成 `sha256(JWT_SECRET : userId)`：同一个人每次一样，两个部署之间不一样，从值里也读不回内部 id。
+
+
 ### 12.1 目录布局
 
 npm workspaces，没有 Turborepo：
@@ -1586,6 +1595,7 @@ agent-net  agent 容器 ↔ gateway
 | 挖矿/资源滥用 | CPU/内存/PID 限额（`containers.ts`）。没有告警，靠宿主机监控或 `podman stats` |
 | 磁盘打满 | 没有每用户配额，也没有 du 检查。工作目录随对话删除；每用户 trace 保留 50 条；审计代理按天/条数/GB 保留；app/gateway 的容器日志按 20MB×5 轮转 |
 | 越权访问他人会话 | 所有查询强制 `where user_id = :me`；用 UUID 而非自增 ID |
+| 把用户的机器信息交给上游 | 出站不带调用方的 `user-agent` 和 `x-stainless-*`（里面是他的操作系统、CPU、Node 版本），整个部署对外是同一个客户端身份；`metadata.user_id` 覆盖成按用户加盐的哈希，替掉 Claude Code 原本放在那里的设备指纹和账号 UUID |
 | 暴力破解 | 登录接口 IP + 账号双维度限流；失败 5 次锁定 15 分钟 |
 | SSE ticket 泄漏 | 60s 有效、一次性、绑定 user（不绑 IP）。网页端实际用 fetch 带 Authorization 连 SSE，ticket 只给 `<a download>` 这类带不了头的入口 |
 | 提示注入导致数据外泄 | 容器里只有本人的工作目录和本轮票据，能带走的只有他自己的东西；不是靠没有外网 |
