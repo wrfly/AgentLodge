@@ -185,5 +185,39 @@ console.log('\n=== A backoff still lifts when the ceiling came down to meet it =
   );
 }
 
+console.log('\n=== A capped user does not hold the lane for everybody behind them ===');
+{
+  // Three slots, two per user. A holds two and C one; A3 and B1 wait, in that order.
+  const pool = new GatePool({ ...cfg, maxConcurrency: 3, perUserInflightMax: 2 });
+  const g = pool.for('provider-a');
+  const at = (u: string, t: string) => g.acquire({ userId: u, turnId: t, priority: 0 });
+  const a1 = await at('A', 'a1');
+  const a2 = await at('A', 'a2');
+  const c1 = await at('C', 'c1');
+  let b1Granted = false;
+  const a3p = at('A', 'a3');
+  const b1p = at('B', 'b1').then((l) => {
+    b1Granted = true;
+    return l;
+  });
+  await new Promise((r) => setTimeout(r, 5));
+  ok('both wait while the gate is full', g.stats().queued === 2, JSON.stringify(g.stats()));
+
+  // C leaves. A is at its cap, so the freed slot is B's — the old lane pushed A3 to the
+  // back, stopped, and left the slot idle until one of A's own requests finished.
+  c1.release();
+  await new Promise((r) => setTimeout(r, 5));
+  ok('the freed slot goes to the user under their cap', b1Granted, JSON.stringify(g.stats()));
+  ok('and is not left idle', g.stats().active === 3, String(g.stats().active));
+
+  a1.release();
+  const a3 = await a3p;
+  ok('the capped user follows once one of theirs is done', g.stats().active === 3, String(g.stats().active));
+  const b1 = await b1p;
+  a2.release();
+  b1.release();
+  a3.release();
+}
+
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
