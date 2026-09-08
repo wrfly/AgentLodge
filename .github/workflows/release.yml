@@ -37,6 +37,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # The credential manager is Go, and `npm test` runs its suite when a toolchain is
+      # there — and skips it, loudly but green, when one is not. The runner has some Go of
+      # its own; this pins the one go.mod names rather than hoping it is new enough.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: credential-manager/go.mod
+          cache: false
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

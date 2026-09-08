@@ -33,6 +33,11 @@
 # and exits rather than proceed.
 x-data-dir: &data-dir ${DATA_DIR:?must be an absolute path on the host, e.g. /srv/agentlodge/data}
 
+# The one corner of it the credential manager may read. It used to be handed the whole
+# directory read-only — the database and every workspace along with the key files it was
+# after — and a process holding refresh tokens has no business seeing either.
+x-secrets-dir: &secrets-dir ${DATA_DIR:?must be an absolute path on the host, e.g. /srv/agentlodge/data}/secrets
+
 # The audit proxy's address. **app and gateway must agree on it** — the rule lives in
 # core/egress.ts and is used by both layers: app validates an upstream change made in the
 # console, and the gateway enforces it before a request goes out. Configure only one side and
@@ -115,7 +120,19 @@ services:
     # everything on the host is fine.
     # Not `:z` — that **relabels the host's socket**, which can turn round and affect the
     # host's own podman.
-    security_opt: ["label=disable"]
+    security_opt: ["label=disable", "no-new-privileges:true"]
+    # Nothing in here needs a capability: the socket is reached through its group and the
+    # files it writes are its own. The memory limit is a ceiling on a fault, not a budget,
+    # and the log cap is what keeps a chatty month from filling the disk.
+    cap_drop: [ALL]
+    mem_limit: 1g
+    logging: { driver: json-file, options: { max-size: "20m" } }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   # The upstream key does not have to be typed into the console; it can be read from a file
@@ -189,6 +206,16 @@ services:
     # It should not start taking requests before the proxy is up — egress would be refused,
     # fail closed
     depends_on: [audit]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    logging: { driver: json-file, options: { max-size: "20m" } }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/api/hello').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   # Not a service anybody uses: it exists so that `up` puts the agent image on this machine.
@@ -238,10 +265,10 @@ services:
       - ${CODEX_CREDENTIALS_DIR:-${HOME}/.codex}:/input-codex:ro
       # Key files that something else writes and rotates — a docker secret, a
       # secret-manager sidecar, another container. Read-only: this service reads them and
-      # never writes back.
+      # never writes back. Only secrets/, not the data directory around it.
       - type: bind
-        source: *data-dir
-        target: /data
+        source: *secrets-dir
+        target: /data/secrets
         read_only: true
         bind: { create_host_path: true }
       # The socket. Mounted read-only into the gateway, which is the only other container
@@ -348,6 +375,10 @@ services:
     # editing configuration for the console), and by neither Caddy nor the internet. A browser
     # never connects to it directly.
     networks: [backend]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    logging: { driver: json-file, options: { max-size: "20m" } }
     restart: unless-stopped
 
   caddy:
@@ -370,6 +401,12 @@ services:
       - caddy-data:/data
     networks: [frontend]
     depends_on: [app]
+    # Root inside, so binding 80 and 443 is the one capability it keeps
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    logging: { driver: json-file, options: { max-size: "20m" } }
     restart: unless-stopped
 
 networks:
