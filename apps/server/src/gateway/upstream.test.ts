@@ -18,6 +18,7 @@ import {
   isOAuthToken,
   mergeBeta,
   outboundHeaders,
+  sdkIdentity,
   speaksAdaptiveThinking,
   withBillingSystem,
   withEndUser,
@@ -127,7 +128,7 @@ console.log('\n=== What the caller did not say about itself ===');
     OAUTH,
     'a-conversation-id',
   );
-  ok('a client naming itself no longer displaces the deployment\'s identity', own['user-agent'] === cliUserAgent(CLI_VERSION), own['user-agent']);
+  ok('a client naming itself no longer displaces the deployment\'s identity', own['user-agent'] === cliUserAgent(sdkIdentity(CLI_VERSION)), own['user-agent']);
   ok('though x-app, being a constant, is left as sent', own['x-app'] === 'something');
   ok('including its session', own['x-claude-code-session-id'] === 'sess-9');
 
@@ -205,25 +206,25 @@ console.log('\n=== Which Claude Code we say we are ===');
    * number it read there. gateway/cli-version.ts moves it forward from what clients send, so
    * both of these have to be built from an argument rather than baked.
    */
-  ok('the line carries the version it was given', billingLine('2.1.263').includes('cc_version=2.1.263.ddf;'), billingLine('2.1.263'));
-  ok('and names the entrypoint, which is what we actually are', billingLine('2.1.263').includes('cc_entrypoint=sdk-cli;'));
-  ok('the user agent carries it too', cliUserAgent('2.1.263') === 'claude-cli/2.1.263 (external, sdk-cli)', cliUserAgent('2.1.263'));
+  ok('the line carries the version it was given', billingLine(sdkIdentity('2.1.263')).includes('cc_version=2.1.263.ddf;'), billingLine(sdkIdentity('2.1.263')));
+  ok('and names the entrypoint, which is what we actually are', billingLine(sdkIdentity('2.1.263')).includes('cc_entrypoint=sdk-cli;'));
+  ok('the user agent carries it too', cliUserAgent(sdkIdentity('2.1.263')) === 'claude-cli/2.1.263 (external, sdk-cli)', cliUserAgent(sdkIdentity('2.1.263')));
 
-  const claimed = withBillingSystem({ model: 'claude-fable-5-1' }, '2.1.263') as { system: Array<{ text: string }> };
-  ok('a body with no line of its own gets the version we pass', claimed.system[0]?.text === billingLine('2.1.263'), JSON.stringify(claimed.system[0]));
+  const claimed = withBillingSystem({ model: 'claude-fable-5-1' }, sdkIdentity('2.1.263')) as { system: Array<{ text: string }> };
+  ok('a body with no line of its own gets the version we pass', claimed.system[0]?.text === billingLine(sdkIdentity('2.1.263')), JSON.stringify(claimed.system[0]));
 
-  const theirs = { system: [{ type: 'text', text: billingLine('2.1.240') }, { type: 'text', text: 'rest' }] };
-  ok('a client that sent one keeps its own version, whatever we would have claimed', withBillingSystem(theirs, '2.1.263') === theirs);
+  const theirs = { system: [{ type: 'text', text: billingLine(sdkIdentity('2.1.240')) }, { type: 'text', text: 'rest' }] };
+  ok('a client that sent one keeps its own version, whatever we would have claimed', withBillingSystem(theirs, sdkIdentity('2.1.263')) === theirs);
 
-  const h = outboundHeaders({}, 'anthropic', OAUTH, undefined, '2.1.263');
-  ok('the header follows the same version', h['user-agent'] === cliUserAgent('2.1.263'), h['user-agent']);
+  const h = outboundHeaders({}, 'anthropic', OAUTH, undefined, sdkIdentity('2.1.263'));
+  ok('the header follows the same version', h['user-agent'] === cliUserAgent(sdkIdentity('2.1.263')), h['user-agent']);
 
   // The default is the baked floor, so a caller with no database behind it — the model-list
   // fetch — keeps working unchanged
-  ok('with no version given, the floor', outboundHeaders({}, 'anthropic', OAUTH)['user-agent'] === cliUserAgent(CLI_VERSION));
+  ok('with no version given, the floor', outboundHeaders({}, 'anthropic', OAUTH)['user-agent'] === cliUserAgent(sdkIdentity(CLI_VERSION)));
   ok(
     'and the body gets the floor too',
-    (withBillingSystem({ model: 'x' }) as { system: Array<{ text: string }> }).system[0]?.text === billingLine(CLI_VERSION),
+    (withBillingSystem({ model: 'x' }) as { system: Array<{ text: string }> }).system[0]?.text === billingLine(sdkIdentity(CLI_VERSION)),
   );
 }
 
@@ -347,13 +348,13 @@ console.log('\n=== The caller\'s machine does not travel ===');
     'x-stainless-runtime-version': 'v24.1.0',
     'x-stainless-lang': 'python',
   };
-  const h = outboundHeaders(fromLaptop, 'anthropic', 'sk-ant-oat-x', 'conv-1', '2.1.263');
+  const h = outboundHeaders(fromLaptop, 'anthropic', 'sk-ant-oat-x', 'conv-1', sdkIdentity('2.1.263'));
 
   ok('their Node version stays home', h['x-stainless-runtime-version'] === process.version, String(h['x-stainless-runtime-version']));
   ok('and the language they claimed does not survive', h['x-stainless-lang'] === 'js', String(h['x-stainless-lang']));
   ok(
     'the user agent is the deployment\'s own, at the version asked for',
-    h['user-agent'] === cliUserAgent('2.1.263'),
+    h['user-agent'] === cliUserAgent(sdkIdentity('2.1.263')),
     String(h['user-agent']),
   );
   ok('the session id, being opaque, still goes through', h['x-claude-code-session-id'] === 'sess-abc');

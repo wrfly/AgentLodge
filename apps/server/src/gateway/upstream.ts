@@ -395,6 +395,33 @@ const PASSTHROUGH_EXACT = new Set(['x-app', 'x-claude-code-session-id']);
 export const CLI_VERSION = '2.1.224';
 
 /**
+ * What a request presents itself as: a version, and the entrypoint that produced it.
+ *
+ * The two travel together because they have to agree. Both appear twice on the wire — in
+ * the user agent, and in the attribution block at the head of the system prompt — and a
+ * request claiming one version in its header and another in its body is a client that does
+ * not exist. Keeping them in one value is what makes disagreeing impossible rather than
+ * merely unlikely.
+ */
+export interface ClientIdentity {
+  version: string;
+  /** `cc_entrypoint`, mirrored in the user agent's parenthetical */
+  entrypoint: string;
+}
+
+/**
+ * What our own calls are. Naming a conversation, summarising one and pulling a model list
+ * are not a CLI's work, and `sdk-cli` is what the SDK path calls itself.
+ */
+export const SDK_ENTRYPOINT = 'sdk-cli';
+
+/** The identity of a request nobody's client wrote */
+export const sdkIdentity = (version: string = CLI_VERSION): ClientIdentity => ({
+  version,
+  entrypoint: SDK_ENTRYPOINT,
+});
+
+/**
  * What Claude Code calls itself, used when the caller said nothing.
  *
  * Three of our own callers reach the upstream without going through a CLI: naming a
@@ -404,8 +431,8 @@ export const CLI_VERSION = '2.1.224';
  * wording is what a captured request carried; a client that sends its own user-agent keeps
  * it, since the allowlist runs first.
  */
-export function cliUserAgent(version: string): string {
-  return `claude-cli/${version} (external, sdk-cli)`;
+export function cliUserAgent(id: ClientIdentity): string {
+  return `claude-cli/${id.version} (external, ${id.entrypoint})`;
 }
 
 /**
@@ -442,8 +469,8 @@ const CC_TAIL = '.ddf';
  * request for one that is too new with `claude_code_version_too_old` naming the number it
  * read *here*, not the one in the user agent.
  */
-export function billingLine(version: string): string {
-  return `x-anthropic-billing-header: cc_version=${version}${CC_TAIL}; cc_entrypoint=sdk-cli;`;
+export function billingLine(id: ClientIdentity): string {
+  return `x-anthropic-billing-header: cc_version=${id.version}${CC_TAIL}; cc_entrypoint=${id.entrypoint};`;
 }
 
 /**
@@ -471,10 +498,10 @@ type SystemBlock = { type: 'text'; text: string };
  * gateway/cli-version.ts able to learn from it: what goes upstream on a real client's
  * request is the real client's line, not ours.
  */
-export function withBillingSystem(body: unknown, version = CLI_VERSION): unknown {
+export function withBillingSystem(body: unknown, id: ClientIdentity = sdkIdentity()): unknown {
   if (!body || typeof body !== 'object') return body;
   const b = body as { system?: string | SystemBlock[] };
-  const head: SystemBlock = { type: 'text', text: billingLine(version) };
+  const head: SystemBlock = { type: 'text', text: billingLine(id) };
 
   if (b.system === undefined) return { ...b, system: [head] };
   if (typeof b.system === 'string') {
@@ -647,10 +674,10 @@ export function outboundHeaders(
   session?: string,
   /**
    * Which Claude Code to claim to be, for the same requests that get the rest of the
-   * identity. Defaults to the baked floor so that callers with no database behind them —
-   * the model-list fetch — keep working without one.
+   * identity. Defaults to the baked floor with our own entrypoint, so that callers with no
+   * database behind them — the model-list fetch — keep working without one.
    */
-  version = CLI_VERSION,
+  id: ClientIdentity = sdkIdentity(),
 ): Record<string, string> {
   const accept = reqHeaders.accept;
   // The allowlist goes first and our own headers after, so ours always win on a name
@@ -679,7 +706,7 @@ export function outboundHeaders(
       // longer reach here (see PASSTHROUGH_EXACT), so every request on this credential
       // describes the same client — this process's real runtime, and the newest Claude
       // Code seen through the gateway.
-      h['user-agent'] = cliUserAgent(version);
+      h['user-agent'] = cliUserAgent(id);
       h['x-app'] ??= 'cli';
       h['x-claude-code-session-id'] ??= session || crypto.randomUUID();
       for (const [k, v] of Object.entries(STAINLESS)) h[k] = v;

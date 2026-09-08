@@ -1,5 +1,5 @@
 import { getStringFresh, setSetting } from '../core/db/settings.js';
-import { CLI_VERSION } from './upstream.js';
+import { CLI_VERSION, sdkIdentity, type ClientIdentity } from './upstream.js';
 
 /**
  * Which Claude Code the gateway claims to be, on the calls that are nobody's client.
@@ -26,6 +26,10 @@ import { CLI_VERSION } from './upstream.js';
  * here becomes what we say about ourselves from then on. A deployment tracks its own users
  * without anybody editing anything — the first person to upgrade carries the gateway with
  * them.
+ *
+ * **On those four requests and no others.** A request that arrived with a block of its own
+ * is answered for by that block, header and body alike; see `identify`. Handing it the
+ * learned number instead made one request claim two versions.
  *
  * `CLI_VERSION` stays the floor. It is what the agent image installs, which is the one
  * client this deployment is certain to have, and observation only ever moves forward from
@@ -71,6 +75,19 @@ function newer(a: string, b: string): boolean {
 const CC_VERSION = /^x-anthropic-billing-header:[^\n]*?\bcc_version=(\d[\w.-]*)/;
 
 /**
+ * The entrypoint the block names.
+ *
+ * The charset is deliberately narrow. This value is written by whoever sent the request and
+ * ends up inside an outbound header, where a newline would be a header injection and a
+ * stray quote is a request the upstream refuses. Anything that is not a short run of
+ * lowercase, digits and dashes is read as absent.
+ */
+const CC_ENTRYPOINT = /^x-anthropic-billing-header:[^\n]*?\bcc_entrypoint=([a-z0-9-]{1,32})\b/;
+
+/** What a real CLI writes; the fallback when its block names a version but no entrypoint */
+const CLI_ENTRYPOINT = 'cli';
+
+/**
  * The version a request states about itself, if it states one.
  *
  * Only the first system block is read, because that is the only one that counts: it is where
@@ -78,7 +95,7 @@ const CC_VERSION = /^x-anthropic-billing-header:[^\n]*?\bcc_version=(\d[\w.-]*)/
  * request already has one. Reading further would accept a line that is not the line going
  * upstream — including one a user typed into their own prompt.
  */
-export function versionOf(body: unknown): string | null {
+function attributionBlock(body: unknown): string | null {
   if (!body || typeof body !== 'object') return null;
   const { system } = body as { system?: unknown };
   const first =
@@ -87,9 +104,39 @@ export function versionOf(body: unknown): string | null {
       : Array.isArray(system) && system[0] && typeof system[0] === 'object'
         ? (system[0] as { text?: unknown }).text
         : undefined;
-  if (typeof first !== 'string') return null;
+  return typeof first === 'string' ? first : null;
+}
+
+export function versionOf(body: unknown): string | null {
+  const first = attributionBlock(body);
+  if (first === null) return null;
   const v = CC_VERSION.exec(first)?.[1];
   return v ? head(v) : null;
+}
+
+/**
+ * What this request should present itself as, in both the places that carry it.
+ *
+ * A request a CLI wrote brings its own attribution block, and `withBillingSystem` passes
+ * that block upstream untouched — so the user agent beside it has to say the same thing.
+ * It used to say the newest version seen anywhere in the deployment, which meant that from
+ * the moment one person upgraded ahead of the agent image, every container request went out
+ * claiming one version in its header and another in its body. Neither broke anything: the
+ * upstream gates models on the block, not the header. But the whole point of writing one
+ * identity is that it is one.
+ *
+ * A request nobody's client wrote has no block. That is the case the learned version exists
+ * for, and it gets our own entrypoint with it; `withBillingSystem` then writes a block
+ * saying exactly what the header says.
+ *
+ * Learning happens either way, so a newer client still moves the floor forward.
+ */
+export function identify(body: unknown): ClientIdentity {
+  const learned = observe(body);
+  const own = versionOf(body);
+  if (own === null) return sdkIdentity(learned);
+  const first = attributionBlock(body);
+  return { version: own, entrypoint: (first && CC_ENTRYPOINT.exec(first)?.[1]) || CLI_ENTRYPOINT };
 }
 
 /**

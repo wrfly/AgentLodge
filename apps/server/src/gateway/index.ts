@@ -414,7 +414,7 @@ async function handleProxy(
      * request when it is a real client's — the version it states is newer than any we have
      * seen soon enough after every upgrade — and otherwise the newest that came before it.
      */
-    const cli = asCli ? cliVersion.observe(outbound) : undefined;
+    const cli = asCli ? cliVersion.identify(outbound) : undefined;
     /*
      * Whose request this is, in the field the API keeps for it. After observe(), which
      * reads what the client actually sent, and after any translation, so the body being
@@ -755,7 +755,9 @@ export function buildGateway(): FastifyInstance {
         const res = await fetch(egress.url, {
           method: 'POST',
           headers: {
-            ...outboundHeaders(req.headers, 'anthropic', target.apiKey, who.cid, cliVersion.current()),
+            // The body goes upstream as the client wrote it, so the user agent says what
+            // that body says — see cliVersion.identify
+            ...outboundHeaders(req.headers, 'anthropic', target.apiKey, who.cid, cliVersion.identify(req.body)),
             ...egress.headers,
           },
           body: JSON.stringify(req.body ?? {}),

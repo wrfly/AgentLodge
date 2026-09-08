@@ -25,8 +25,8 @@ process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 const { initDb } = await import('../core/db/index.js');
 initDb();
 const { setSetting } = await import('../core/db/settings.js');
-const { SETTING, current, observe, versionOf } = await import('./cli-version.js');
-const { CLI_VERSION, billingLine, withBillingSystem } = await import('./upstream.js');
+const { SETTING, current, identify, observe, versionOf } = await import('./cli-version.js');
+const { CLI_VERSION, billingLine, cliUserAgent, sdkIdentity, withBillingSystem } = await import('./upstream.js');
 
 let pass = 0;
 let fail = 0;
@@ -67,7 +67,7 @@ console.log('\n=== Reading the version a request states about itself ===');
     'a plain string system prompt is read too — the SDK sends that shape',
     versionOf({ system: 'x-anthropic-billing-header: cc_version=2.2.0.ddf; cc_entrypoint=sdk-cli;' }) === '2.2.0',
   );
-  ok('the line we build ourselves reads back', versionOf({ system: [{ type: 'text', text: billingLine('2.1.240') }] }) === '2.1.240');
+  ok('the line we build ourselves reads back', versionOf({ system: [{ type: 'text', text: billingLine(sdkIdentity('2.1.240')) }] }) === '2.1.240');
 
   ok('a request with no system prompt states nothing', versionOf({ model: 'claude-opus-5' }) === null);
   ok('nor does an ordinary prompt', versionOf({ system: 'You are helpful.' }) === null);
@@ -153,7 +153,7 @@ console.log('\n=== A stored value that is not a version ===');
   // about to be pasted into a header the upstream parses
   setSetting(SETTING, '2.1.263; cc_entrypoint=evil;');
   ok('a version with something appended is cut back to the version', current() === '2.1.263', current());
-  ok('so the line it produces has one entrypoint', billingLine(current()).match(/cc_entrypoint=/g)?.length === 1, billingLine(current()));
+  ok('so the line it produces has one entrypoint', billingLine(sdkIdentity(current())).match(/cc_entrypoint=/g)?.length === 1, billingLine(sdkIdentity(current())));
 
   setSetting(SETTING, CLI_VERSION);
   ok('and a stored value equal to the floor is simply the floor', current() === CLI_VERSION);
@@ -187,13 +187,63 @@ console.log('\n=== What comes out is a line the upstream can read ===');
 {
   forget();
   const v = observe(asClaudeCode('2.1.263'));
-  const body = withBillingSystem({ model: 'claude-fable-5-1' }, v) as { system: Array<{ text: string }> };
-  ok('our own call now claims the version we learned', body.system[0]?.text === billingLine('2.1.263'), JSON.stringify(body.system[0]));
+  const body = withBillingSystem({ model: 'claude-fable-5-1' }, sdkIdentity(v)) as { system: Array<{ text: string }> };
+  ok('our own call now claims the version we learned', body.system[0]?.text === billingLine(sdkIdentity('2.1.263')), JSON.stringify(body.system[0]));
   ok('and it reads back as that version', versionOf(body) === '2.1.263');
 
   // A real client's line is passed through whole, which is what makes observation possible
   const theirs = asClaudeCode('2.1.263') as { system: unknown[] };
-  ok('a client that sent one keeps its own', withBillingSystem(theirs, v) === theirs);
+  ok('a client that sent one keeps its own', withBillingSystem(theirs, sdkIdentity(v)) === theirs);
+}
+
+console.log('\n=== One request, one identity ===');
+{
+  /*
+   * The learned version is for the requests nobody's client wrote. Handing it to a request
+   * that brought its own attribution block made the two disagree: the header claimed the
+   * newest version anywhere in the deployment while the body, passed through untouched,
+   * still said what that client actually runs. From the moment one person upgraded ahead of
+   * the agent image, that was every container request.
+   */
+  setSetting(SETTING, '2.1.263');
+  const theirs = asClaudeCode('2.1.224');
+  const id = identify(theirs);
+  ok('a request with a block of its own reports that block\'s version', id.version === '2.1.224', id.version);
+  ok('and the entrypoint it named with it', id.entrypoint === 'cli', id.entrypoint);
+  ok(
+    'so the user agent and the block agree',
+    cliUserAgent(id) === 'claude-cli/2.1.224 (external, cli)',
+    cliUserAgent(id),
+  );
+  ok('while the learned floor is left where it was', current() === '2.1.263');
+
+  // Learning still happens, so a newer client still carries the deployment forward
+  identify(asClaudeCode('2.1.300'));
+  ok('a newer client still moves it', current() === '2.1.300');
+
+  const ours = identify({ model: 'claude-x', max_tokens: 64 });
+  ok('a call nobody wrote takes the learned version', ours.version === '2.1.300', ours.version);
+  ok('and says what it actually is', ours.entrypoint === 'sdk-cli', ours.entrypoint);
+  const written = withBillingSystem({ model: 'claude-x' }, ours) as { system: Array<{ text: string }> };
+  ok(
+    'and the block it is given says the same as its header',
+    written.system[0]?.text === billingLine(ours) && cliUserAgent(ours).includes('2.1.300'),
+    written.system[0]?.text,
+  );
+}
+
+console.log('\n=== An entrypoint is somebody else\'s text, so it is checked ===');
+{
+  setSetting(SETTING, '2.1.263');
+  const withEntry = (entry: string) => ({
+    system: [{ type: 'text', text: `x-anthropic-billing-header: cc_version=2.1.224.ddf; cc_entrypoint=${entry};` }],
+  });
+  // It ends up inside an outbound header value, where a newline is a header injection
+  ok('a newline in it is not carried', identify(withEntry('cli\r\nEvil: 1')).entrypoint === 'cli', identify(withEntry('cli\r\nEvil: 1')).entrypoint);
+  ok('nor a quote', identify(withEntry('a"b')).entrypoint === 'a', identify(withEntry('a"b')).entrypoint);
+  ok('nor something absurdly long', identify(withEntry('x'.repeat(200))).entrypoint.length <= 32);
+  ok('a block with no entrypoint at all reads as a cli', identify({ system: [{ type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.224.ddf;' }] }).entrypoint === 'cli');
+  ok('and the ordinary case is unharmed', identify(withEntry('sdk-cli')).entrypoint === 'sdk-cli');
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
