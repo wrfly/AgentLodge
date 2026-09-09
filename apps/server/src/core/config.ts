@@ -13,16 +13,24 @@ const repoRoot = path.resolve(here, '../../../..');
 /**
  * A duration from the environment, in milliseconds.
  *
- * `Number('')` is 0 and `Number('30s')` is NaN, and Node clamps a `setTimeout` of either to
- * about a millisecond — so a variable declared and left empty in a compose file, or written
- * with a unit, aborted every request instead of doing nothing. Anything that is not a
- * number at least zero is the default; zero itself is kept, because these all read it as
- * "off".
+ * Node clamps a timer delay it cannot use to about a millisecond, and there are three ways
+ * to hand it one. `Number('')` is 0 and `Number('30s')` is NaN, so a variable left empty in
+ * a compose file or written with a unit aborted every request instead of doing nothing.
+ * Anything above 2³¹−1 milliseconds — 24.86 days, which is what somebody reaching for
+ * "effectively no limit" types — overflows and fires at once. And a fraction below 1
+ * truncates to zero, which for an interval is a flood rather than a stop.
+ *
+ * So the range is checked at both ends, and only an exact zero survives as a number,
+ * because all of these read zero as "off".
  */
+const TIMER_MAX = 2_147_483_647;
+
 function ms(raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw.trim() === '') return fallback;
   const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
+  if (!Number.isFinite(n) || n < 0 || n > TIMER_MAX) return fallback;
+  // Below a millisecond is not a delay anybody meant; zero is the off switch
+  return n === 0 ? 0 : Math.max(1, Math.round(n));
 }
 
 export const config = {
