@@ -173,7 +173,7 @@ export function Sidebar({ agent }: { agent: AgentId }) {
   const t = useT();
   const conversations = useChat((s) => s.conversations);
   const newConversation = useChat((s) => s.newConversation);
-  const setSidebar = useChat((s) => s.setSidebar);
+  const hideSidebar = useChat((s) => s.hideSidebar);
   // On non-chat routes props.agent is always claude, so navigation has to use
   // whichever agent the store is actually on
   const chatAgent = useChat((s) => s.agent);
@@ -196,9 +196,10 @@ export function Sidebar({ agent }: { agent: AgentId }) {
           <span aria-hidden>🏕️</span> AgentLodge
         </span>
         <button
-          onClick={() => setSidebar(false)}
-          className="flex size-7 items-center justify-center rounded-md text-faint hover:bg-bubble hover:text-ink md:hidden"
+          onClick={hideSidebar}
+          className="flex size-7 items-center justify-center rounded-md text-faint hover:bg-bubble hover:text-ink"
           aria-label={t('Collapse sidebar')}
+          title={t('Collapse sidebar')}
         >
           <PanelLeftClose size={16} />
         </button>

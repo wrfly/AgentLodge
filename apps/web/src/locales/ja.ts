@@ -91,7 +91,7 @@ export const ja: Record<string, string> = {
   'Switch model (affects later messages only)': 'モデルを切り替える（以降のメッセージのみ）',
   Effort: '推論の深さ',
   'Reasoning effort (affects later messages only)': '推論の深さ（以降のメッセージのみ）',
-  Think: '思考',
+  'Show thinking': '思考過程を表示',
   'Show the thinking before the answer (affects later messages only)': '回答の前に思考過程を表示（以降のメッセージのみ）',
   'Stop generating': '生成を停止',
   Send: '送信',

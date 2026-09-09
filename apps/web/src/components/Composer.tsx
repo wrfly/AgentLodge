@@ -8,6 +8,7 @@ import { useAgents } from '../store/agents';
 import { useQuota } from '../store/quota';
 import { files, fmtMoney } from '../lib/api';
 import { Attachments, type Attachment } from './Attachments';
+import { SwitchTrack } from './ui';
 import { AGENTS } from '../lib/route';
 import type { EffortOption, ModelOption, QuotaScope } from '../lib/api';
 import type { AgentId } from '../lib/protocol';
@@ -302,6 +303,14 @@ export function Composer({ agent }: { agent: AgentId }) {
               title={t("Switch model (affects later messages only)")}
               disabled={locked}
             />
+            {/*
+              The thinking switch rides in the effort menu rather than beside it. Both
+              answer the same question — how much reasoning to ask for — and one of them
+              was a whole button in the row for a single boolean.
+
+              Claude only. Codex asks for its reasoning through the effort list itself
+              (its `none`), and a switch that did nothing would be worse than none.
+            */}
             <Picker
               icon={Gauge}
               placeholder={t("Effort")}
@@ -310,28 +319,36 @@ export function Composer({ agent }: { agent: AgentId }) {
               onChange={(id) => void setEffort(id)}
               title={t("Reasoning effort (affects later messages only)")}
               disabled={locked}
+              mark={
+                agent === 'claude' ? (
+                  <Brain
+                    size={11}
+                    className={clsx('shrink-0', thinking ? 'text-accent' : 'text-faint')}
+                  />
+                ) : undefined
+              }
+              footer={
+                agent === 'claude' ? (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={thinking}
+                    onClick={() => void setThinking(!thinking)}
+                    title={t('Show the thinking before the answer (affects later messages only)')}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-elevated"
+                  >
+                    <Brain
+                      size={13}
+                      className={clsx('shrink-0', thinking ? 'text-accent' : 'text-faint')}
+                    />
+                    <span className="min-w-0 flex-1 truncate font-mono text-[13px]">
+                      {t('Show thinking')}
+                    </span>
+                    <SwitchTrack checked={thinking} />
+                  </button>
+                ) : undefined
+              }
             />
-            {/* Claude only. Codex asks for its reasoning a different way, through the
-                effort above, and a switch that did nothing would be worse than none. */}
-            {agent === 'claude' && (
-              <button
-                type="button"
-                onClick={() => void setThinking(!thinking)}
-                disabled={locked}
-                title={t('Show the thinking before the answer (affects later messages only)')}
-                aria-pressed={thinking}
-                className={clsx(
-                  'flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[12px] transition',
-                  locked
-                    ? 'cursor-not-allowed border-line text-faint'
-                    : 'border-line hover:border-line-strong hover:bg-bubble',
-                  thinking && !locked ? 'text-ink' : 'text-muted',
-                )}
-              >
-                <Brain size={12} className={clsx('shrink-0', thinking && !locked && 'text-accent')} />
-                <span className="font-mono">{t('Think')}</span>
-              </button>
-            )}
 
             <div className="flex-1" />
 

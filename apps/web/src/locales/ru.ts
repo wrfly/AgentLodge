@@ -91,7 +91,7 @@ export const ru: Record<string, string> = {
   'Switch model (affects later messages only)': 'Сменить модель (только для последующих сообщений)',
   Effort: 'Усилие',
   'Reasoning effort (affects later messages only)': 'Глубина рассуждений (только для последующих сообщений)',
-  Think: 'Мышление',
+  'Show thinking': 'Показывать размышления',
   'Show the thinking before the answer (affects later messages only)': 'Показывать размышления перед ответом (только для последующих сообщений)',
   'Stop generating': 'Остановить генерацию',
   Send: 'Отправить',

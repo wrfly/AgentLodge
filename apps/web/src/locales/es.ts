@@ -84,7 +84,7 @@ export const es: Record<string, string> = {
   'Switch model (affects later messages only)': 'Cambiar de modelo (solo afecta a los mensajes siguientes)',
   Effort: 'Esfuerzo',
   'Reasoning effort (affects later messages only)': 'Esfuerzo de razonamiento (solo afecta a los mensajes siguientes)',
-  Think: 'Pensar',
+  'Show thinking': 'Mostrar el razonamiento',
   'Show the thinking before the answer (affects later messages only)': 'Mostrar el razonamiento antes de la respuesta (solo afecta a los mensajes siguientes)',
   'Stop generating': 'Detener la generación',
   Send: 'Enviar',

@@ -91,7 +91,7 @@ export const zh: Record<string, string> = {
   'Switch model (affects later messages only)': '切换模型（只影响后续消息）',
   Effort: '强度',
   'Reasoning effort (affects later messages only)': '推理强度（只影响后续消息）',
-  Think: '思考',
+  'Show thinking': '显示思考过程',
   'Show the thinking before the answer (affects later messages only)': '回答前先显示思考过程（只影响后续消息）',
   'Stop generating': '停止生成',
   Send: '发送',

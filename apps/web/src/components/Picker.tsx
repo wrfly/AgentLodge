@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, ChevronDown, ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
@@ -27,6 +27,17 @@ interface PickerProps {
    * opens inside it, since naming it once above a single row is not a choice.
    */
   vendors?: Array<ModelVendor<PickerOption>>;
+  /**
+   * A row pinned under the options, outside the scrolling list. It is not one of the
+   * choices: picking a value closes the menu, and whatever goes here does not.
+   */
+  footer?: ReactNode;
+  /**
+   * Shown in the closed button, between the value and the chevron. A setting that lives in
+   * the footer is invisible once the menu is shut, and one that changes what comes back
+   * cannot be — this is the row that says so from outside.
+   */
+  mark?: ReactNode;
 }
 
 function Row({
@@ -94,6 +105,8 @@ export function Picker({
   title,
   disabled = false,
   vendors,
+  footer,
+  mark,
 }: PickerProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -176,6 +189,7 @@ export function Picker({
       >
         <Icon size={12} className={clsx('shrink-0', !isDefault && 'text-accent')} />
         <span className="truncate font-mono">{label}</span>
+        {mark}
         <ChevronDown
           size={11}
           className={clsx('shrink-0 text-faint transition-transform', open && 'rotate-180')}
@@ -259,6 +273,9 @@ export function Picker({
               </div>
             )}
           </div>
+
+          {/* Outside the scrolling list on purpose: it is a setting, not the last option */}
+          {footer && <div className="mt-1 border-t border-line pt-1">{footer}</div>}
         </div>
       )}
     </div>
