@@ -1,17 +1,17 @@
 /**
- * What reaches the client when the upstream refuses, and what keeps a slow one alive.
+ * What reaches the client when the upstream misbehaves.
  *
- * Both are about a stream nobody is producing content on, and both were wrong in the same
- * direction: the gateway answered for the upstream instead of relaying it.
+ * Every case here was once answered by the gateway on the upstream's behalf, and each of
+ * them is invisible in the pieces on their own — they are about what the request handler
+ * does with a stream nobody is producing content on. So the gateway is built and driven
+ * with inject, against an http server standing in for the upstream.
  *
- *   an error body run through the translator came out a well-formed message with nothing
- *     in it — and Claude Code recovers from a rejected capability by matching the
- *     upstream's own wording, so it had nothing to match
- *   a translated stream emitted nothing while the model was thinking, and the client
- *     abandons a request after 300 seconds of silence
- *
- * The gateway is built here and driven with inject, against a fake upstream and a fake
- * credential manager, because neither behaviour is visible in the pieces on their own.
+ * The shapes that matter, and why each has its own block:
+ *   a refusal on a 200, which is how Ollama and llama.cpp report a model that will not load
+ *   a refusal mid-stream, after the client is already reading translated frames
+ *   an upstream that chatters in a way the translator drops — reasoning tokens, heartbeat
+ *     comments — which is silence as far as the client is concerned
+ *   a stream cut by the idle bound, which must not look like a complete answer
  *
  * Run: npm -w @agentlodge/server run test:relay
  */
@@ -24,8 +24,10 @@ const box = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-relay-')))
 process.env.DATA_DIR = box;
 process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 process.env.CREDENTIAL_MANAGER_SOCKET = path.join(box, 'credential-manager.sock');
-// Short enough to watch, long enough that a slow machine does not produce one by accident
-process.env.STREAM_KEEP_ALIVE_MS = '150';
+// Short enough to watch; the idle bound is set per-block by reloading the module is not
+// possible, so it is chosen once here and the slow block is timed against it
+process.env.STREAM_KEEP_ALIVE_MS = '120';
+process.env.UPSTREAM_IDLE_TIMEOUT_MS = '600';
 
 const manager = http.createServer((req, res) => {
   const id = new URL(req.url ?? '/', 'http://unix').searchParams.get('credential') ?? '';
@@ -34,10 +36,7 @@ const manager = http.createServer((req, res) => {
 });
 await new Promise<void>((r) => manager.listen(process.env.CREDENTIAL_MANAGER_SOCKET!, r));
 
-/**
- * The upstream. Each test sets `reply` to whatever it wants to come back next, so one
- * server covers a refusal, a normal answer and a stream that thinks before it speaks.
- */
+/** The upstream. Each block sets `reply` to whatever it wants back next. */
 let reply: (res: http.ServerResponse) => void = (res) => res.end();
 const upstream = http.createServer((req, res) => {
   req.resume();
@@ -68,12 +67,11 @@ function ok(label: string, cond: boolean, detail = ''): void {
 }
 
 for (const p of providers.list()) providers.remove(p.id);
-// openai-chat is the kind that gets translated, which is where both bugs lived
+// openai-chat is the kind that gets translated, which is where all of this lives
 const provider = providers.create({
   name: 'Local model', kind: 'openai-chat', baseUrl: upstreamUrl, credentialId: 'local',
 });
 models.create({ name: 'local-model', providerId: provider.id });
-
 // user_quotas points at users, and the quota gate reads it on every request
 const user = users.create({ email: 'r@example.com', username: 'relay', passwordHash: 'x', role: 'user' });
 
@@ -82,75 +80,137 @@ const token = await signRuntimeToken(
   { sub: user.id, cid: 'conv-1', tid: 'turn-1', agent: 'claude', thinking: false },
   60_000,
 );
-const ask = (body: unknown) =>
+const ask = () =>
   app.inject({
     method: 'POST',
     url: '/v1/messages',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    payload: body as object,
+    payload: { model: 'local-model', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] },
   });
-const body = { model: 'local-model', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] };
 
-console.log('\n=== An upstream that refuses is relayed as it refused ===');
-{
-  // The wording is the whole payload: Claude Code reads it to decide what to drop and retry
-  const refusal = JSON.stringify({
-    error: { message: 'thinking is not supported by this model', type: 'invalid_request_error' },
-  });
+/** An SSE upstream, headers flushed so the silence lands in the body where the relay is */
+function sse(write: (res: http.ServerResponse) => void, status = 200) {
   reply = (res) => {
-    res.writeHead(400, { 'content-type': 'application/json' });
-    res.end(refusal);
-  };
-  const res = await ask(body);
-  ok('the status is the upstream\'s', res.statusCode === 400, String(res.statusCode));
-  ok('and so is the body, to the byte', res.body === refusal, res.body);
-  ok('nothing was invented in its place', !res.body.includes('msg_translated'), res.body);
-}
-
-console.log('\n=== A normal answer is still translated ===');
-{
-  reply = (res) => {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({
-      model: 'local-model',
-      choices: [{ message: { content: 'hello there' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 5, completion_tokens: 2 },
-    }));
-  };
-  const res = await ask(body);
-  const out = JSON.parse(res.body) as { type?: string; content?: Array<{ text?: string }> };
-  ok('the client gets an Anthropic message', out.type === 'message', res.body);
-  ok('carrying the text', out.content?.[0]?.text === 'hello there', res.body);
-}
-
-console.log('\n=== A stream that thinks before it speaks is kept alive ===');
-{
-  /*
-   * The upstream says nothing for a while, then answers. There is no ping frame to relay on
-   * this side, so the gateway writes its own; without them the client counts the silence
-   * and gives up at 300 seconds.
-   */
-  reply = (res) => {
-    res.writeHead(200, { 'content-type': 'text/event-stream' });
-    // Node holds the headers until the first write, and the silence has to be in the body
-    // for the gateway to be inside the relay loop while it lasts
+    res.writeHead(status, { 'content-type': 'text/event-stream' });
     res.flushHeaders();
-    setTimeout(() => {
-      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'late' } }] })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      res.end();
-    }, 500);
+    write(res);
   };
-  const res = await ask(body);
-  const pings = res.body.match(/event: ping/g)?.length ?? 0;
-  ok('pings were sent while it was quiet', pings > 0, `${pings} in ${JSON.stringify(res.body.slice(0, 120))}`);
-  ok('and the answer still arrives after them', res.body.includes('late'), res.body.slice(-160));
-  ok('with the stream properly closed', res.body.includes('message_stop'), res.body.slice(-160));
 }
 
-manager.close();
-upstream.close();
-await app.close();
-fs.rmSync(box, { recursive: true, force: true });
+async function run(): Promise<void> {
+  console.log('\n=== A refusal is relayed whatever status it came under ===');
+  {
+    const refusal = JSON.stringify({
+      error: { message: 'thinking is not supported by this model', type: 'invalid_request_error' },
+    });
+    for (const status of [400, 200]) {
+      reply = (res) => {
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(refusal);
+      };
+      const res = await ask();
+      // 200 is the one that matters: Ollama and llama.cpp answer a model that will not load
+      // exactly that way, and a status check alone lets it through the translator
+      ok(`${status}: the body arrives to the byte`, res.body === refusal, res.body);
+      ok(`${status}: and nothing was invented in its place`, !res.body.includes('msg_translated'), res.body);
+    }
+  }
+
+  console.log('\n=== A refusal that arrives mid-stream keeps its words ===');
+  {
+    // The client is reading Anthropic frames by now, so the body cannot be relayed as it
+    // stands — but the wording is what the capability-retry path matches on
+    sse((res) => {
+      res.write(`data: ${JSON.stringify({ error: { message: 'context length 8192 exceeded' } })}\n\n`);
+      res.end();
+    });
+    const res = await ask();
+    ok('it becomes an error frame', res.body.includes('event: error'), res.body);
+    ok('carrying what the upstream said', res.body.includes('context length 8192 exceeded'), res.body);
+    ok('and no message_stop, which would mean it finished', !res.body.includes('message_stop'), res.body);
+  }
+
+  console.log('\n=== An upstream heard but not relayed is silence to the client ===');
+  {
+    /*
+     * The shape the keep-alive exists for, and the one the first version missed: a
+     * DeepSeek-R1-class model streams reasoning for minutes with no `content`. The
+     * translator drops every one of those frames, so the client receives nothing — while
+     * the gateway, if it keys its ping on the upstream's chatter, thinks all is well.
+     */
+    sse((res) => {
+      let n = 0;
+      const chatter = setInterval(() => {
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'thinking' } }] })}\n\n`);
+        res.write(': keep-alive\n\n');
+        if (++n < 8) return;
+        clearInterval(chatter);
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'done' } }] })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }, 50);
+    });
+    const res = await ask();
+    const pings = res.body.match(/event: ping/g)?.length ?? 0;
+    ok('pings went out while the client had nothing', pings > 0, `${pings} pings; body ${res.body.slice(0, 90)}`);
+    ok('and the answer still arrives', res.body.includes('done'), res.body.slice(-140));
+    ok('with the stream properly closed', res.body.includes('message_stop'), res.body.slice(-140));
+  }
+
+  console.log('\n=== A stream cut short says so, rather than just stopping ===');
+  {
+    // Past the idle bound the gateway gives up, and the headers went out long ago — so the
+    // only way to say the answer is unfinished is a frame. Without one the client reads a
+    // 200 that stops early as a complete, short answer, and does not retry.
+    sse((res) => {
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'half' } }] })}\n\n`);
+      // and then nothing, for longer than UPSTREAM_IDLE_TIMEOUT_MS
+    });
+    const res = await ask();
+    ok('what arrived is kept', res.body.includes('half'), res.body.slice(0, 120));
+    ok('an error frame follows it', res.body.includes('event: error'), res.body.slice(-200));
+    ok('and not a message_stop', !res.body.includes('message_stop'), res.body.slice(-200));
+  }
+
+  console.log('\n=== A normal answer is untouched by any of it ===');
+  {
+    reply = (res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        model: 'local-model',
+        choices: [{ message: { content: 'hello there' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      }));
+    };
+    const res = await ask();
+    const out = JSON.parse(res.body) as { type?: string; content?: Array<{ text?: string }> };
+    ok('the client gets an Anthropic message', out.type === 'message', res.body);
+    ok('carrying the text', out.content?.[0]?.text === 'hello there', res.body);
+  }
+
+  console.log('\n=== What the upstream said about waiting is passed on ===');
+  {
+    reply = (res) => {
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '42' });
+      res.end(JSON.stringify({ error: { message: 'slow down' } }));
+    };
+    const res = await ask();
+    // The gate is already holding the door for exactly this long; a client told nothing
+    // falls back to its own short backoff and retries into a closed gate
+    ok('retry-after reaches the client', res.headers['retry-after'] === '42', JSON.stringify(res.headers['retry-after']));
+  }
+}
+
+try {
+  await run();
+} finally {
+  // Cleanup outside the assertions: `ok()` never throws, so only a thrown error would have
+  // leaked the temp database, the socket and the summary line the runner parses
+  manager.close();
+  upstream.close();
+  await app.close();
+  fs.rmSync(box, { recursive: true, force: true });
+}
+
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
