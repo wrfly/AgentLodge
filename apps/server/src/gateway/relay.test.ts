@@ -72,6 +72,15 @@ const provider = providers.create({
   name: 'Local model', kind: 'openai-chat', baseUrl: upstreamUrl, credentialId: 'local',
 });
 models.create({ name: 'local-model', providerId: provider.id });
+/*
+ * A second upstream that speaks Messages already, so nothing is translated and the bytes are
+ * relayed as they arrive. Every block used to drive the translated one, which left the arm
+ * where the framing decisions actually matter with no coverage at all.
+ */
+const native = providers.create({
+  name: 'Native', kind: 'anthropic-native', baseUrl: upstreamUrl, credentialId: 'native',
+});
+models.create({ name: 'native-model', providerId: native.id });
 // user_quotas points at users, and the quota gate reads it on every request
 const user = users.create({ email: 'r@example.com', username: 'relay', passwordHash: 'x', role: 'user' });
 
@@ -80,12 +89,12 @@ const token = await signRuntimeToken(
   { sub: user.id, cid: 'conv-1', tid: 'turn-1', agent: 'claude', thinking: false },
   60_000,
 );
-const ask = () =>
+const ask = (model = 'local-model') =>
   app.inject({
     method: 'POST',
     url: '/v1/messages',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    payload: { model: 'local-model', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] },
+    payload: { model, max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] },
   });
 
 /** An SSE upstream, headers flushed so the silence lands in the body where the relay is */
@@ -111,7 +120,11 @@ async function run(): Promise<void> {
       const res = await ask();
       // 200 is the one that matters: Ollama and llama.cpp answer a model that will not load
       // exactly that way, and a status check alone lets it through the translator
-      ok(`${status}: the body arrives to the byte`, res.body === refusal, res.body);
+      ok(
+        `${status}: the upstream's words survive`,
+        res.body.includes('thinking is not supported by this model'),
+        res.body,
+      );
       ok(`${status}: and nothing was invented in its place`, !res.body.includes('msg_translated'), res.body);
     }
   }
@@ -170,6 +183,82 @@ async function run(): Promise<void> {
     ok('what arrived is kept', res.body.includes('half'), res.body.slice(0, 120));
     ok('an error frame follows it', res.body.includes('event: error'), res.body.slice(-200));
     ok('and not a message_stop', !res.body.includes('message_stop'), res.body.slice(-200));
+  }
+
+  console.log('\n=== A ping is evidence the upstream is alive, not a courtesy ===');
+  {
+    /*
+     * An upstream that says nothing at all. Pinging through that would answer the client's
+     * liveness question on its behalf: the client stops counting, the gateway is the only
+     * thing left that could end it, and with the bound off there would be nothing at all.
+     */
+    sse(() => {
+      /* headers, then silence, until the idle bound ends it */
+    });
+    const res = await ask();
+    ok('a silent upstream is not pinged for', !res.body.includes('event: ping'), res.body.slice(0, 120));
+    ok('it is ended instead', res.body.includes('event: error'), res.body.slice(0, 160));
+  }
+
+  console.log('\n=== The untouched relay is pinged too, and only between frames ===');
+  {
+    // anthropic-native covers any endpoint speaking Messages, and only api.anthropic.com is
+    // known to send pings of its own — so the arm that rewrites nothing needs them as well
+    /*
+     * One frame, then quiet, then the rest. The gap is what a ping is for: while the
+     * upstream is chattering the bytes reach the client directly and nothing is needed.
+     * The frames are CRLF, which nginx- and Spring-fronted upstreams emit — an endsWith
+     * test on '\n\n' reads that as mid-frame and never pings again.
+     */
+    sse((res) => {
+      res.write('event: content_block_delta\r\ndata: {"type":"content_block_delta"}\r\n\r\n');
+      setTimeout(() => {
+        res.write('event: message_stop\r\ndata: {"type":"message_stop"}\r\n\r\n');
+        res.end();
+      }, 420);
+    });
+    const res = await ask('native-model');
+    const pings = res.body.match(/event: ping/g)?.length ?? 0;
+    ok('CRLF frames do not stop the pings', pings > 0, res.body.slice(0, 200));
+    /*
+     * Exactly one, over three intervals of silence. A ping says the far end is alive, and
+     * only the upstream can know that — so one is spent per thing actually heard. Pinging
+     * on a timer instead answers the client's liveness question on the upstream's behalf,
+     * and a hung connection becomes indistinguishable from a thinking one.
+     */
+    ok('and one heard chunk buys exactly one ping', pings === 1, String(pings));
+    ok('and the upstream bytes are still relayed whole', res.body.includes('message_stop'), res.body.slice(-120));
+    // A ping is a whole frame, so nothing it lands between can be cut in half
+    ok('no frame was split by one', !/event: ping\r?\n[^\r\n]*\r?\ndata: \{"type": "content_block/.test(res.body));
+  }
+
+  console.log('\n=== A body that never finishes arriving is answered ===');
+  {
+    // The non-streaming branch: headers out, then a stall. It used to hold its slot for
+    // good, and after the bound reached it, answer with an empty 200 — which nothing retries
+    reply = (res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.flushHeaders();
+      res.write('{"choices":');
+    };
+    const res = await ask();
+    ok('the status says it failed', res.statusCode === 504, String(res.statusCode));
+    const out = JSON.parse(res.body) as { type?: string; error?: { message?: string } };
+    ok('with a body the client can read', out.type === 'error' && Boolean(out.error?.message), res.body);
+  }
+
+  console.log('\n=== A refusal keeps its words and the shape of the wire ===');
+  {
+    // Relaying an OpenAI error object under a 200 hands an Anthropic client a body it parses
+    // as a Message with no type, role or content
+    reply = (res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: "model 'x' not found" } }));
+    };
+    const res = await ask();
+    const out = JSON.parse(res.body) as { type?: string; error?: { message?: string } };
+    ok('it arrives as an Anthropic error', out.type === 'error', res.body);
+    ok('carrying what the upstream said', out.error?.message === "model 'x' not found", res.body);
   }
 
   console.log('\n=== A normal answer is untouched by any of it ===');
