@@ -107,7 +107,13 @@ interface ChatState {
   loading: boolean;
   connected: boolean;
   error: string | null;
+  /** The mobile drawer. Transient: choosing a conversation closes it again */
   sidebarOpen: boolean;
+  /**
+   * Whether the wide-screen sidebar is folded away. A preference rather than a state — it
+   * is remembered per device, and none of the conversation traffic touches it.
+   */
+  sidebarCollapsed: boolean;
 
   bootstrap: (agent: AgentId) => Promise<void>;
   reset: () => void;
@@ -122,6 +128,15 @@ interface ChatState {
   setThinking: (thinking: boolean) => Promise<void>;
   remove: (id: string) => Promise<void>;
   setSidebar: (open: boolean) => void;
+  /**
+   * Show and hide the sidebar, whichever of the two it is at this width.
+   *
+   * One button says "hide the sidebar" and the viewport decides what that means: the drawer
+   * shuts on a narrow screen, the column folds on a wide one. The caller cannot tell them
+   * apart — the breakpoint is a CSS class, not something React knows — so both are set.
+   */
+  showSidebar: () => void;
+  hideSidebar: () => void;
   bumpFiles: () => void;
   dismissError: () => void;
   _applyBatch: (batch: ServerEvent[]) => void;
@@ -176,6 +191,14 @@ function findBlock(msgs: ChatMessage[], blockId: number): LiveBlock | undefined 
   return undefined;
 }
 
+/**
+ * Where the folded sidebar is remembered.
+ *
+ * On the device, like the theme and the language, and for the same reason: which of your
+ * screens has room for a conversation list is not a fact about your account.
+ */
+const COLLAPSED_KEY = 'agentlodge-sidebar-collapsed';
+
 export const useChat = create<ChatState>((set, get) => ({
   agent: 'claude',
   conversations: [],
@@ -192,8 +215,17 @@ export const useChat = create<ChatState>((set, get) => ({
   connected: false,
   error: null,
   sidebarOpen: false,
+  sidebarCollapsed: localStorage.getItem(COLLAPSED_KEY) === '1',
 
   setSidebar: (open) => set({ sidebarOpen: open }),
+  showSidebar: () => {
+    localStorage.setItem(COLLAPSED_KEY, '0');
+    set({ sidebarOpen: true, sidebarCollapsed: false });
+  },
+  hideSidebar: () => {
+    localStorage.setItem(COLLAPSED_KEY, '1');
+    set({ sidebarOpen: false, sidebarCollapsed: true });
+  },
   bumpFiles: () => set((s) => ({ filesVersion: s.filesVersion + 1 })),
   dismissError: () => set({ error: null }),
 

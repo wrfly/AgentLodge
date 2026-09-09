@@ -1,5 +1,7 @@
-import { Loader2 } from 'lucide-react';
+import { Loader2, PanelLeft } from 'lucide-react';
 import clsx from 'clsx';
+import { useChat } from '../store/chat';
+import { useT } from '../lib/i18n';
 
 /** Page shell: settings, usage, memory and the admin console all share this layout */
 export function Page({
@@ -13,10 +15,28 @@ export function Page({
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const t = useT();
+  const showSidebar = useChat((s) => s.showSidebar);
+  const sidebarCollapsed = useChat((s) => s.sidebarCollapsed);
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-4xl px-5 py-8 pb-20">
         <header className="mb-7 flex items-start gap-4">
+          {/*
+            These pages have no header bar of their own, so a folded sidebar would leave
+            them with no way back to it. Beside the title is the only fixed point they have.
+          */}
+          {sidebarCollapsed && (
+            <button
+              onClick={showSidebar}
+              className="mt-1 hidden size-8 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-bubble hover:text-ink md:flex"
+              aria-label={t('Open sidebar')}
+              title={t('Open sidebar')}
+            >
+              <PanelLeft size={17} />
+            </button>
+          )}
           <div className="min-w-0 flex-1">
             <h1 className="text-[22px] font-semibold tracking-tight">{title}</h1>
             {subtitle && <p className="mt-1 text-[13.5px] text-muted">{subtitle}</p>}

@@ -92,6 +92,7 @@ function Content({ route }: { route: Route }) {
 
 function Shell({ route }: { route: Route }) {
   const sidebarOpen = useChat((s) => s.sidebarOpen);
+  const sidebarCollapsed = useChat((s) => s.sidebarCollapsed);
   const setSidebar = useChat((s) => s.setSidebar);
   const refreshList = useChat((s) => s.refreshList);
   const loadAgents = useAgents((s) => s.load);
@@ -126,8 +127,18 @@ function Shell({ route }: { route: Route }) {
 
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-bg text-ink">
-      {/* Always-on sidebar, desktop */}
-      <div className="hidden md:flex">
+      {/*
+        The sidebar, desktop. Folded to nothing rather than unmounted, so it slides instead
+        of blinking — and `inert` while it is folded, or tabbing would walk into a column
+        nobody can see.
+      */}
+      <div
+        inert={sidebarCollapsed}
+        className={clsx(
+          'hidden overflow-hidden transition-[width] duration-200 ease-out md:block',
+          sidebarCollapsed ? 'w-0' : 'w-[260px]',
+        )}
+      >
         <Sidebar agent={agent} />
       </div>
 

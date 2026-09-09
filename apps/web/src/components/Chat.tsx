@@ -80,7 +80,8 @@ export function Chat({ agent }: { agent: AgentId }) {
   const connected = useChat((s) => s.connected);
   const error = useChat((s) => s.error);
   const dismissError = useChat((s) => s.dismissError);
-  const setSidebar = useChat((s) => s.setSidebar);
+  const showSidebar = useChat((s) => s.showSidebar);
+  const sidebarCollapsed = useChat((s) => s.sidebarCollapsed);
   const activeId = useChat((s) => s.activeId);
 
   const agentInfo = useAgents((s) => s.info(agent));
@@ -125,10 +126,16 @@ export function Chat({ agent }: { agent: AgentId }) {
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3">
+        {/* The drawer's handle on a narrow screen, and the way back from a folded
+            sidebar on a wide one — where it is there only while it is folded */}
         <button
-          onClick={() => setSidebar(true)}
-          className="flex size-8 items-center justify-center rounded-md text-muted hover:bg-bubble hover:text-ink md:hidden"
+          onClick={showSidebar}
+          className={clsx(
+            'flex size-8 items-center justify-center rounded-md text-muted hover:bg-bubble hover:text-ink',
+            !sidebarCollapsed && 'md:hidden',
+          )}
           aria-label={t("Open sidebar")}
+          title={t("Open sidebar")}
         >
           <PanelLeft size={17} />
         </button>
