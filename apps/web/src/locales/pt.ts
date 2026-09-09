@@ -225,7 +225,6 @@ export const pt: Record<string, string> = {
   'period started {when}': 'período iniciado {when}',
   'an administrator reset it manually': 'um administrador repôs isto à mão',
   'warn only, not enforced': 'apenas avisar, sem bloquear',
-  'Billable tokens = input + cache read×0.1 + cache write + output×1.5 (weights are set by an administrator)': 'Tokens faturáveis = entrada + cache lida×0,1 + cache escrita + saída×1,5 (os pesos são definidos por um administrador)',
   '{n} turns': '{n} turnos',
   'By period': 'Por período',
   Custom: 'Personalizado',
@@ -610,4 +609,14 @@ export const pt: Record<string, string> = {
   'Currency': 'Moeda',
   'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'A moeda da tabela de preços. Alterá-la apenas reetiqueta, não converte nada: reescreva as linhas em conformidade.',
   'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Só para um modelo que a tabela de preços não consegue tarifar. Normalmente a quota conta o que o turno custou.',
+  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Os tokens faturáveis são o custo real do turno, expresso em tokens de entrada à tarifa padrão — um modelo mais caro consome mais da mesma quota',
+
+  // Admin: the price table
+  'Price table': 'Tabela de preços',
+  'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': 'Por milhão de tokens. A quota conta o que o turno custou, pelo que esta tabela decide tanto a fatura como as recusas.',
+  'Cache read': 'Leitura de cache',
+  'Cache write': 'Escrita de cache',
+  'catch-all, and the unit quota is counted in': 'linha de recurso, e a unidade dos tokens faturáveis',
+  'Add a price': 'Adicionar um preço',
+  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Uma alteração de preço é uma linha nova, pelo que as faturas antigas mantêm o preço da sua altura. Uma só moeda para toda a tabela — os valores são somados.',
 };

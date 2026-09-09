@@ -225,7 +225,6 @@ export const fr: Record<string, string> = {
   'period started {when}': 'période commencée {when}',
   'an administrator reset it manually': 'un administrateur l\'a réinitialisé à la main',
   'warn only, not enforced': 'avertir seulement, sans bloquer',
-  'Billable tokens = input + cache read×0.1 + cache write + output×1.5 (weights are set by an administrator)': 'Jetons facturables = entrée + cache lu×0,1 + cache écrit + sortie×1,5 (les coefficients sont fixés par un administrateur)',
   '{n} turns': '{n} tours',
   'By period': 'Par période',
   Custom: 'Personnalisé',
@@ -610,4 +609,14 @@ export const fr: Record<string, string> = {
   'Currency': 'Devise',
   'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'La devise de la table des prix. La changer ne fait que réétiqueter, sans rien convertir : réécrivez les lignes en conséquence.',
   'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Uniquement pour un modèle que la table des prix ne sait pas tarifer. Le quota compte normalement ce qu\'un tour a coûté.',
+  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Les tokens facturés sont le coût réel d\'un tour, exprimé en tokens d\'entrée au tarif standard : un modèle plus cher consomme davantage du même quota',
+
+  // Admin: the price table
+  'Price table': 'Table des prix',
+  'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': 'Par million de tokens. Le quota compte ce qu’un tour a coûté : cette table décide donc de la facture comme des refus.',
+  'Cache read': 'Lecture cache',
+  'Cache write': 'Écriture cache',
+  'catch-all, and the unit quota is counted in': 'ligne par défaut, et unité des tokens facturés',
+  'Add a price': 'Ajouter un prix',
+  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Un changement de prix est une nouvelle ligne, si bien que les factures passées gardent le prix de leur époque. Une seule devise pour toute la table : les montants sont additionnés.',
 };

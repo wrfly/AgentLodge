@@ -182,7 +182,9 @@ export function UsagePage() {
   return (
     <Page
       title={t('Usage')}
-      subtitle={t('Billable tokens = input + cache read×0.1 + cache write + output×1.5 (weights are set by an administrator)')}
+      // The formula this used to quote is now only the fallback branch. Quota counts what a
+      // turn cost, so the same token count on two models is two different numbers.
+      subtitle={t('Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota')}
       actions={
         <Button onClick={() => void load()} loading={busy}>
           <RefreshCw size={13} />

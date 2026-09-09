@@ -226,7 +226,6 @@ export const zhHant: Record<string, string> = {
   'period started {when}': '週期起於 {when}',
   'an administrator reset it manually': '管理員手動重置過',
   'warn only, not enforced': '僅警告，不攔截',
-  'Billable tokens = input + cache read×0.1 + cache write + output×1.5 (weights are set by an administrator)': '計費 tokens = 輸入 + 快取讀×0.1 + 快取寫 + 輸出×1.5（權重由管理員設定）',
   '{n} turns': '{n} 輪',
   'By period': '按週期',
   Custom: '自訂',
@@ -611,4 +610,14 @@ export const zhHant: Record<string, string> = {
   'Currency': '幣別',
   'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': '價格表用的幣別。改這裡只是換標籤，不做任何換算——列裡的數字要自己改成對應幣別。',
   'Only for a model the price table cannot price. Quota normally counts what a turn cost.': '只在價格表算不出這個模型時才用。配額平時算的是這一輪實際花了多少錢。',
+  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': '計費 token = 這一輪實際花的錢，換算成標準價下的輸入 token —— 所以越貴的模型佔掉越多同樣的配額',
+
+  // Admin: the price table
+  'Price table': '價格表',
+  'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': '按每百萬 token 計。配額算的是這一輪實際花了多少錢，所以這張表既決定帳單也決定誰被擋下。',
+  'Cache read': '快取讀',
+  'Cache write': '快取寫',
+  'catch-all, and the unit quota is counted in': '兜底列，也是計費 token 的單位',
+  'Add a price': '新增價格',
+  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '改價是加一列新的，所以過去的帳單保留當時的價格。整張表只能用一種幣別——金額是直接相加的。',
 };

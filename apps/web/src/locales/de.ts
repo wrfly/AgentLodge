@@ -225,7 +225,6 @@ export const de: Record<string, string> = {
   'period started {when}': 'Zeitraum begann {when}',
   'an administrator reset it manually': 'ein Administrator hat es von Hand zurückgesetzt',
   'warn only, not enforced': 'nur warnen, nicht durchsetzen',
-  'Billable tokens = input + cache read×0.1 + cache write + output×1.5 (weights are set by an administrator)': 'Abrechenbare Token = Eingabe + Cache gelesen×0,1 + Cache geschrieben + Ausgabe×1,5 (die Gewichte legt ein Administrator fest)',
   '{n} turns': '{n} Züge',
   'By period': 'Nach Zeitraum',
   Custom: 'Eigener Zeitraum',
@@ -610,4 +609,14 @@ export const de: Record<string, string> = {
   'Currency': 'Währung',
   'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'Die Währung der Preistabelle. Eine Änderung beschriftet nur neu und rechnet nichts um — passen Sie die Zeilen selbst an.',
   'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Nur für ein Modell, das die Preistabelle nicht bepreisen kann. Sonst zählt das Kontingent, was ein Zug gekostet hat.',
+  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Abrechenbare Token sind die tatsächlichen Kosten eines Zuges, ausgedrückt in Eingabetoken zum Standardtarif — ein teureres Modell verbraucht mehr desselben Kontingents',
+
+  // Admin: the price table
+  'Price table': 'Preistabelle',
+  'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': 'Pro Million Token. Das Kontingent zählt, was ein Zug gekostet hat, also entscheidet diese Tabelle über Rechnung und Ablehnung.',
+  'Cache read': 'Cache-Lesen',
+  'Cache write': 'Cache-Schreiben',
+  'catch-all, and the unit quota is counted in': 'Auffangzeile, und die Einheit abrechenbarer Token',
+  'Add a price': 'Preis hinzufügen',
+  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Eine Preisänderung ist eine neue Zeile, damit alte Rechnungen ihren Preis behalten. Eine Währung für die ganze Tabelle — die Beträge werden summiert.',
 };
