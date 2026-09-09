@@ -132,11 +132,24 @@ function contentOf(content: unknown): string | ChatPart[] {
   return parts;
 }
 
-/** Whatever is left once the images are taken out, for the places that can only hold text */
-function flatten(content: string | ChatPart[]): string {
-  return typeof content === 'string'
-    ? content
-    : content.map((p) => (p.type === 'text' ? p.text : '')).filter(Boolean).join('\n');
+/**
+ * Whatever is left once the images are taken out, for the places that can only hold text.
+ *
+ * An image leaves a mark. Dropping it silently is the bug `contentOf` was written to fix,
+ * and a turn whose only block was a picture would otherwise go out as `content: ''` — an
+ * empty assistant message, which some endpoints refuse outright and the rest read as the
+ * model having said nothing, while the question that follows is about a picture nobody was
+ * sent.
+ */
+function flatten(content: string | ChatPart[], carriedElsewhere = false): string {
+  if (typeof content === 'string') return content;
+  const text = content.map((p) => (p.type === 'text' ? p.text : '')).filter(Boolean).join('\n');
+  const images = content.filter((p) => p.type === 'image_url').length;
+  // A tool result's picture is lifted into a message that can hold it, so there is nothing
+  // to mark; a turn that simply cannot carry one is where the mark belongs
+  if (!images || carriedElsewhere) return text;
+  const mark = images === 1 ? '[image]' : `[${images} images]`;
+  return text ? `${text}\n${mark}` : mark;
 }
 
 export function anthropicRequestToChat(body: AnthropicRequest, model: string): unknown {
@@ -153,20 +166,30 @@ export function anthropicRequestToChat(body: AnthropicRequest, model: string): u
       continue;
     }
 
-    // A tool_result has to become its own role:'tool' message — that is how OpenAI
-    // expresses it. A tool role holds text only there, so an image a tool returned is
-    // lifted into a user message of its own rather than dropped.
+    /*
+     * A tool_result becomes its own role:'tool' message — that is how OpenAI expresses it.
+     * A tool role holds text only there, so an image a tool returned is lifted into a user
+     * message rather than dropped.
+     *
+     * **After the whole run, not beside the one it came from.** The tool messages have to
+     * follow the assistant's tool_calls without anything in between: with two parallel
+     * calls where the first returns a screenshot, putting the image straight after it
+     * leaves the second tool message orphaned, and an OpenAI-compatible endpoint answers
+     * "messages with role 'tool' must be a response to a preceding message with
+     * 'tool_calls'" — for every later turn as well, since each replays the same history.
+     */
     const toolResults = blocks.filter((b) => b.type === 'tool_result');
+    const lifted: ChatPart[] = [];
     for (const t of toolResults) {
       const inner = contentOf(t.content);
       messages.push({
         role: 'tool',
         tool_call_id: t.tool_use_id ?? '',
-        content: flatten(inner) || (t.is_error ? '(the tool failed)' : ''),
+        content: flatten(inner, true) || (t.is_error ? '(the tool failed)' : ''),
       });
-      const images = typeof inner === 'string' ? [] : inner.filter((p) => p.type === 'image_url');
-      if (images.length) messages.push({ role: 'user', content: images });
+      if (typeof inner !== 'string') lifted.push(...inner.filter((p) => p.type === 'image_url'));
     }
+    if (lifted.length) messages.push({ role: 'user', content: lifted });
 
     const toolUses = blocks.filter((b) => b.type === 'tool_use');
     /*
@@ -229,6 +252,29 @@ const STOP_REASON: Record<string, string> = {
   content_filter: 'stop_sequence',
 };
 
+/**
+ * Whether a body is the upstream saying no.
+ *
+ * Not the status code: an OpenAI-compatible server routinely answers 200 with an error
+ * object — Ollama and llama.cpp do it for a model that will not load, and vLLM and LiteLLM
+ * report a late failure (context overflow, a template error, an OOM) in band on a stream
+ * that has already begun. What identifies a refusal is the shape, so that is what is
+ * tested: an `error` and no `choices` to answer with.
+ */
+export function isErrorBody(parsed: unknown): parsed is { error?: { message?: string } } {
+  if (!parsed || typeof parsed !== 'object') return false;
+  const b = parsed as { error?: unknown; choices?: unknown };
+  return b.error !== undefined && b.error !== null && !Array.isArray(b.choices);
+}
+
+/** What the upstream said, as plainly as it can be recovered */
+export function errorTextOf(parsed: unknown): string {
+  const e = (parsed as { error?: unknown }).error;
+  if (typeof e === 'string') return e;
+  const m = (e as { message?: unknown })?.message;
+  return typeof m === 'string' ? m : JSON.stringify(e);
+}
+
 interface ChatChunk {
   model?: string;
   choices?: {
@@ -251,6 +297,8 @@ interface ChatChunk {
 export class ChatToAnthropic {
   private buf = '';
   private started = false;
+  /** Set once the upstream has refused; nothing after it is worth translating */
+  private failed = false;
   private textOpen = false;
   private nextIndex = 0;
   /** OpenAI's tool_call index to the Anthropic block index we assigned */
@@ -285,6 +333,16 @@ export class ChatToAnthropic {
         c = JSON.parse(payload) as ChatChunk;
       } catch {
         continue;
+      }
+      /*
+       * A refusal that arrived mid-stream. It cannot be relayed as it stands — the client
+       * is reading Anthropic frames by now — so it becomes the one Anthropic frame that
+       * means the same thing, carrying the upstream's own words, which is what the retry
+       * path reads. Nothing after it is translated.
+       */
+      if (isErrorBody(c)) {
+        this.failed = true;
+        return out + this.ev('error', { type: 'error', error: { type: 'api_error', message: errorTextOf(c) } });
       }
       out += this.absorb(c);
     }
@@ -371,6 +429,8 @@ export class ChatToAnthropic {
 
   /** The upstream stream ended; emit the closing events */
   end(): string {
+    // A stream that ended in an error has had its last word already
+    if (this.failed) return '';
     let out = '';
     if (!this.started) {
       // The upstream produced nothing at all, most likely an error — the CLI still needs
@@ -413,6 +473,11 @@ export function chatResponseToAnthropic(text: string, model: string): string {
   } catch {
     return text;
   }
+
+  // A refusal goes back as it was written. Claude Code drops a rejected capability and
+  // retries by matching the upstream's own wording, and a message with nothing in it says
+  // nothing it can match — see relay.test.ts.
+  if (isErrorBody(body)) return text;
 
   const msg = body.choices?.[0]?.message;
   const content: unknown[] = [];
@@ -546,6 +611,7 @@ export function responsesRequestToChat(body: ResponsesRequest, model: string): u
 export class ChatToResponses {
   private buf = '';
   private created = false;
+  private failed = false;
   private msgOpen = false;
   private text = '';
   private outputIndex = 0;
@@ -574,11 +640,19 @@ export class ChatToResponses {
       if (!t.startsWith('data:')) continue;
       const payload = t.slice(5).trim();
       if (!payload || payload === '[DONE]') continue;
+      let c: ChatChunk;
       try {
-        out += this.absorb(JSON.parse(payload) as ChatChunk);
+        c = JSON.parse(payload) as ChatChunk;
       } catch {
-        /* Not valid JSON: skip this frame */
+        continue; // Not valid JSON: skip this frame
       }
+      // As on the Anthropic side: a refusal becomes the frame that means refusal, with the
+      // upstream's wording kept
+      if (isErrorBody(c)) {
+        this.failed = true;
+        return out + this.ev('error', { type: 'error', code: 'upstream_error', message: errorTextOf(c) });
+      }
+      out += this.absorb(c);
     }
     return out;
   }
@@ -690,6 +764,7 @@ export class ChatToResponses {
   }
 
   end(): string {
+    if (this.failed) return '';
     let out = '';
     const output: unknown[] = [];
 
