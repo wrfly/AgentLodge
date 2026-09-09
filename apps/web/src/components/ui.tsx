@@ -141,6 +141,31 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   );
 }
 
+/**
+ * The switch itself, with no button around it.
+ *
+ * A menu row is one control from edge to edge — the whole row is the button — and a second
+ * `<button>` inside it is invalid HTML that swallows the click. Callers in that position
+ * take the track and own the `role="switch"` themselves.
+ */
+export function SwitchTrack({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={clsx(
+        'relative h-[18px] w-8 shrink-0 rounded-full transition',
+        checked ? 'bg-accent' : 'bg-line-strong',
+      )}
+    >
+      <span
+        className={clsx(
+          'absolute top-0.5 size-3.5 rounded-full bg-white shadow-sm transition-all',
+          checked ? 'left-[17px]' : 'left-0.5',
+        )}
+      />
+    </span>
+  );
+}
+
 export function Toggle({
   checked,
   onChange,
@@ -162,19 +187,7 @@ export function Toggle({
       onClick={() => onChange(!checked)}
       className={clsx('flex items-center gap-2.5', disabled && 'cursor-not-allowed opacity-50')}
     >
-      <span
-        className={clsx(
-          'relative h-[18px] w-8 rounded-full transition',
-          checked ? 'bg-accent' : 'bg-line-strong',
-        )}
-      >
-        <span
-          className={clsx(
-            'absolute top-0.5 size-3.5 rounded-full bg-white shadow-sm transition-all',
-            checked ? 'left-[17px]' : 'left-0.5',
-          )}
-        />
-      </span>
+      <SwitchTrack checked={checked} />
       {label && <span className="text-[13.5px]">{label}</span>}
     </button>
   );
