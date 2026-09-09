@@ -600,12 +600,14 @@ export const fr: Record<string, string> = {
   'At most {n} files at a time': '{n} fichiers au maximum à la fois',
   'Attached: {files}': 'Pièces jointes : {files}',
 
-  // Quota: counting tokens at a model price
-  'Count tokens at the price of': 'Compter les tokens au prix de quel modèle',
-  'A model name. Empty uses the flat weights below for every model. Naming one converts every model\'s tokens to that model\'s input-token equivalent, so a costlier model draws more quota. Needs a price row for both models; falls back to the weights when either is missing.': 'Un nom de modèle. Vide : les pondérations fixes ci-dessous s\'appliquent à tous les modèles. Renseigné, les tokens de chaque modèle sont convertis, au prorata des prix, en équivalent tokens d\'entrée de ce modèle, si bien qu\'un modèle plus cher consomme davantage de quota. Une ligne de prix est nécessaire pour les deux modèles ; à défaut, retour aux pondérations.',
 
   // Usage table columns
   'In': 'Entrée',
   'Out': 'Sortie',
   'Cost': 'Coût',
+
+  // Billing currency and the fallback weights
+  'Currency': 'Devise',
+  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'La devise de la table des prix. La changer ne fait que réétiqueter, sans rien convertir : réécrivez les lignes en conséquence.',
+  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Uniquement pour un modèle que la table des prix ne sait pas tarifer. Le quota compte normalement ce qu\'un tour a coûté.',
 };

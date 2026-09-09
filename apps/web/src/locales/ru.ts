@@ -627,12 +627,14 @@ export const ru: Record<string, string> = {
   'At most {n} files at a time': 'Не более {n} файлов за раз',
   'Attached: {files}': 'Вложения: {files}',
 
-  // Quota: counting tokens at a model price
-  'Count tokens at the price of': 'По цене какой модели считать токены',
-  'A model name. Empty uses the flat weights below for every model. Naming one converts every model\'s tokens to that model\'s input-token equivalent, so a costlier model draws more quota. Needs a price row for both models; falls back to the weights when either is missing.': 'Имя модели. Пусто — для всех моделей действуют фиксированные коэффициенты ниже. Если указать, токены каждой модели пересчитываются по соотношению цен в эквивалент входных токенов этой модели, поэтому дорогая модель расходует больше квоты. Нужны строки цен для обеих моделей; иначе возврат к коэффициентам.',
 
   // Usage table columns
   'In': 'Вход',
   'Out': 'Выход',
   'Cost': 'Стоимость',
+
+  // Billing currency and the fallback weights
+  'Currency': 'Валюта',
+  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'Валюта таблицы цен. Изменение лишь меняет подпись и ничего не пересчитывает — перепишите строки под неё.',
+  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Только для модели, которую таблица цен не может оценить. Обычно квота считает фактическую стоимость хода.',
 };

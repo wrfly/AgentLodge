@@ -277,25 +277,18 @@ export const SETTING_SPECS: SettingSpec[] = [
   },
   {
     /*
-     * Empty is the old behaviour: the weights below, applied to every model alike.
-     *
-     * Naming a model turns that off and counts tokens by what they cost instead. One
-     * "billable token" becomes one input token of the named model, and every other model's
-     * tokens are converted at the ratio of their prices — so an hour on a model that costs
-     * twice as much draws twice as much quota, which flat weights cannot express. The price
-     * table is the only place any of it is written down, and it already knows the awkward
-     * cases: Claude Fable reads its cache at a fortieth of its input price where most
-     * models are at a tenth.
-     *
-     * Left empty because turning it on changes what every existing ceiling means.
+     * One table, one currency. Every amount in the price table is summed — into a turn's
+     * cost, a user's month, the platform's total — and a sum over two currencies is not a
+     * number. Changing this does not convert anything; it relabels, and the rows have to be
+     * rewritten to match.
      */
-    key: 'quota.pricingBaseline',
-    span: 4,
-    label: 'Count tokens at the price of',
+    key: 'billing.currency',
+    span: 2,
+    label: 'Currency',
     group: 'quota',
     type: 'string',
-    default: '',
-    hint: 'A model name. Empty uses the flat weights below for every model. Naming one converts every model\'s tokens to that model\'s input-token equivalent, so a costlier model draws more quota. Needs a price row for both models; falls back to the weights when either is missing.',
+    default: 'USD',
+    hint: 'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.',
   },
   {
     key: 'quota.weightCacheRead',
@@ -304,7 +297,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'quota',
     type: 'number',
     default: '0.1',
-    hint: 'Multiplier for cache reads.',
+    hint: 'Only for a model the price table cannot price. Quota normally counts what a turn cost.',
   },
   {
     key: 'quota.weightOutput',
@@ -313,7 +306,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'quota',
     type: 'number',
     default: '1.5',
-    hint: 'Multiplier for output tokens.',
+    hint: 'Only for a model the price table cannot price. Quota normally counts what a turn cost.',
   },
 
   // agent

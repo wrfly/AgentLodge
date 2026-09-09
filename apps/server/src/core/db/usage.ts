@@ -1,5 +1,5 @@
 import { all, get, localDay, nowIso, run } from './index.js';
-import { getString, quotaAnchor, quotaWeights } from './settings.js';
+import { quotaAnchor, quotaWeights } from './settings.js';
 import {
   periodEndAt,
   periodStartAt,
@@ -31,34 +31,30 @@ export interface RecordInput {
 }
 
 /**
- * Convert to billable tokens.
+ * Convert to billable tokens: what the turn cost, expressed as a count.
  *
- * Two ways, and which one is in use is `quota.pricingBaseline`.
+ * A plain sum of tokens is badly distorted in two directions. Within one turn, a cache hit
+ * costs a fraction of ordinary input and output costs several times more. Across models, the
+ * prices differ by a factor of ten over a single vendor's range — Claude Fable is $10/$50
+ * per MTok against Haiku's $1/$5 — so counting tokens alike means somebody on the expensive
+ * model spends ten times as much and draws exactly as much quota.
  *
- * **Flat weights**, the default and what this always did: a cache hit costs far less than
- * ordinary input and output costs more, so a plain sum is badly distorted, and the weights
- * correct for it. What they cannot correct for is the model: every model's tokens weigh the
- * same, while the prices behind them differ by a factor of ten across a single vendor's
- * range. Somebody working on the most expensive model spends ten times as much as somebody
- * on the cheapest and draws exactly as much quota.
+ * Both come out of the price table, which is where the real numbers already are. The turn is
+ * costed, then divided by what one input token costs at the catch-all price — the `*` row,
+ * which every table has and which nothing else moves. So a billable token means "one input
+ * token at the standard rate", every model converts at the ratio of its own prices, and the
+ * awkward cases need no configuring: Claude Fable reads its cache at a fortieth of its input
+ * price where the rest of the range is at a tenth, which one global weight cannot say.
  *
- * **At the price of a named model**, when the setting names one: the turn is costed from
- * the price table and divided by what one input token of the baseline costs. A billable
- * token then means "one input token of the baseline model", every model converts at the
- * ratio of its real prices, and the awkward cases come along for free — Claude Fable reads
- * its cache at a fortieth of its input price where most models are at a tenth, which no
- * single global weight can express.
- *
- * A model with no price of its own falls back to the weights rather than to zero: a
- * mispriced table must not silently make a model free.
+ * The weights below are what is left when the table cannot answer — no rows at all, or a
+ * model priced at zero. Falling through to zero instead would let a mispriced table quietly
+ * make a model free.
  */
 export function billable(u: TurnUsage, model?: string | null, providerId?: string | null): number {
-  const baseline = getString('quota.pricingBaseline', '').trim();
-  if (baseline) {
-    const cost = pricing.costMicro(model, u, undefined, providerId);
-    const per = pricing.inputMicroPerToken(baseline);
-    if (cost > 0 && per > 0) return Math.round(cost / per);
-  }
+  const cost = pricing.costMicro(model, u, undefined, providerId);
+  const perToken = pricing.inputMicroPerToken('*');
+  if (cost > 0 && perToken > 0) return Math.round(cost / perToken);
+
   const w = quotaWeights();
   return Math.round(
     u.inputTokens * w.input +
