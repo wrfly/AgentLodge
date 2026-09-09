@@ -978,7 +978,8 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 | `MAX_UPSTREAM_CONCURRENCY` | `3` | **每条上游**的 in-flight 上限，后台可热调。每条上游一个池子，各自计数 |
 | `PER_USER_INFLIGHT_MAX` | `2` | 单用户最多占几个 slot |
 | `UPSTREAM_HEADERS_TIMEOUT_MS` | `90000` | 上游多久没给响应头就放弃，回 504（CLI 会重试） |
-| `UPSTREAM_IDLE_TIMEOUT_MS` | `180000` | 流式响应中途多久没有字节就断开 |
+| `UPSTREAM_IDLE_TIMEOUT_MS` | `330000` | 上游多久没给字节就放弃。**故意大于 300 秒**：Claude Code 自己数字节，静默 300 秒就放弃，网关先掐会把「慢」变成「截断」，所以这条只当客户端已经走了、socket 还没察觉时的兜底。真触发时会往流里写一个 error 帧，客户端不会把半截答案当完整的。0 关掉 |
+| `STREAM_KEEP_ALIVE_MS` | `15000` | 多久没有东西发给客户端就补一个 ping。计时从**上一次写给客户端**算起，不是从上游最后说话算起——推理流、心跳注释、只有 role 的首个 delta 都到得了网关而到不了客户端。0 关掉 |
 | `POOL_SHARE_CACHE_MS` | `5000` | 无上限用户份额的分母（全平台该窗口用量）复用多久；0 关掉 |
 | `AUDIT_LOG_RETENTION_DAYS` | `365` | 后台审计日志保留天数；0 永久保留 |
 | `USE_CONTAINERS` | `false` | 开启每用户容器隔离 |
@@ -989,6 +990,9 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 | `MAIL_API_KEY` / `MAIL_FROM` | — | 前者给 resend 和 brevo；后者是发件地址，服务商那边得验证过 |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | — / `587` | `MAIL_PROVIDER=smtp` 时用。587 和 25 先明文再 STARTTLS，465 从第一个字节就是 TLS |
 | `APP_BASE_URL` | `http://localhost:5173` | 邮件里的链接前缀 |
+
+> ⚠️ 上面几个以毫秒计的变量都接受 `0`（关掉）。写成空值、带单位（`30s`）、或者大于 24.86 天的数，
+> 都会被当作没设而用默认值——这几种以前会让 `setTimeout` 按 1 毫秒触发，每个请求当场断掉。
 
 > ⚠️ **`bypassPermissions` 允许 agent 执行任意命令。** 这在容器里是安全的（容器就是沙箱），
 > 但 `USE_CONTAINERS=false` 时 agent 直接跑在宿主机上，工作目录只是路径隔离而非安全隔离。

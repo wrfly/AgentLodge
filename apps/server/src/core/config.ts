@@ -10,6 +10,29 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // Move this file and you must update this.
 const repoRoot = path.resolve(here, '../../../..');
 
+/**
+ * A duration from the environment, in milliseconds.
+ *
+ * Node clamps a timer delay it cannot use to about a millisecond, and there are three ways
+ * to hand it one. `Number('')` is 0 and `Number('30s')` is NaN, so a variable left empty in
+ * a compose file or written with a unit aborted every request instead of doing nothing.
+ * Anything above 2³¹−1 milliseconds — 24.86 days, which is what somebody reaching for
+ * "effectively no limit" types — overflows and fires at once. And a fraction below 1
+ * truncates to zero, which for an interval is a flood rather than a stop.
+ *
+ * So the range is checked at both ends, and only an exact zero survives as a number,
+ * because all of these read zero as "off".
+ */
+const TIMER_MAX = 2_147_483_647;
+
+function ms(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > TIMER_MAX) return fallback;
+  // Below a millisecond is not a delay anybody meant; zero is the off switch
+  return n === 0 ? 0 : Math.max(1, Math.round(n));
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 8787),
   host: process.env.HOST ?? '127.0.0.1',
@@ -149,9 +172,27 @@ export const config = {
    * How long the upstream may take to start answering, and how long a stream may then go
    * quiet. Without either, an upstream that accepted the connection and never answered
    * held its slot and the CLI until the CLI's own ten-minute limit gave up.
+   *
+   * The idle bound is deliberately **above** the client's own. Claude Code counts every
+   * byte a gateway relays and gives up after 300 seconds of silence; a gateway that cuts
+   * first takes that decision away from it. So this is the backstop for the case the client
+   * cannot see — it has gone, and the socket has not noticed — and `streamKeepAliveMs`
+   * below is what keeps its clock from reaching zero on a stream that is merely thinking.
+   * Either at 0 is off.
    */
-  upstreamHeadersTimeoutMs: Number(process.env.UPSTREAM_HEADERS_TIMEOUT_MS ?? 90_000),
-  upstreamIdleTimeoutMs: Number(process.env.UPSTREAM_IDLE_TIMEOUT_MS ?? 180_000),
+  upstreamHeadersTimeoutMs: ms(process.env.UPSTREAM_HEADERS_TIMEOUT_MS, 90_000),
+  upstreamIdleTimeoutMs: ms(process.env.UPSTREAM_IDLE_TIMEOUT_MS, 330_000),
+
+  /**
+   * How long a translated stream may go quiet before a keep-alive is sent.
+   *
+   * Every stream gets one, because only `api.anthropic.com` is known to send pings of its
+   * own and `anthropic-native` covers any endpoint that speaks Messages. The clock is the
+   * time since **the client** was last written to, which is not the time since the upstream
+   * spoke: a reasoning stream, a heartbeat comment and a role-only first delta all reach us
+   * and none of them reaches the client. 0 turns it off.
+   */
+  streamKeepAliveMs: ms(process.env.STREAM_KEEP_ALIVE_MS, 15_000),
 
   /**
    * How long the platform-wide total behind a pool share is reused. It is one scan over

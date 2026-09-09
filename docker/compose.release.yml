@@ -113,6 +113,11 @@ services:
       GATEWAY_PORT: "8788"
       AUDIT_PROXY_URL: *audit-proxy-url
       MAX_UPSTREAM_CONCURRENCY: ${MAX_UPSTREAM_CONCURRENCY:-3}
+      # How long a stream may go quiet before the gateway gives up, and how often it pings a
+      # client that would otherwise hear nothing. Named here because the environment block is
+      # a closed list: documented but unforwarded, they would look settable and do nothing.
+      UPSTREAM_IDLE_TIMEOUT_MS: ${UPSTREAM_IDLE_TIMEOUT_MS:-330000}
+      STREAM_KEEP_ALIVE_MS: ${STREAM_KEEP_ALIVE_MS:-15000}
       # Where upstream credentials live, when the credential-manager profile is running
       CREDENTIAL_MANAGER_SOCKET: /run/agentlodge/credential-manager.sock
     volumes:

@@ -8,7 +8,13 @@
  *
  * Run: npm -w @agentlodge/server run test:translate
  */
-import { anthropicRequestToChat, responsesRequestToChat } from './translate.js';
+import {
+  ChatToAnthropic,
+  ChatToResponses,
+  anthropicRequestToChat,
+  chatResponseToAnthropic,
+  responsesRequestToChat,
+} from './translate.js';
 
 let pass = 0;
 let fail = 0;
@@ -135,6 +141,167 @@ console.log('\n=== Tools ===');
   ok('a failed tool with nothing to say still says that', out.messages[0]!.content === '(the tool failed)');
 }
 
+console.log('\n=== Only a user turn may carry a picture ===');
+{
+  // OpenAI takes an image part in a user message and refuses one in an assistant message.
+  // Anthropic does not produce such a turn, but a client composes its own history.
+  const out = chat({
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'here it is' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } },
+        ],
+      },
+    ],
+  });
+  ok(
+    'an assistant turn keeps its words and marks what was taken out',
+    out.messages[0]!.content === 'here it is\n[image]',
+    JSON.stringify(out.messages[0]),
+  );
+}
+{
+  /*
+   * The turn whose only block was the picture. Flattening it to '' sent an empty assistant
+   * message — refused outright by some endpoints, and read by the rest as the model having
+   * said nothing, with the next question asking about an image nobody was sent.
+   */
+  const out = chat({
+    messages: [
+      { role: 'user', content: 'look' },
+      { role: 'assistant', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } }] },
+    ],
+  });
+  ok('an image-only assistant turn is not sent empty', out.messages[1]!.content === '[image]', JSON.stringify(out.messages[1]));
+  ok('and two of them say so', chat({
+    messages: [{ role: 'assistant', content: [
+      { type: 'image', source: { data: PNG } },
+      { type: 'image', source: { data: PNG } },
+    ] }],
+  }).messages[0]!.content === '[2 images]');
+}
+
+console.log('\n=== A tool run is not broken up by what one of them returned ===');
+{
+  /*
+   * The tool messages have to follow the assistant's tool_calls with nothing in between.
+   * Lifting a screenshot straight after the tool that produced it orphaned the next one,
+   * and an OpenAI-compatible endpoint refuses the whole conversation from then on.
+   */
+  const out = chat({
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'a', name: 'screenshot', input: {} },
+          { type: 'tool_use', id: 'b', name: 'ls', input: {} },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'a', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } }] },
+          { type: 'tool_result', tool_use_id: 'b', content: 'file list' },
+        ],
+      },
+    ],
+  });
+  ok(
+    'the tool replies stay together, and the picture follows them',
+    out.messages.map((m) => m.role).join(' ') === 'assistant tool tool user',
+    out.messages.map((m) => m.role).join(' '),
+  );
+  ok('both tool calls are answered', out.messages[1]!.tool_call_id === 'a' && out.messages[2]!.tool_call_id === 'b');
+  ok('and the picture is in the turn that can hold it', parts(out.messages[3]!.content)[0]?.type === 'image_url', JSON.stringify(out.messages[3]));
+}
+
+console.log('\n=== A refusal is not turned into an answer ===');
+{
+  // An OpenAI-compatible server answers 200 with an error object often enough that the
+  // status is no guide: Ollama and llama.cpp both do it for a model that will not load
+  const refusal = '{"error":{"message":"model \'x\' not found"}}';
+  ok('a non-streaming error body comes back as it was', chatResponseToAnthropic(refusal, 'm') === refusal);
+
+  const t = new ChatToAnthropic('m');
+  const out = t.push(`data: ${JSON.stringify({ error: { message: 'context length exceeded' } })}\n\n`) + t.end();
+  ok('a streaming one becomes an error frame', out.includes('event: error'), out);
+  ok('carrying the upstream\'s wording, which is what the retry path reads', out.includes('context length exceeded'), out);
+  ok('and nothing after it claims the turn finished', !out.includes('message_stop'), out);
+
+  const r = new ChatToResponses('m');
+  const rout = r.push(`data: ${JSON.stringify({ error: { message: 'no' } })}\n\n`) + r.end();
+  ok('the Responses side does the same', rout.includes('event: error') && !rout.includes('response.completed'), rout);
+}
+
+console.log('\n=== A refusal is recognised by there being no answer ===');
+{
+  /*
+   * Listing the error shapes does not work. These three all walked past a test keyed on an
+   * `error` key with no `choices`, and each is something a real server sends.
+   */
+  const shapes = [
+    ['vLLM', '{"object":"error","message":"bad request","type":"BadRequestError"}', 'bad request'],
+    ['a FastAPI or nginx front', '{"detail":"Not Found"}', 'Not Found'],
+    ['an empty choices array beside an error', '{"choices":[],"error":{"message":"boom"}}', 'boom'],
+  ] as const;
+  for (const [who, body, words] of shapes) {
+    ok(`${who}: the body is relayed as it stands`, chatResponseToAnthropic(body, 'm') === body, chatResponseToAnthropic(body, 'm'));
+    const t = new ChatToAnthropic('m');
+    const out = t.push(`data: ${body}\n\n`) + t.end();
+    ok(`${who}: streaming becomes an error frame with its words`, out.includes('event: error') && out.includes(words), out);
+  }
+  // And an answer is still an answer
+  const fine = new ChatToAnthropic('m');
+  ok(
+    'a chunk with a choice in it is translated as before',
+    fine.push('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n').includes('content_block_delta'),
+  );
+}
+
+console.log('\n=== Once refused, nothing more is translated ===');
+{
+  // The error and the frames after it can land in different reads, so the latch has to
+  // survive between calls — otherwise a second message opens and never closes
+  const t = new ChatToAnthropic('m');
+  const first = t.push('data: {"error":{"message":"boom"}}\n\n');
+  const second = t.push('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n');
+  ok('the refusal goes out once', first.includes('event: error'));
+  ok('and nothing follows it', second === '' && t.end() === '', JSON.stringify(second + t.end()));
+
+  const r = new ChatToResponses('m');
+  r.push('data: {"error":{"message":"no"}}\n\n');
+  ok('the Responses side latches too', r.push('data: {"choices":[{"delta":{"content":"x"}}]}\n\n') === '');
+}
+
+console.log('\n=== A frame the translator cannot walk is skipped, not thrown ===');
+{
+  // tool_calls as an object rather than an array: LiteLLM and some quantised servers.
+  // Throwing out of push loses the whole batch and ends the response with no body at all.
+  const odd = 'data: {"choices":[{"delta":{"tool_calls":{"0":{"id":"a"}}}}]}\n\n';
+  const good = 'data: {"choices":[{"delta":{"content":"after"}}]}\n\n';
+  const r = new ChatToResponses('m');
+  let threw = false;
+  let out = '';
+  try {
+    out = r.push(odd) + r.push(good) + r.end();
+  } catch {
+    threw = true;
+  }
+  ok('push does not throw', !threw);
+  ok('and what came after it still arrives', out.includes('after'), out.slice(0, 160));
+
+  const a = new ChatToAnthropic('m');
+  let threwA = false;
+  try {
+    a.push(odd);
+  } catch {
+    threwA = true;
+  }
+  ok('the Anthropic side likewise', !threwA);
+}
+
 console.log('\n=== The Responses side carries images too ===');
 {
   const out = responsesRequestToChat(
@@ -163,6 +330,30 @@ console.log('\n=== The Responses side carries images too ===');
   ) as ChatBody;
   ok('text-only input is still a string', out.messages[1]!.content === 'plain', JSON.stringify(out.messages[1]));
   ok('and the instructions became the system turn', out.messages[0]!.role === 'system' && out.messages[0]!.content === 'be brief');
+}
+
+{
+  // developer becomes system on the chat side, and a system turn holds text only
+  const out = responsesRequestToChat(
+    {
+      input: [
+        {
+          type: 'message',
+          role: 'developer',
+          content: [
+            { type: 'input_text', text: 'be brief' },
+            { type: 'input_image', image_url: 'data:image/png;base64,AAA' },
+          ],
+        },
+      ],
+    },
+    'm',
+  ) as ChatBody;
+  ok(
+    'a system turn keeps its words and marks the rest',
+    out.messages[0]!.content === 'be brief\n[image]',
+    JSON.stringify(out.messages[0]),
+  );
 }
 
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
