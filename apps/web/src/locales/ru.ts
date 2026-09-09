@@ -620,4 +620,10 @@ export const ru: Record<string, string> = {
   '{active} in flight · {queued} queued': '{active} в полёте · {queued} в очереди',
   '{n} versions': '{n} версий',
   'no longer offered': 'больше не предлагается',
+
+  // Composer attachments
+  'Attach files — paste or drop them here too': 'Прикрепить файлы — можно вставить или перетащить',
+  'Remove attachment': 'Убрать вложение',
+  'At most {n} files at a time': 'Не более {n} файлов за раз',
+  'Attached: {files}': 'Вложения: {files}',
 };

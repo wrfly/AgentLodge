@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Brain, Gauge, Sparkle, Square } from 'lucide-react';
+import { ArrowUp, Brain, Gauge, Paperclip, Sparkle, Square } from 'lucide-react';
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
 import { groupByVendor } from '../lib/protocol';
 import { useChat } from '../store/chat';
 import { useAgents } from '../store/agents';
 import { useQuota } from '../store/quota';
-import { fmtMoney } from '../lib/api';
+import { files, fmtMoney } from '../lib/api';
+import { Attachments, type Attachment } from './Attachments';
 import { AGENTS } from '../lib/route';
 import type { EffortOption, ModelOption, QuotaScope } from '../lib/api';
 import type { AgentId } from '../lib/protocol';
@@ -27,11 +28,43 @@ const MAX_HEIGHT = 240;
 const NO_MODELS: ModelOption[] = [];
 const NO_EFFORTS: EffortOption[] = [];
 
+/** What the server's multipart limit accepts in one request */
+const MAX_PER_UPLOAD = 10;
+
+/**
+ * What a browser calls a bitmap off the clipboard: `image.png`, and nothing more.
+ *
+ * A file copied in the file manager keeps its real name, and that name is worth keeping —
+ * it is what the person will type when they ask about it. So only the generic one is
+ * replaced.
+ */
+const CLIPBOARD_BITMAP = /^image\.[a-z0-9]+$/i;
+
+/**
+ * A name for something that arrived without a useful one.
+ *
+ * The upload route writes by name, so two pasted screenshots in one conversation would be
+ * one file. The clock makes them distinct and keeps them recognisable in the listing.
+ */
+function pastedName(file: File): string {
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace('T', '-')
+    .slice(0, 15);
+  const ext = (file.name.match(/\.[a-z0-9]+$/i)?.[0] ?? `.${file.type.split('/')[1] ?? 'bin'}`).toLowerCase();
+  return `pasted-${stamp}-${Math.random().toString(36).slice(2, 6)}${ext}`;
+}
+
 export function Composer({ agent }: { agent: AgentId }) {
   const t = useT();
   const [value, setValue] = useState('');
   const composing = useRef(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const [attached, setAttached] = useState<Attachment[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
 
   const agentLabel = AGENTS.find((a) => a.id === agent)?.label ?? agent;
 
@@ -46,6 +79,8 @@ export function Composer({ agent }: { agent: AgentId }) {
   const setEffort = useChat((s) => s.setEffort);
   const thinking = useChat((s) => s.thinking);
   const setThinking = useChat((s) => s.setThinking);
+
+  const bumpFiles = useChat((s) => s.bumpFiles);
 
   const quota = useQuota((s) => s.quota);
   const blocked = Boolean(quota?.exceeded && quota?.hardStop);
@@ -67,11 +102,101 @@ export function Composer({ agent }: { agent: AgentId }) {
     if (!streaming) ref.current?.focus();
   }, [streaming]);
 
+  // Switching conversation leaves the previous one's attachments behind: they are in that
+  // workspace, not this one, and a stale row would name a file the agent cannot see
+  useEffect(() => {
+    setAttached([]);
+    setAttachError(null);
+  }, [activeId]);
+
+  /**
+   * Put files in the conversation's workspace and hold a row for each.
+   *
+   * The upload happens now rather than at send, which is what makes a failure visible while
+   * there is still something to do about it, and what lets the row show a size. The cost is
+   * that a file attached and never sent stays in the workspace — the same as one put there
+   * through the files panel, and removable the same way.
+   */
+  const attach = async (list: File[], fromPaste = false) => {
+    if (!activeId || !list.length) return;
+    if (list.length > MAX_PER_UPLOAD) {
+      setAttachError(t('At most {n} files at a time', { n: MAX_PER_UPLOAD }));
+      return;
+    }
+    setAttachError(null);
+
+    const named = list.map((f) =>
+      !f.name || (fromPaste && CLIPBOARD_BITMAP.test(f.name))
+        ? new File([f], pastedName(f), { type: f.type })
+        : f,
+    );
+    const rows: Attachment[] = named.map((f) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name: f.name,
+      size: f.size,
+      status: 'uploading',
+    }));
+    setAttached((prev) => [...prev, ...rows]);
+
+    try {
+      const res = await files.upload(activeId, named);
+      /*
+       * The server decides the final name — it strips separators and leading dots — and
+       * that name is what the message will say and what removing one will ask to delete.
+       * Its list is in the order the parts arrived, so it lines up with these rows, unless
+       * it refused one: then the count differs and there is nothing to line up, so the rows
+       * keep the names they were given and the files panel is the place to see what landed.
+       */
+      const ids = new Set(rows.map((r) => r.id));
+      const final = res.uploaded.length === named.length ? res.uploaded : null;
+      setAttached((prev) => {
+        let n = 0;
+        return prev.map((a) =>
+          ids.has(a.id) ? { ...a, name: final?.[n++] ?? a.name, status: 'done' as const } : a,
+        );
+      });
+      bumpFiles();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const ids = new Set(rows.map((r) => r.id));
+      setAttached((prev) => prev.map((a) => (ids.has(a.id) ? { ...a, status: 'error', error: message } : a)));
+      setAttachError(message);
+    }
+  };
+
+  /** Taking a row off also takes the file out of the workspace; a failure only drops the row */
+  const detach = async (a: Attachment) => {
+    setAttached((prev) => prev.filter((x) => x.id !== a.id));
+    if (a.status !== 'done' || !activeId) return;
+    try {
+      await files.remove(activeId, a.name);
+      bumpFiles();
+    } catch {
+      /* The file stays, the row does not; the panel is where to deal with it */
+    }
+  };
+
+  const ready = attached.filter((a) => a.status === 'done');
+
   const submit = () => {
     const text = value.trim();
-    if (!text || streaming || blocked) return;
+    if (streaming || blocked) return;
+    if (!text && !ready.length) return;
+    /*
+     * The names go into the message itself. There is no image block on this path — a turn
+     * reaches the CLI as a prompt string — so naming the files is what tells the agent they
+     * are there, and its working directory is the workspace they landed in, which makes a
+     * bare name a path it can open.
+     */
+    const prompt = ready.length
+      ? [text, t('Attached: {files}', { files: ready.map((a) => a.name).join(', ') })]
+          .filter(Boolean)
+          .join('\n\n')
+      : text;
     setValue('');
-    void send(text);
+    setAttached([]);
+    setAttachError(null);
+    void send(prompt);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -82,14 +207,36 @@ export function Composer({ agent }: { agent: AgentId }) {
     submit();
   };
 
-  const canSend = value.trim().length > 0 && !streaming && !blocked;
+  const canSend = (value.trim().length > 0 || ready.length > 0) && !streaming && !blocked;
+  const busyAttaching = attached.some((a) => a.status === 'uploading');
   /** The controls under the box all change the next turn, so none of them moves during one */
   const locked = !activeId || streaming;
 
   return (
     <div className="pointer-events-none shrink-0 bg-bg pt-3">
       <div className="pointer-events-auto mx-auto w-full max-w-3xl px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-        <div className="rounded-2xl border border-line-strong bg-surface p-2 shadow-sm transition-colors focus-within:border-accent/50">
+        <div
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes('Files')) return;
+            e.preventDefault();
+            setDragging(true);
+          }}
+          // Moving onto a child fires dragleave on the parent; without this the box flickers
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+          }}
+          onDrop={(e) => {
+            if (!e.dataTransfer.files.length) return;
+            e.preventDefault();
+            setDragging(false);
+            void attach(Array.from(e.dataTransfer.files));
+          }}
+          className={clsx(
+            'rounded-2xl border bg-surface p-2 shadow-sm transition-colors',
+            dragging ? 'border-accent bg-accent-soft' : 'border-line-strong focus-within:border-accent/50',
+          )}
+        >
+          <Attachments items={attached} onRemove={(a) => void detach(a)} />
           <textarea
             ref={ref}
             value={value}
@@ -98,6 +245,14 @@ export function Composer({ agent }: { agent: AgentId }) {
             onKeyDown={onKeyDown}
             onCompositionStart={() => (composing.current = true)}
             onCompositionEnd={() => (composing.current = false)}
+            onPaste={(e) => {
+              // Only when the clipboard actually carries a file. Copying an image out of a
+              // web page brings both a file and its markup, and text has to keep winning.
+              const list = Array.from(e.clipboardData.files);
+              if (!list.length) return;
+              e.preventDefault();
+              void attach(list, true);
+            }}
             disabled={blocked}
             placeholder={
               blocked
@@ -112,6 +267,31 @@ export function Composer({ agent }: { agent: AgentId }) {
           {/* Controls share the row with the send button, under the box. Next to the
               title they were too easy to miss — nothing said they were clickable. */}
           <div className="mt-1 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => picker.current?.click()}
+              disabled={locked || busyAttaching}
+              title={t('Attach files — paste or drop them here too')}
+              aria-label={t('Attach files — paste or drop them here too')}
+              className={clsx(
+                'flex size-[26px] shrink-0 items-center justify-center rounded-lg border transition',
+                locked || busyAttaching
+                  ? 'cursor-not-allowed border-line text-faint'
+                  : 'border-line text-muted hover:border-line-strong hover:bg-bubble hover:text-ink',
+              )}
+            >
+              <Paperclip size={13} />
+            </button>
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                void attach(Array.from(e.target.files ?? []));
+                e.target.value = '';
+              }}
+            />
             <Picker
               icon={Sparkle}
               placeholder={t("Model")}
@@ -199,6 +379,8 @@ export function Composer({ agent }: { agent: AgentId }) {
               });
             })()}
           </div>
+        ) : attachError ? (
+          <div className="mt-1.5 text-center text-[11.5px] text-danger">{attachError}</div>
         ) : (
           <div className="mt-1.5 text-center text-[11px] text-faint">
             {t('Enter to send · Shift+Enter for a new line')}

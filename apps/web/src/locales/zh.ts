@@ -620,4 +620,10 @@ export const zh: Record<string, string> = {
   '{active} in flight · {queued} queued': '{active} 在途 · {queued} 排队',
   '{n} versions': '{n} 个版本',
   'no longer offered': '已不再提供',
+
+  // Composer attachments
+  'Attach files — paste or drop them here too': '添加文件——也可以直接粘贴或拖进来',
+  'Remove attachment': '移除附件',
+  'At most {n} files at a time': '一次最多 {n} 个文件',
+  'Attached: {files}': '附件：{files}',
 };

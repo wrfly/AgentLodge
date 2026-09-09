@@ -594,4 +594,10 @@ export const zhHant: Record<string, string> = {
   '{active} in flight · {queued} queued': '{active} 在途 · {queued} 排隊',
   '{n} versions': '{n} 個版本',
   'no longer offered': '已不再提供',
+
+  // Composer attachments
+  'Attach files — paste or drop them here too': '加入檔案——也可以直接貼上或拖進來',
+  'Remove attachment': '移除附件',
+  'At most {n} files at a time': '一次最多 {n} 個檔案',
+  'Attached: {files}': '附件：{files}',
 };

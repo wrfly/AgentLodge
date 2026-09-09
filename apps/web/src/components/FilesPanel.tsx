@@ -11,14 +11,9 @@ import {
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
 import { files, type FileEntry, type FilePreview } from '../lib/api';
-import { Button, Empty, Spinner } from './ui';
+import { useChat } from '../store/chat';
+import { Button, Empty, Spinner, fmtSize } from './ui';
 import { CodeBlock } from './CodeBlock';
-
-function fmtSize(n: number): string {
-  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${n} B`;
-}
 
 function langOf(name: string): string | undefined {
   const ext = name.split('.').pop()?.toLowerCase();
@@ -63,11 +58,15 @@ export function FilesPanel({
     }
   };
 
+  // filesVersion: the composer uploads too, and a panel left open would otherwise not show
+  // what was just attached
+  const filesVersion = useChat((s) => s.filesVersion);
   useEffect(() => {
     void load();
-    setSelected(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId]);
+  }, [conversationId, filesVersion]);
+
+  useEffect(() => setSelected(null), [conversationId]);
 
   const open = async (e: FileEntry) => {
     if (e.isDirectory) return;
