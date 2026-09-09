@@ -599,4 +599,13 @@ export const de: Record<string, string> = {
   'Remove attachment': 'Anhang entfernen',
   'At most {n} files at a time': 'Höchstens {n} Dateien auf einmal',
   'Attached: {files}': 'Anhänge: {files}',
+
+  // Quota: counting tokens at a model price
+  'Count tokens at the price of': 'Token zum Preis welches Modells zählen',
+  'A model name. Empty uses the flat weights below for every model. Naming one converts every model\'s tokens to that model\'s input-token equivalent, so a costlier model draws more quota. Needs a price row for both models; falls back to the weights when either is missing.': 'Ein Modellname. Leer bedeutet, dass für alle Modelle die festen Gewichte unten gelten. Mit einem Namen werden die Token jedes Modells über das Preisverhältnis in Eingabetoken dieses Modells umgerechnet, sodass ein teureres Modell mehr Kontingent verbraucht. Beide Modelle brauchen eine Preiszeile; sonst gelten wieder die Gewichte.',
+
+  // Usage table columns
+  'In': 'Eingabe',
+  'Out': 'Ausgabe',
+  'Cost': 'Kosten',
 };

@@ -1,5 +1,5 @@
 import { all, get, localDay, nowIso, run } from './index.js';
-import { quotaAnchor, quotaWeights } from './settings.js';
+import { getString, quotaAnchor, quotaWeights } from './settings.js';
 import {
   periodEndAt,
   periodStartAt,
@@ -33,11 +33,32 @@ export interface RecordInput {
 /**
  * Convert to billable tokens.
  *
- * A cache hit costs far less than ordinary input and output costs more than input, so a
- * plain sum is badly distorted. The weights are adjustable in system settings
- * (quota.weightCacheRead / quota.weightOutput).
+ * Two ways, and which one is in use is `quota.pricingBaseline`.
+ *
+ * **Flat weights**, the default and what this always did: a cache hit costs far less than
+ * ordinary input and output costs more, so a plain sum is badly distorted, and the weights
+ * correct for it. What they cannot correct for is the model: every model's tokens weigh the
+ * same, while the prices behind them differ by a factor of ten across a single vendor's
+ * range. Somebody working on the most expensive model spends ten times as much as somebody
+ * on the cheapest and draws exactly as much quota.
+ *
+ * **At the price of a named model**, when the setting names one: the turn is costed from
+ * the price table and divided by what one input token of the baseline costs. A billable
+ * token then means "one input token of the baseline model", every model converts at the
+ * ratio of its real prices, and the awkward cases come along for free — Claude Fable reads
+ * its cache at a fortieth of its input price where most models are at a tenth, which no
+ * single global weight can express.
+ *
+ * A model with no price of its own falls back to the weights rather than to zero: a
+ * mispriced table must not silently make a model free.
  */
-export function billable(u: TurnUsage): number {
+export function billable(u: TurnUsage, model?: string | null, providerId?: string | null): number {
+  const baseline = getString('quota.pricingBaseline', '').trim();
+  if (baseline) {
+    const cost = pricing.costMicro(model, u, undefined, providerId);
+    const per = pricing.inputMicroPerToken(baseline);
+    if (cost > 0 && per > 0) return Math.round(cost / per);
+  }
   const w = quotaWeights();
   return Math.round(
     u.inputTokens * w.input +
@@ -68,7 +89,7 @@ export function record(input: RecordInput): void {
     u?.cacheReadTokens ?? 0,
     u?.cacheCreationTokens ?? 0,
     u?.outputTokens ?? 0,
-    u ? billable(u) : 0,
+    u ? billable(u, input.model, input.providerId) : 0,
     u?.costUsd ?? 0,
     u ? pricing.costMicro(input.model, u, undefined, input.providerId) : 0,
     u?.durationMs ?? null,

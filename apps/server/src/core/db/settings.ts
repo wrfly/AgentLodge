@@ -276,6 +276,28 @@ export const SETTING_SPECS: SettingSpec[] = [
     hint: '0–23, server time.',
   },
   {
+    /*
+     * Empty is the old behaviour: the weights below, applied to every model alike.
+     *
+     * Naming a model turns that off and counts tokens by what they cost instead. One
+     * "billable token" becomes one input token of the named model, and every other model's
+     * tokens are converted at the ratio of their prices — so an hour on a model that costs
+     * twice as much draws twice as much quota, which flat weights cannot express. The price
+     * table is the only place any of it is written down, and it already knows the awkward
+     * cases: Claude Fable reads its cache at a fortieth of its input price where most
+     * models are at a tenth.
+     *
+     * Left empty because turning it on changes what every existing ceiling means.
+     */
+    key: 'quota.pricingBaseline',
+    span: 4,
+    label: 'Count tokens at the price of',
+    group: 'quota',
+    type: 'string',
+    default: '',
+    hint: 'A model name. Empty uses the flat weights below for every model. Naming one converts every model\'s tokens to that model\'s input-token equivalent, so a costlier model draws more quota. Needs a price row for both models; falls back to the weights when either is missing.',
+  },
+  {
     key: 'quota.weightCacheRead',
     span: 2,
     label: 'Cache-hit weight',

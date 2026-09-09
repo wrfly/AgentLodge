@@ -626,4 +626,13 @@ export const ja: Record<string, string> = {
   'Remove attachment': '添付を外す',
   'At most {n} files at a time': '一度に添付できるのは {n} 件までです',
   'Attached: {files}': '添付：{files}',
+
+  // Quota: counting tokens at a model price
+  'Count tokens at the price of': 'どのモデルの価格でトークンを換算するか',
+  'A model name. Empty uses the flat weights below for every model. Naming one converts every model\'s tokens to that model\'s input-token equivalent, so a costlier model draws more quota. Needs a price row for both models; falls back to the weights when either is missing.': 'モデル名を入れます。空なら全モデルに下の固定係数を使います。指定すると各モデルのトークンを価格比でそのモデルの入力トークン相当に換算するので、高価なモデルほど多くクォータを消費します。両モデルに価格行が必要で、欠けていれば係数に戻ります。',
+
+  // Usage table columns
+  'In': '入力',
+  'Out': '出力',
+  'Cost': '料金',
 };

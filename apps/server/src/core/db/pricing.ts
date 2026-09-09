@@ -151,6 +151,18 @@ export interface TokenCounts {
 }
 
 /** Cost in micro-units. No matching price returns 0, and the interface says the model is unpriced. */
+/**
+ * What a single input token of one model costs, in micro-units.
+ *
+ * The unit quota is measured in when `quota.pricingBaseline` names a model: every model's
+ * spend is divided by this to get "tokens of the baseline model", which is a number an
+ * administrator can set a ceiling in and compare across models.
+ */
+export function inputMicroPerToken(model: string, at?: string, providerId?: string | null): number {
+  const p = resolve(model, at, providerId);
+  return p ? p.priceInput / 1_000_000 : 0;
+}
+
 export function costMicro(
   model: string | null | undefined,
   u: TokenCounts,

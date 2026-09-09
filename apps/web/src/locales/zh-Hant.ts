@@ -600,4 +600,13 @@ export const zhHant: Record<string, string> = {
   'Remove attachment': '移除附件',
   'At most {n} files at a time': '一次最多 {n} 個檔案',
   'Attached: {files}': '附件：{files}',
+
+  // Quota: counting tokens at a model price
+  'Count tokens at the price of': '按哪個模型的價格換算 token',
+  'A model name. Empty uses the flat weights below for every model. Naming one converts every model\'s tokens to that model\'s input-token equivalent, so a costlier model draws more quota. Needs a price row for both models; falls back to the weights when either is missing.': '填一個模型名。留空則所有模型都用下面的固定權重。填了之後，每個模型的 token 都按價格換算成該模型的輸入 token 當量，貴的模型自然多扣配額。兩個模型都要有價格列，缺一個就退回用權重。',
+
+  // Usage table columns
+  'In': '輸入',
+  'Out': '輸出',
+  'Cost': '金額',
 };

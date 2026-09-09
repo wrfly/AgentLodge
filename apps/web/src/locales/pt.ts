@@ -599,4 +599,13 @@ export const pt: Record<string, string> = {
   'Remove attachment': 'Remover anexo',
   'At most {n} files at a time': 'No máximo {n} ficheiros de cada vez',
   'Attached: {files}': 'Anexos: {files}',
+
+  // Quota: counting tokens at a model price
+  'Count tokens at the price of': 'Contar os tokens ao preço de que modelo',
+  'A model name. Empty uses the flat weights below for every model. Naming one converts every model\'s tokens to that model\'s input-token equivalent, so a costlier model draws more quota. Needs a price row for both models; falls back to the weights when either is missing.': 'Um nome de modelo. Vazio: aplicam-se a todos os modelos os pesos fixos abaixo. Com um nome, os tokens de cada modelo são convertidos, na proporção dos preços, em equivalente de tokens de entrada desse modelo, pelo que um modelo mais caro consome mais quota. São precisas linhas de preço para ambos os modelos; em falta, volta-se aos pesos.',
+
+  // Usage table columns
+  'In': 'Entrada',
+  'Out': 'Saída',
+  'Cost': 'Custo',
 };
