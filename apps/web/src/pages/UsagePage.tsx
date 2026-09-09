@@ -278,8 +278,13 @@ export function UsagePage() {
                       <th className="pb-2 font-medium">Agent</th>
                       <th className="pb-2 font-medium">{t('Model')}</th>
                       <th className="pb-2 text-right font-medium">{t('Turns')}</th>
-                      <th className="pb-2 text-right font-medium">{t('Calls')}</th>
+                      <th className="pb-2 text-right font-medium">{t('In')}</th>
+                      <th className="pb-2 text-right font-medium">{t('Out')}</th>
                       <th className="pb-2 text-right font-medium">{t('Billable tokens')}</th>
+                      {/* What each model actually cost. Two models can differ by a factor of
+                          ten per token, so a row of token counts on its own says very little
+                          about where the money went. */}
+                      <th className="pb-2 text-right font-medium">{t('Cost')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -288,9 +293,17 @@ export function UsagePage() {
                         <td className="py-2">{r.agent}</td>
                         <td className="py-2 font-mono text-[12px] text-muted">{r.model || t('(default)')}</td>
                         <td className="py-2 text-right tabular-nums">{r.turns}</td>
-                        <td className="py-2 text-right tabular-nums text-muted">{r.calls}</td>
+                        <td className="py-2 text-right font-mono tabular-nums text-muted">
+                          {fmtTokens(r.inputTokens + r.cacheReadTokens + r.cacheCreationTokens)}
+                        </td>
+                        <td className="py-2 text-right font-mono tabular-nums text-muted">
+                          {fmtTokens(r.outputTokens)}
+                        </td>
                         <td className="py-2 text-right font-mono tabular-nums">
                           {r.billableTokens.toLocaleString()}
+                        </td>
+                        <td className="py-2 text-right font-mono tabular-nums">
+                          {fmtMoney(r.costMicro, data.quota.currency)}
                         </td>
                       </tr>
                     ))}
