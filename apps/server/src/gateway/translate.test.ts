@@ -235,6 +235,73 @@ console.log('\n=== A refusal is not turned into an answer ===');
   ok('the Responses side does the same', rout.includes('event: error') && !rout.includes('response.completed'), rout);
 }
 
+console.log('\n=== A refusal is recognised by there being no answer ===');
+{
+  /*
+   * Listing the error shapes does not work. These three all walked past a test keyed on an
+   * `error` key with no `choices`, and each is something a real server sends.
+   */
+  const shapes = [
+    ['vLLM', '{"object":"error","message":"bad request","type":"BadRequestError"}', 'bad request'],
+    ['a FastAPI or nginx front', '{"detail":"Not Found"}', 'Not Found'],
+    ['an empty choices array beside an error', '{"choices":[],"error":{"message":"boom"}}', 'boom'],
+  ] as const;
+  for (const [who, body, words] of shapes) {
+    ok(`${who}: the body is relayed as it stands`, chatResponseToAnthropic(body, 'm') === body, chatResponseToAnthropic(body, 'm'));
+    const t = new ChatToAnthropic('m');
+    const out = t.push(`data: ${body}\n\n`) + t.end();
+    ok(`${who}: streaming becomes an error frame with its words`, out.includes('event: error') && out.includes(words), out);
+  }
+  // And an answer is still an answer
+  const fine = new ChatToAnthropic('m');
+  ok(
+    'a chunk with a choice in it is translated as before',
+    fine.push('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n').includes('content_block_delta'),
+  );
+}
+
+console.log('\n=== Once refused, nothing more is translated ===');
+{
+  // The error and the frames after it can land in different reads, so the latch has to
+  // survive between calls — otherwise a second message opens and never closes
+  const t = new ChatToAnthropic('m');
+  const first = t.push('data: {"error":{"message":"boom"}}\n\n');
+  const second = t.push('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n');
+  ok('the refusal goes out once', first.includes('event: error'));
+  ok('and nothing follows it', second === '' && t.end() === '', JSON.stringify(second + t.end()));
+
+  const r = new ChatToResponses('m');
+  r.push('data: {"error":{"message":"no"}}\n\n');
+  ok('the Responses side latches too', r.push('data: {"choices":[{"delta":{"content":"x"}}]}\n\n') === '');
+}
+
+console.log('\n=== A frame the translator cannot walk is skipped, not thrown ===');
+{
+  // tool_calls as an object rather than an array: LiteLLM and some quantised servers.
+  // Throwing out of push loses the whole batch and ends the response with no body at all.
+  const odd = 'data: {"choices":[{"delta":{"tool_calls":{"0":{"id":"a"}}}}]}\n\n';
+  const good = 'data: {"choices":[{"delta":{"content":"after"}}]}\n\n';
+  const r = new ChatToResponses('m');
+  let threw = false;
+  let out = '';
+  try {
+    out = r.push(odd) + r.push(good) + r.end();
+  } catch {
+    threw = true;
+  }
+  ok('push does not throw', !threw);
+  ok('and what came after it still arrives', out.includes('after'), out.slice(0, 160));
+
+  const a = new ChatToAnthropic('m');
+  let threwA = false;
+  try {
+    a.push(odd);
+  } catch {
+    threwA = true;
+  }
+  ok('the Anthropic side likewise', !threwA);
+}
+
 console.log('\n=== The Responses side carries images too ===');
 {
   const out = responsesRequestToChat(

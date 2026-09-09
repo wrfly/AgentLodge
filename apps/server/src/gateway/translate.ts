@@ -258,21 +258,36 @@ const STOP_REASON: Record<string, string> = {
  * Not the status code: an OpenAI-compatible server routinely answers 200 with an error
  * object — Ollama and llama.cpp do it for a model that will not load, and vLLM and LiteLLM
  * report a late failure (context overflow, a template error, an OOM) in band on a stream
- * that has already begun. What identifies a refusal is the shape, so that is what is
- * tested: an `error` and no `choices` to answer with.
+ * that has already begun.
+ *
+ * **Success is what gets recognised, and everything else is a refusal.** Listing the error
+ * shapes does not work: it was tried, keyed on an `error` key with no `choices`, and three
+ * common ones walked straight past it — vLLM says `{"object":"error","message":…}`, a
+ * FastAPI or nginx front says `{"detail":…}`, and `{"choices":[],"error":{…}}` has a
+ * `choices` that is an array, just an empty one, which is the shape
+ * `stream_options.include_usage` asks upstreams for. There is one shape an answer can take
+ * and no end of shapes a failure can, so the test is for the answer.
  */
-export function isErrorBody(parsed: unknown): parsed is { error?: { message?: string } } {
-  if (!parsed || typeof parsed !== 'object') return false;
-  const b = parsed as { error?: unknown; choices?: unknown };
-  return b.error !== undefined && b.error !== null && !Array.isArray(b.choices);
+export function isErrorBody(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== 'object') return true;
+  const b = parsed as { choices?: unknown };
+  return !Array.isArray(b.choices) || b.choices.length === 0;
 }
 
-/** What the upstream said, as plainly as it can be recovered */
+/**
+ * What the upstream said, as plainly as it can be recovered.
+ *
+ * Four places carry it, because four kinds of server put it in a different one, and a
+ * message the client can read is the whole point — Claude Code drops a rejected capability
+ * by matching this text.
+ */
 export function errorTextOf(parsed: unknown): string {
-  const e = (parsed as { error?: unknown }).error;
+  const b = (parsed ?? {}) as { error?: unknown; message?: unknown; detail?: unknown };
+  const e = b.error;
   if (typeof e === 'string') return e;
-  const m = (e as { message?: unknown })?.message;
-  return typeof m === 'string' ? m : JSON.stringify(e);
+  const nested = (e as { message?: unknown } | undefined)?.message;
+  for (const v of [nested, b.message, b.detail]) if (typeof v === 'string' && v) return v;
+  return JSON.stringify(e ?? b.detail ?? b);
 }
 
 interface ChatChunk {
@@ -317,6 +332,11 @@ export class ChatToAnthropic {
 
   /** Feed in upstream bytes; get back the Anthropic SSE text to write to the CLI */
   push(chunk: string): string {
+    // The latch has to hold between calls as well as within one: an upstream that reports a
+    // late failure and then sends a trailing usage frame, or simply one whose error and
+    // next frame land in different reads, would otherwise start a second message after the
+    // refusal and never close it
+    if (this.failed) return '';
     this.buf += chunk;
     let out = '';
     const parts = this.buf.split('\n');
@@ -344,7 +364,11 @@ export class ChatToAnthropic {
         this.failed = true;
         return out + this.ev('error', { type: 'error', error: { type: 'api_error', message: errorTextOf(c) } });
       }
-      out += this.absorb(c);
+      try {
+        out += this.absorb(c);
+      } catch {
+        /* A frame absorb cannot walk; see the note in ChatToResponses.push */
+      }
     }
     return out;
   }
@@ -630,6 +654,7 @@ export class ChatToResponses {
   }
 
   push(chunk: string): string {
+    if (this.failed) return ''; // see the note on ChatToAnthropic.push
     this.buf += chunk;
     let out = '';
     const parts = this.buf.split('\n');
@@ -652,7 +677,17 @@ export class ChatToResponses {
         this.failed = true;
         return out + this.ev('error', { type: 'error', code: 'upstream_error', message: errorTextOf(c) });
       }
-      out += this.absorb(c);
+      try {
+        out += this.absorb(c);
+      } catch {
+        /*
+         * A frame shaped in a way absorb cannot walk — `tool_calls` arriving as an object
+         * rather than an array, which LiteLLM and some quantised servers emit. Skipping it
+         * is what this did before the error branch above was added and the try narrowed to
+         * the parse; letting it throw loses everything accumulated in this batch and ends
+         * the response with no body at all.
+         */
+      }
     }
     return out;
   }
