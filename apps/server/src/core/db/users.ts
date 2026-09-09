@@ -96,7 +96,7 @@ const toUser = (r: UserRow): User => ({
 
 /** The one currency quotas are priced in. Kept where it was, next to the only reader. */
 /** What the price table is written in; the quota is reported in the same unit */
-const CURRENCY = (): string => getString('billing.currency', 'CNY');
+const CURRENCY = (): string => getString('billing.currency', 'USD');
 
 const toQuota = (r: QuotaRow): Quota => ({
   userId: r.user_id,

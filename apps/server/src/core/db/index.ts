@@ -106,7 +106,7 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -246,6 +246,27 @@ function migrate(d: DatabaseSync): void {
     // here has ever turned that off.
     if (!columns(d, 'conversations').has('thinking')) {
       d.exec('alter table conversations add column thinking integer not null default 1');
+    }
+  }
+
+  if (from < 8) {
+    /*
+     * The default currency became USD, along with a price table seeded at the published
+     * Anthropic rates. A table that already exists was written in whatever it was written
+     * in — the old seed was CNY — and its rows carry that, so pin the setting to what is
+     * actually in there rather than letting a changed default relabel somebody's money.
+     *
+     * Only when nobody has set it: an explicit choice outranks anything inferred.
+     */
+    const [chosen] = d.prepare("select value from settings where key = 'billing.currency'").all() as Array<{ value: string }>;
+    if (!chosen) {
+      const [row] = d
+        .prepare('select currency from model_pricing group by currency order by count(*) desc limit 1')
+        .all() as Array<{ currency: string }>;
+      if (row?.currency) {
+        d.prepare('insert into settings (key, value, updated_at) values (?, ?, ?)')
+          .run('billing.currency', row.currency, new Date().toISOString());
+      }
     }
   }
 
