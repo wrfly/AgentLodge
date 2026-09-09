@@ -978,7 +978,8 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 | `MAX_UPSTREAM_CONCURRENCY` | `3` | **每条上游**的 in-flight 上限，后台可热调。每条上游一个池子，各自计数 |
 | `PER_USER_INFLIGHT_MAX` | `2` | 单用户最多占几个 slot |
 | `UPSTREAM_HEADERS_TIMEOUT_MS` | `90000` | 上游多久没给响应头就放弃，回 504（CLI 会重试） |
-| `UPSTREAM_IDLE_TIMEOUT_MS` | `180000` | 流式响应中途多久没有字节就断开 |
+| `UPSTREAM_IDLE_TIMEOUT_MS` | `330000` | 流式响应中途多久没有字节就断开。**故意大于 300 秒**：Claude Code 自己数字节，静默 300 秒就放弃，网关先掐会把「慢」变成「截断」，所以这条只当客户端已经走了、socket 还没察觉时的兜底 |
+| `STREAM_KEEP_ALIVE_MS` | `15000` | 翻译过的流多久没内容就补一个 ping。只有翻译路径需要：Anthropic 上游自己发 ping 会原样转发，OpenAI 形状的没有这种帧，本地模型花四分钟做 prefill 在客户端看来和断线一样。0 关掉 |
 | `POOL_SHARE_CACHE_MS` | `5000` | 无上限用户份额的分母（全平台该窗口用量）复用多久；0 关掉 |
 | `AUDIT_LOG_RETENTION_DAYS` | `365` | 后台审计日志保留天数；0 永久保留 |
 | `USE_CONTAINERS` | `false` | 开启每用户容器隔离 |

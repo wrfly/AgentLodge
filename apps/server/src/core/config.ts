@@ -149,9 +149,27 @@ export const config = {
    * How long the upstream may take to start answering, and how long a stream may then go
    * quiet. Without either, an upstream that accepted the connection and never answered
    * held its slot and the CLI until the CLI's own ten-minute limit gave up.
+   *
+   * The idle bound is deliberately **above** the client's own. Claude Code counts every
+   * byte a gateway relays and gives up after 300 seconds of silence; a gateway that cuts
+   * first takes that decision away from it and turns a slow answer into a truncated one.
+   * So this is the backstop for the case the client cannot see — it has gone, and the
+   * socket has not noticed — and `keepAliveMs` below is what stops either clock reaching
+   * zero on a stream that is merely thinking.
    */
   upstreamHeadersTimeoutMs: Number(process.env.UPSTREAM_HEADERS_TIMEOUT_MS ?? 90_000),
-  upstreamIdleTimeoutMs: Number(process.env.UPSTREAM_IDLE_TIMEOUT_MS ?? 180_000),
+  upstreamIdleTimeoutMs: Number(process.env.UPSTREAM_IDLE_TIMEOUT_MS ?? 330_000),
+
+  /**
+   * How long a translated stream may go quiet before a keep-alive is sent.
+   *
+   * Only translated streams need it. An Anthropic upstream sends its own pings through a
+   * long thinking pause and they are relayed untouched; an OpenAI-shaped one has no such
+   * frame, and the translator emits nothing until there is content to emit — so a local
+   * model spending four minutes on a prefill looked, from the client's side, exactly like
+   * a dead connection. 0 turns it off.
+   */
+  streamKeepAliveMs: Number(process.env.STREAM_KEEP_ALIVE_MS ?? 15_000),
 
   /**
    * How long the platform-wide total behind a pool share is reused. It is one scan over
