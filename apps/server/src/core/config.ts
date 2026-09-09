@@ -10,6 +10,21 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // Move this file and you must update this.
 const repoRoot = path.resolve(here, '../../../..');
 
+/**
+ * A duration from the environment, in milliseconds.
+ *
+ * `Number('')` is 0 and `Number('30s')` is NaN, and Node clamps a `setTimeout` of either to
+ * about a millisecond — so a variable declared and left empty in a compose file, or written
+ * with a unit, aborted every request instead of doing nothing. Anything that is not a
+ * number at least zero is the default; zero itself is kept, because these all read it as
+ * "off".
+ */
+function ms(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 8787),
   host: process.env.HOST ?? '127.0.0.1',
@@ -152,24 +167,24 @@ export const config = {
    *
    * The idle bound is deliberately **above** the client's own. Claude Code counts every
    * byte a gateway relays and gives up after 300 seconds of silence; a gateway that cuts
-   * first takes that decision away from it and turns a slow answer into a truncated one.
-   * So this is the backstop for the case the client cannot see — it has gone, and the
-   * socket has not noticed — and `keepAliveMs` below is what stops either clock reaching
-   * zero on a stream that is merely thinking.
+   * first takes that decision away from it. So this is the backstop for the case the client
+   * cannot see — it has gone, and the socket has not noticed — and `streamKeepAliveMs`
+   * below is what keeps its clock from reaching zero on a stream that is merely thinking.
+   * Either at 0 is off.
    */
-  upstreamHeadersTimeoutMs: Number(process.env.UPSTREAM_HEADERS_TIMEOUT_MS ?? 90_000),
-  upstreamIdleTimeoutMs: Number(process.env.UPSTREAM_IDLE_TIMEOUT_MS ?? 330_000),
+  upstreamHeadersTimeoutMs: ms(process.env.UPSTREAM_HEADERS_TIMEOUT_MS, 90_000),
+  upstreamIdleTimeoutMs: ms(process.env.UPSTREAM_IDLE_TIMEOUT_MS, 330_000),
 
   /**
    * How long a translated stream may go quiet before a keep-alive is sent.
    *
-   * Only translated streams need it. An Anthropic upstream sends its own pings through a
-   * long thinking pause and they are relayed untouched; an OpenAI-shaped one has no such
-   * frame, and the translator emits nothing until there is content to emit — so a local
-   * model spending four minutes on a prefill looked, from the client's side, exactly like
-   * a dead connection. 0 turns it off.
+   * Every stream gets one, because only `api.anthropic.com` is known to send pings of its
+   * own and `anthropic-native` covers any endpoint that speaks Messages. The clock is the
+   * time since **the client** was last written to, which is not the time since the upstream
+   * spoke: a reasoning stream, a heartbeat comment and a role-only first delta all reach us
+   * and none of them reaches the client. 0 turns it off.
    */
-  streamKeepAliveMs: Number(process.env.STREAM_KEEP_ALIVE_MS ?? 15_000),
+  streamKeepAliveMs: ms(process.env.STREAM_KEEP_ALIVE_MS, 15_000),
 
   /**
    * How long the platform-wide total behind a pool share is reused. It is one scan over
