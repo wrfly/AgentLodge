@@ -51,9 +51,18 @@ export interface RecordInput {
  * make a model free.
  */
 export function billable(u: TurnUsage, model?: string | null, providerId?: string | null): number {
-  const cost = pricing.costMicro(model, u, undefined, providerId);
-  const perToken = pricing.inputMicroPerToken('*');
-  if (cost > 0 && perToken > 0) return Math.round(cost / perToken);
+  /*
+   * Whether the table can price this, not whether the price rounded to something. Gating on
+   * a rounded cost put a cliff in the middle of the scale: on an upstream whose input token
+   * is 0.435 of a micro-unit, one token billed 1 (rounded to zero, so the weights answered),
+   * two through five billed 0, and six billed 1 again. The gateway writes a row per upstream
+   * call, so short calls met it one after another.
+   */
+  const priced = pricing.resolve(model, undefined, providerId);
+  const unit = pricing.resolve('*');
+  if (priced && unit && unit.priceInput > 0) {
+    return Math.round(pricing.costMicroExact(model, u, undefined, providerId) / (unit.priceInput / 1_000_000));
+  }
 
   const w = quotaWeights();
   return Math.round(

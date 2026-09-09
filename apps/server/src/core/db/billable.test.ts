@@ -84,6 +84,28 @@ console.log('\n=== A token costs what the model costs, with nothing to turn on =
   ok('and on Fable a fortieth, which the weights cannot say', m('claude-fable-5-1', cached) === 50_000, String(m('claude-fable-5-1', cached)));
 }
 
+console.log('\n=== A bigger call never bills less than a smaller one ===');
+{
+  /*
+   * A micro-unit is a millionth, and a cheap model's token is a fraction of one — a DeepSeek
+   * input token is 0.435 of a micro. Gating on a *rounded* cost put a cliff in the middle of
+   * the scale: one token rounded to zero, so the weights answered and billed 1; two through
+   * five billed 0; six billed 1 again. The gateway writes a row per upstream call, so short
+   * calls met it one after another.
+   */
+  pricing.add({ model: 'cheap', currency: 'USD', priceInput: 435_000, priceCacheRead: 43_500, priceCacheWrite: 435_000, priceOutput: 1_740_000, effectiveFrom: now });
+  const at = (n: number) => billable(usage({ inputTokens: n }), 'cheap');
+  const curve = [1, 2, 3, 4, 5, 6, 7, 10, 100].map(at);
+  ok(
+    'the curve never goes down',
+    curve.every((v, i) => i === 0 || v >= curve[i - 1]!),
+    curve.join(', '),
+  );
+  ok('and one token is not billed more than five', at(1) <= at(5), `${at(1)} vs ${at(5)}`);
+  // Still priced rather than weighted: a hundred cheap tokens is well under a hundred
+  ok('a cheap model stays cheap', at(100) < 100 && at(100) > 0, String(at(100)));
+}
+
 console.log('\n=== With no table to price it, the weights are what is left ===');
 {
   /*

@@ -163,7 +163,15 @@ export function inputMicroPerToken(model: string, at?: string, providerId?: stri
   return p ? p.priceInput / 1_000_000 : 0;
 }
 
-export function costMicro(
+/**
+ * The same sum, unrounded.
+ *
+ * A micro-unit is a millionth, and a cheap model's token is a fraction of one — a DeepSeek
+ * input token is 0.435 of a micro. Rounding before the caller is done with the number turns
+ * that into 0, and a caller that then treats 0 as "cannot price this" gets a cliff: quota
+ * measured this way billed one token as 1, two through five as 0, and six as 1 again.
+ */
+export function costMicroExact(
   model: string | null | undefined,
   u: TokenCounts,
   at?: string,
@@ -172,12 +180,21 @@ export function costMicro(
   const p = resolve(model, at, providerId);
   if (!p) return 0;
   const per = (tokens: number, price: number) => (tokens * price) / 1_000_000;
-  return Math.round(
+  return (
     per(u.inputTokens, p.priceInput) +
-      per(u.cacheReadTokens, p.priceCacheRead) +
-      per(u.cacheCreationTokens, p.priceCacheWrite) +
-      per(u.outputTokens, p.priceOutput),
+    per(u.cacheReadTokens, p.priceCacheRead) +
+    per(u.cacheCreationTokens, p.priceCacheWrite) +
+    per(u.outputTokens, p.priceOutput)
   );
+}
+
+export function costMicro(
+  model: string | null | undefined,
+  u: TokenCounts,
+  at?: string,
+  providerId?: string | null,
+): number {
+  return Math.round(costMicroExact(model, u, at, providerId));
 }
 
 export const formatMoney = (micro: number, currency = 'USD'): string =>
@@ -206,21 +223,42 @@ export function seedDefaults(): void {
    * of its own; until it has one it is costed at the catch-all below, which is Claude Opus
    * 5's rate. Every row here is in one currency on purpose: the amounts are summed.
    */
-  const usd = (dollars: number) => Math.round(dollars * 1_000_000);
+  /*
+   * Published list prices, in US dollars per million tokens.
+   *
+   * The same numbers the model picker shows — apps/web/src/lib/model-facts.ts — and
+   * scripts/check-pricing.mjs fails the build when the two disagree. They have to agree:
+   * one is what a user is told a model costs and the other is what they are charged, and
+   * nothing else reconciles them.
+   *
+   * Cache write is the standard 1.25x input and cache read the standard tenth, with one
+   * exception spelled out: Claude Fable reads its cache at a fortieth. That exception is
+   * the reason quota reads a table instead of a global weight, so the table has to hold it.
+   */
+  const rate = (input: number, output: number, cacheRead = input / 10) => ({
+    priceInput: Math.round(input * 1_000_000),
+    priceCacheRead: Math.round(cacheRead * 1_000_000),
+    priceCacheWrite: Math.round(input * 1.25 * 1_000_000),
+    priceOutput: Math.round(output * 1_000_000),
+  });
   const seed: UpsertInput[] = [
-    { model: 'claude-fable-5-1', priceInput: usd(10), priceCacheRead: usd(0.25), priceCacheWrite: usd(12.5), priceOutput: usd(50) },
-    { model: 'claude-fable-5', priceInput: usd(10), priceCacheRead: usd(0.25), priceCacheWrite: usd(12.5), priceOutput: usd(50) },
-    { model: 'claude-opus-5', priceInput: usd(5), priceCacheRead: usd(0.5), priceCacheWrite: usd(6.25), priceOutput: usd(25) },
-    { model: 'claude-opus-4-8', priceInput: usd(5), priceCacheRead: usd(0.5), priceCacheWrite: usd(6.25), priceOutput: usd(25) },
-    { model: 'claude-sonnet-5', priceInput: usd(2), priceCacheRead: usd(0.2), priceCacheWrite: usd(2.5), priceOutput: usd(10) },
-    { model: 'claude-haiku-4-5', priceInput: usd(1), priceCacheRead: usd(0.1), priceCacheWrite: usd(1.25), priceOutput: usd(5) },
+    { model: 'claude-fable-5-1', ...rate(10, 50, 0.25) },
+    { model: 'claude-fable-5', ...rate(10, 50, 0.25) },
+    { model: 'claude-opus-5', ...rate(5, 25) },
+    { model: 'claude-opus-4-8', ...rate(5, 25) },
+    { model: 'claude-opus-4-7', ...rate(5, 25) },
+    { model: 'claude-opus-4-6', ...rate(5, 25) },
+    { model: 'claude-opus-4-5', ...rate(5, 25) },
+    { model: 'claude-sonnet-5', ...rate(2, 10) },
+    { model: 'claude-sonnet-4-6', ...rate(3, 15) },
+    { model: 'claude-sonnet-4-5', ...rate(3, 15) },
+    { model: 'claude-haiku-4-5', ...rate(1, 5) },
+    { model: 'deepseek-v4-pro', ...rate(0.435, 0.87) },
+    { model: 'deepseek-v4-flash', ...rate(0.22, 0.66), note: 'Off-peak; DeepSeek doubles these 01:00–04:00 and 06:00–10:00 UTC' },
     {
       // Also the unit quota is counted in: one billable token is one input token at this rate
       model: '*',
-      priceInput: usd(5),
-      priceCacheRead: usd(0.5),
-      priceCacheWrite: usd(6.25),
-      priceOutput: usd(25),
+      ...rate(5, 25),
       note: 'The catch-all, used by any model without a price of its own — and the unit billable tokens are counted in',
     },
   ].map((r) => ({ ...r, currency: 'USD', effectiveFrom: now }));
