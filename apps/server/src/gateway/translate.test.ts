@@ -135,6 +135,25 @@ console.log('\n=== Tools ===');
   ok('a failed tool with nothing to say still says that', out.messages[0]!.content === '(the tool failed)');
 }
 
+console.log('\n=== Only a user turn may carry a picture ===');
+{
+  // OpenAI takes an image part in a user message and refuses one in an assistant message.
+  // Anthropic does not produce such a turn, but a client composes its own history.
+  const out = chat({
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'here it is' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } },
+        ],
+      },
+    ],
+  });
+  ok('an assistant turn is flattened to its words', out.messages[0]!.content === 'here it is', JSON.stringify(out.messages[0]));
+  ok('with no image part that would be refused', !parts(out.messages[0]!.content).length);
+}
+
 console.log('\n=== The Responses side carries images too ===');
 {
   const out = responsesRequestToChat(
@@ -163,6 +182,27 @@ console.log('\n=== The Responses side carries images too ===');
   ) as ChatBody;
   ok('text-only input is still a string', out.messages[1]!.content === 'plain', JSON.stringify(out.messages[1]));
   ok('and the instructions became the system turn', out.messages[0]!.role === 'system' && out.messages[0]!.content === 'be brief');
+}
+
+{
+  // developer becomes system on the chat side, and a system turn holds text only
+  const out = responsesRequestToChat(
+    {
+      input: [
+        {
+          type: 'message',
+          role: 'developer',
+          content: [
+            { type: 'input_text', text: 'be brief' },
+            { type: 'input_image', image_url: 'data:image/png;base64,AAA' },
+          ],
+        },
+      ],
+    },
+    'm',
+  ) as ChatBody;
+  ok('a system turn keeps its words', out.messages[0]!.content === 'be brief', JSON.stringify(out.messages[0]));
+  ok('and drops the part that has nowhere to go', !parts(out.messages[0]!.content).length);
 }
 
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);

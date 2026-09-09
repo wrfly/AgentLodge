@@ -169,13 +169,20 @@ export function anthropicRequestToChat(body: AnthropicRequest, model: string): u
     }
 
     const toolUses = blocks.filter((b) => b.type === 'tool_use');
-    const content = contentOf(blocks.filter((b) => b.type === 'text' || b.type === 'image'));
-    const hasContent = typeof content === 'string' ? content.length > 0 : content.length > 0;
+    /*
+     * An assistant turn holds text only on this side: OpenAI accepts an image part in a
+     * user message and refuses one in an assistant message. Anthropic does not put images
+     * in an assistant turn either, but a client composes its own history and can, and a
+     * 400 on somebody's replayed conversation is worse than a sentence with the picture
+     * left out of it.
+     */
+    const raw = contentOf(blocks.filter((b) => b.type === 'text' || b.type === 'image'));
+    const content = m.role === 'assistant' ? flatten(raw) : raw;
+    const hasContent = content.length > 0;
 
     if (toolUses.length) {
       messages.push({
-        // An assistant turn cannot carry an image on this side; the tool calls are what
-        // matters in it, and the text beside them is kept
+        // The tool calls are what matters in this one, and the text beside them is kept
         content: flatten(content) || null,
         role: 'assistant',
         tool_calls: toolUses.map((t) => ({
@@ -504,10 +511,11 @@ export function responsesRequestToChat(body: ResponsesRequest, model: string): u
 
     // The developer role is specific to Responses; on the chat side it becomes system
     const role = item.role === 'assistant' ? 'assistant' : item.role === 'developer' ? 'system' : 'user';
-    // A system turn holds text only, and the array form is reserved for the images that
-    // need it, so a text-only endpoint sees exactly what it saw before
+    // Only a user turn may carry a picture: a system or assistant message holds text on
+    // this side. The array form is reserved for the turns that need it, so a text-only
+    // endpoint sees exactly what it saw before.
     const images = parts.some((p) => p.type === 'image_url');
-    messages.push({ role, content: images && role !== 'system' ? parts : flatten(parts) });
+    messages.push({ role, content: images && role === 'user' ? parts : flatten(parts) });
   }
 
   return {
