@@ -39,7 +39,8 @@
     "test:mail": "tsx src/app/mail.test.ts",
     "test:schema": "tsx src/core/db/schema.test.ts",
     "test:events": "tsx src/core/events.test.ts",
-    "test:translate": "tsx src/gateway/translate.test.ts"
+    "test:translate": "tsx src/gateway/translate.test.ts",
+    "test:relay": "tsx src/gateway/relay.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
