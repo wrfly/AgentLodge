@@ -40,6 +40,8 @@ import {
   ChatToResponses,
   anthropicRequestToChat,
   chatResponseToAnthropic,
+  errorTextOf,
+  isErrorBody,
   responsesRequestToChat,
   type AnthropicRequest,
   type ResponsesRequest,
@@ -90,6 +92,15 @@ function anthropicError(type: string, message: string) {
 }
 function openaiError(type: string, message: string, code?: string) {
   return { error: { message, type, code: code ?? type, param: null } };
+}
+
+/** A body that is not JSON is not a refusal we can read; it is relayed as it stands */
+function safeParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -427,10 +438,11 @@ async function handleProxy(
      * slot and the CLI until the CLI's own ten-minute limit. The timer covers the headers
      * alone; a stream that has started is watched by the idle timer below instead.
      */
-    const headersTimer = setTimeout(
-      () => ac.abort(new UpstreamTimeout('headers')),
-      config.upstreamHeadersTimeoutMs,
-    );
+    // 0 is off here too — the pair is documented together, and only one of them had the guard
+    const headersTimer =
+      config.upstreamHeadersTimeoutMs > 0
+        ? setTimeout(() => ac.abort(new UpstreamTimeout('headers')), config.upstreamHeadersTimeoutMs)
+        : null;
     let upstream: Response;
     try {
       upstream = await fetch(asCli ? betaUrl(egress.url) : egress.url, {
@@ -443,7 +455,7 @@ async function handleProxy(
         signal: ac.signal,
       });
     } finally {
-      clearTimeout(headersTimer);
+      if (headersTimer) clearTimeout(headersTimer);
     }
 
     status = upstream.status;
@@ -460,10 +472,21 @@ async function handleProxy(
      * rescheduled in 50ms, answering an overload by pushing straight back into it.
      */
     const retryAfterHeader = upstream.headers.get('retry-after');
-    const retryAfterSeconds = retryAfterHeader === null ? NaN : Number(retryAfterHeader);
+    const retryAfterSeconds = Number(retryAfterHeader);
+    /*
+     * Only a number that is actually a wait. An empty or whitespace header reads as 0 —
+     * which passed `isFinite` and gave the gate a cooldown of no length, the very retry
+     * storm the header exists to prevent — and some load balancers send a negative, which
+     * puts the cooldown in the past. The ceiling is because a plan-window reset can be a
+     * week, and parking a provider for a week on one response, with no way to override it,
+     * is worse than backing off for an hour and finding out.
+     */
+    const RETRY_AFTER_MAX_S = 3600;
+    const usable =
+      retryAfterHeader !== null && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0;
     gate
       .for(target.provider.id)
-      .reportUpstream(status, Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : undefined);
+      .reportUpstream(status, usable ? Math.min(retryAfterSeconds, RETRY_AFTER_MAX_S) * 1000 : undefined);
 
     const ct = upstream.headers.get('content-type') ?? 'application/json';
     /*
@@ -477,16 +500,24 @@ async function handleProxy(
      * this request — deliberately, since it has not been billed either. Reading it again
      * here would cost a second query to move the number by one turn.
      */
-    reply.raw.writeHead(status, {
+    const outHeaders = {
       'content-type': ct,
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       // The one upstream header worth relaying: it says how long to wait, the gate is
       // already holding the door for exactly that long, and a client told nothing falls
       // back to its own short backoff and retries into a closed gate
-      ...(retryAfterHeader !== null ? { 'retry-after': retryAfterHeader } : {}),
+      ...(usable ? { 'retry-after': retryAfterHeader! } : {}),
       ...(wire === 'anthropic' ? allowanceHeaders(verdict.status, target) : {}),
-    });
+    };
+    /*
+     * A stream has to have its head sent before its body can start. A buffered answer does
+     * not, and sending it early cost the one thing a status is for: when the body then
+     * failed to arrive, the client had already been told 200, and the best left to say was
+     * an error object under a success. Held back, the same failure is a 504.
+     */
+    const streaming = Boolean(upstream.body) && ct.includes('text/event-stream');
+    if (streaming) reply.raw.writeHead(status, outHeaders);
 
     /*
      * How long the body may take, whichever shape it is.
@@ -504,8 +535,9 @@ async function handleProxy(
 
     if (!upstream.body) {
       if (idle) clearTimeout(idle);
+      reply.raw.writeHead(status, outHeaders);
       reply.raw.end();
-    } else if (ct.includes('text/event-stream')) {
+    } else if (streaming) {
       // Streaming: relay the bytes untouched while sniffing usage alongside. When
       // translation is needed this becomes upstream bytes → translator → client, and usage
       // is still parsed from the upstream copy, so accounting uses the real numbers rather
@@ -552,11 +584,34 @@ async function handleProxy(
        * half by a ping is worse than a stream that goes quiet.
        */
       const ping = wire === 'anthropic' ? 'event: ping\ndata: {"type":"ping"}\n\n' : ': ping\n\n';
-      let atFrameBoundary = true;
+      /*
+       * Three things have to hold before one goes out.
+       *
+       * **The upstream has spoken since the last one.** A ping tells the client the far end
+       * is alive, and only the upstream can know that. Sending one unconditionally answers
+       * the client's liveness question on the upstream's behalf, which makes a hung
+       * connection look exactly like a thinking one and leaves nobody to end it: the client
+       * no longer times out, and with the idle bound off there is nothing else that would.
+       * Heard-since-last-ping keeps the reasoning-stream case — bytes arrive, the client
+       * just does not get to see them — and lets a dead upstream fall to whichever bound
+       * is watching.
+       *
+       * **Something has been written already.** An SSE consumer that reads the first event
+       * as the start of a message rejects a ping in front of it, and a slow first token is
+       * exactly when this fires.
+       *
+       * **The last write ended a frame.** An untouched relay is cut wherever TCP cut it, and
+       * a ping spliced into the middle of a frame supplies the blank line the upstream had
+       * not sent yet — the event dispatches early and the real one arrives untyped.
+       */
+      let atFrameBoundary = false;
+      let heardSincePing = false;
       const keepAlive =
         config.streamKeepAliveMs > 0
           ? setInterval(() => {
-              if (reply.raw.destroyed || ac.signal.aborted || !atFrameBoundary) return;
+              if (reply.raw.destroyed || ac.signal.aborted) return;
+              if (!heardSincePing || !atFrameBoundary) return;
+              heardSincePing = false;
               reply.raw.write(ping);
             }, config.streamKeepAliveMs)
           : null;
@@ -567,6 +622,8 @@ async function handleProxy(
         atFrameBoundary = endsFrame;
         keepAlive?.refresh();
       };
+      /** Whether a chunk we are about to relay leaves the stream between frames */
+      const endsFrame = (s: string): boolean => /\r?\n\r?\n$/.test(s);
 
       let cutShort: UpstreamTimeout | null = null;
       try {
@@ -574,19 +631,29 @@ async function handleProxy(
           const { done, value } = await reader.read();
           if (done) break;
           idle?.refresh();
+          heardSincePing = true;
           if (!acc.ttftMs) acc.ttftMs = Date.now() - startedAt;
           const text = decoder.decode(value, { stream: true });
           sniffer.push(text);
-          // The other end has gone; stop writing and finish so the slot is returned
+          /*
+           * The other end has gone, or the bound fired between two reads rather than
+           * inside one — the abort is asynchronous, so which of the two paths notices it
+           * is a race. Both leave the loop here, and only one of them is a timeout.
+           */
           if (reply.raw.destroyed || ac.signal.aborted) {
+            if (ac.signal.reason instanceof UpstreamTimeout) cutShort = ac.signal.reason;
             await reader.cancel().catch(() => {});
             break;
           }
           // Untouched paths write the original bytes, not the decoded text, so a relay that
-          // rewrites nothing stays byte-identical
+          // rewrites nothing stays byte-identical. What each arm produces decides whether
+          // the stream is left between frames: only the translator emits whole ones.
           if (translator) toClient(Buffer.from(translator.push(text)), true);
-          else if (scrubber) toClient(Buffer.from(scrubber.push(text)), true);
-          else toClient(Buffer.from(value), text.endsWith('\n\n'));
+          else if (scrubber) {
+            // The scrubber splits on lines, not on frames, and holds back a partial one
+            const out = scrubber.push(text);
+            toClient(Buffer.from(out), endsFrame(out));
+          } else toClient(Buffer.from(value), endsFrame(text));
         }
       } catch (err) {
         // A body that went quiet past the bound. Anything else belongs to the outer catch.
@@ -597,6 +664,16 @@ async function handleProxy(
         if (keepAlive) clearInterval(keepAlive);
       }
 
+      if (cutShort) {
+        /*
+         * The outer catch owns the log line and the status, and this never reaches it — so
+         * without these a truncated turn was filed as a completed one, with output the
+         * upstream generated and charged for booked at whatever the sniffer had seen, and
+         * nothing in the log to say a stall had happened at all.
+         */
+        req.log.error({ phase: cutShort.phase }, 'gateway upstream timed out');
+        status = 504;
+      }
       if (!reply.raw.destroyed) {
         if (cutShort) {
           /*
@@ -617,21 +694,53 @@ async function handleProxy(
       }
       reply.raw.end();
     } else {
-      const text = await upstream.text().finally(() => {
+      let text: string;
+      try {
+        text = await upstream.text();
+      } catch (err) {
+        /*
+         * The same bound as the streaming side, and until it covered this branch an
+         * upstream that sent its headers and then stalled held its slot for good. The
+         * headers have gone out, so a status cannot say what happened and the outer catch
+         * would write nothing: the client used to receive an empty 200, which is not a
+         * shape anything retries. It gets the error body instead, under the status the
+         * client reads as one.
+         */
+        if (!(ac.signal.reason instanceof UpstreamTimeout)) throw err;
+        req.log.error({ phase: ac.signal.reason.phase }, 'gateway upstream timed out');
+        status = 504;
+        const msg = tr(req, 'The upstream did not answer in time; try again');
+        reply.raw.writeHead(504, { 'content-type': 'application/json' });
+        reply.raw.write(
+          JSON.stringify(wire === 'anthropic' ? anthropicError('api_error', msg) : openaiError('server_error', msg)),
+        );
+        reply.raw.end();
+        return undefined;
+      } finally {
         if (idle) clearTimeout(idle);
-      });
+      }
       acc.ttftMs = Date.now() - startedAt;
       absorbBody(target.wire, text, acc);
-      // Non-streaming is rare — probes and fallbacks — but a Codex-shaped body would carry
-      // the shared account's allowance in it just the same
-      // chatResponseToAnthropic returns an error body untouched, whatever the status said
-      // it was — an OpenAI-compatible server answers 200 with one often enough
+      /*
+       * A refusal keeps its wording but takes the shape of the wire it is arriving on.
+       * Relaying an OpenAI error object as it stands under a 200 — which is how these
+       * upstreams report a model that will not load — hands an Anthropic client a body it
+       * parses as a Message with no type, role or content. The streaming half already
+       * wraps it; this is the same thing for a whole body.
+       *
+       * Non-streaming is rare either way — probes and fallbacks — but a Codex-shaped body
+       * would carry the shared account's allowance in it just the same.
+       */
+      const refused = target.translate && wire === 'anthropic' && isErrorBody(safeParse(text));
+      reply.raw.writeHead(status, outHeaders);
       reply.raw.write(
-        target.translate && wire === 'anthropic'
-          ? chatResponseToAnthropic(text, reqModel)
-          : wire === 'anthropic'
-            ? text
-            : (stripRateLimits(text, (rl) => allowance.recordCodex(target.provider.name, target.wire, rl)) ?? text),
+        refused
+          ? JSON.stringify(anthropicError('api_error', errorTextOf(safeParse(text))))
+          : target.translate && wire === 'anthropic'
+            ? chatResponseToAnthropic(text, reqModel)
+            : wire === 'anthropic'
+              ? text
+              : (stripRateLimits(text, (rl) => allowance.recordCodex(target.provider.name, target.wire, rl)) ?? text),
       );
       reply.raw.end();
     }
