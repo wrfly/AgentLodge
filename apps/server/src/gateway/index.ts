@@ -453,8 +453,17 @@ async function handleProxy(
      * administrator has to be able to see them, so they are kept before being dropped.
      */
     allowance.record(target.provider.name, target.wire, upstream.headers);
-    const retryAfter = Number(upstream.headers.get('retry-after')) * 1000;
-    gate.for(target.provider.id).reportUpstream(status, Number.isFinite(retryAfter) ? retryAfter : undefined);
+    /*
+     * An absent retry-after has to arrive as `undefined`. `Number(null)` is 0 and
+     * `Number.isFinite(0)` is true, so the gate's `?? 5000` never fired: a 429 with no
+     * header — which is most of them, and every local server — set a cooldown of zero and
+     * rescheduled in 50ms, answering an overload by pushing straight back into it.
+     */
+    const retryAfterHeader = upstream.headers.get('retry-after');
+    const retryAfterSeconds = retryAfterHeader === null ? NaN : Number(retryAfterHeader);
+    gate
+      .for(target.provider.id)
+      .reportUpstream(status, Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : undefined);
 
     const ct = upstream.headers.get('content-type') ?? 'application/json';
     /*
@@ -472,10 +481,29 @@ async function handleProxy(
       'content-type': ct,
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
+      // The one upstream header worth relaying: it says how long to wait, the gate is
+      // already holding the door for exactly that long, and a client told nothing falls
+      // back to its own short backoff and retries into a closed gate
+      ...(retryAfterHeader !== null ? { 'retry-after': retryAfterHeader } : {}),
       ...(wire === 'anthropic' ? allowanceHeaders(verdict.status, target) : {}),
     });
 
+    /*
+     * How long the body may take, whichever shape it is.
+     *
+     * It used to be created inside the streaming branch, so `await upstream.text()` on the
+     * other side ran with no bound at all: the headers timer was already cleared, and an
+     * upstream that sent its headers and then stalled held its slot until the process
+     * restarted. A streaming read refreshes this on every chunk; a non-streaming one gets
+     * it as a flat ceiling on reading the whole body.
+     */
+    const idle =
+      config.upstreamIdleTimeoutMs > 0
+        ? setTimeout(() => ac.abort(new UpstreamTimeout('body')), config.upstreamIdleTimeoutMs)
+        : null;
+
     if (!upstream.body) {
+      if (idle) clearTimeout(idle);
       reply.raw.end();
     } else if (ct.includes('text/event-stream')) {
       // Streaming: relay the bytes untouched while sniffing usage alongside. When
@@ -483,57 +511,69 @@ async function handleProxy(
       // is still parsed from the upstream copy, so accounting uses the real numbers rather
       // than the ones we produced.
       const sniffer = new SseSniffer(target.wire, acc);
-      /*
-       * Nothing is translated once the upstream has refused. Claude Code recovers from a
-       * rejected capability — a thinking field the model does not take, a cache_control
-       * marker on a system message — by matching the **upstream's own wording** and
-       * retrying without it, so an error body has to arrive as it was written. Run through
-       * the translator it comes out as a well-formed message with nothing in it, and the
-       * recovery path has nothing to match.
-       */
-      const relayVerbatim = status < 200 || status >= 300;
-      const translator =
-        !target.translate || relayVerbatim
-          ? null
-          : wire === 'anthropic'
-            ? new ChatToAnthropic(reqModel)
-            : new ChatToResponses(reqModel);
+      const translator = !target.translate
+        ? null
+        : wire === 'anthropic'
+          ? new ChatToAnthropic(reqModel)
+          : new ChatToResponses(reqModel);
       /*
        * Codex carries the shared account's allowance inside the body rather than in
        * headers, so on that side the bytes cannot simply be relayed. A translated stream
        * needs no scrubbing: it is built here from the upstream's content, and nothing that
        * is not deliberately copied survives.
+       *
+       * The test is `target.translate`, not `translator`. They used to be the same thing;
+       * once the translator could be left out for other reasons, reading the variable
+       * turned the scrubber on for streams it had never touched — rewriting a body this
+       * layer had promised to relay whole, and filing an error payload as a Codex allowance.
        */
       const scrubber =
-        !translator && wire !== 'anthropic'
+        !target.translate && wire !== 'anthropic'
           ? new RateLimitScrubber((rl) => allowance.recordCodex(target.provider.name, target.wire, rl))
           : null;
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder();
-      // A stream that goes quiet for longer than the client would wait anyway is ended, so
-      // the slot comes back; see config.upstreamIdleTimeoutMs for why it sits above 300s
-      const idle = setTimeout(() => ac.abort(new UpstreamTimeout('body')), config.upstreamIdleTimeoutMs);
+
       /*
-       * A translated stream produces nothing while the model is still thinking, and the
-       * client counts silence: 300 seconds of it and Claude Code abandons the request. The
-       * upstream we are translating from has no ping frame of its own to relay, so one is
-       * written here. A ping is valid in both directions and carries no content.
+       * The keep-alive, and what it is keyed on.
+       *
+       * A client counts the bytes **it** receives: 300 seconds of silence and Claude Code
+       * abandons the turn. So the clock that matters is the time since we last wrote to it,
+       * not the time since the upstream last wrote to us. Those are different whenever the
+       * upstream is saying something the client does not get to see — a heartbeat comment,
+       * a role-only first delta, or the reasoning stream of a DeepSeek-R1-shaped model,
+       * which can run for minutes with no `content` at all. Refreshing on every upstream
+       * chunk suppressed the ping in exactly the case it exists for.
+       *
+       * Every stream gets it, not only the translated ones: `anthropic-native` covers any
+       * endpoint that speaks Messages, and only api.anthropic.com is known to send pings of
+       * its own. An untouched relay is written at whatever boundary the upstream chose,
+       * though, so a ping is only injected when the last chunk ended one — a frame cut in
+       * half by a ping is worse than a stream that goes quiet.
        */
+      const ping = wire === 'anthropic' ? 'event: ping\ndata: {"type":"ping"}\n\n' : ': ping\n\n';
+      let atFrameBoundary = true;
       const keepAlive =
-        translator && config.streamKeepAliveMs > 0
+        config.streamKeepAliveMs > 0
           ? setInterval(() => {
-              if (reply.raw.destroyed || ac.signal.aborted) return;
-              reply.raw.write(
-                wire === 'anthropic' ? 'event: ping\ndata: {"type":"ping"}\n\n' : ': ping\n\n',
-              );
+              if (reply.raw.destroyed || ac.signal.aborted || !atFrameBoundary) return;
+              reply.raw.write(ping);
             }, config.streamKeepAliveMs)
           : null;
+      /** Every write to the client goes through here, so the ping clock cannot drift from it */
+      const toClient = (chunk: string | Buffer, endsFrame: boolean): void => {
+        if (!chunk.length) return;
+        reply.raw.write(chunk);
+        atFrameBoundary = endsFrame;
+        keepAlive?.refresh();
+      };
+
+      let cutShort: UpstreamTimeout | null = null;
       try {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          idle.refresh();
-          keepAlive?.refresh();
+          idle?.refresh();
           if (!acc.ttftMs) acc.ttftMs = Date.now() - startedAt;
           const text = decoder.decode(value, { stream: true });
           sniffer.push(text);
@@ -544,31 +584,50 @@ async function handleProxy(
           }
           // Untouched paths write the original bytes, not the decoded text, so a relay that
           // rewrites nothing stays byte-identical
-          reply.raw.write(
-            translator
-              ? Buffer.from(translator.push(text))
-              : scrubber
-                ? Buffer.from(scrubber.push(text))
-                : Buffer.from(value),
-          );
+          if (translator) toClient(Buffer.from(translator.push(text)), true);
+          else if (scrubber) toClient(Buffer.from(scrubber.push(text)), true);
+          else toClient(Buffer.from(value), text.endsWith('\n\n'));
         }
+      } catch (err) {
+        // A body that went quiet past the bound. Anything else belongs to the outer catch.
+        if (!(ac.signal.reason instanceof UpstreamTimeout)) throw err;
+        cutShort = ac.signal.reason;
       } finally {
-        clearTimeout(idle);
+        if (idle) clearTimeout(idle);
         if (keepAlive) clearInterval(keepAlive);
       }
+
       if (!reply.raw.destroyed) {
-        if (translator) reply.raw.write(Buffer.from(translator.end()));
-        else if (scrubber) reply.raw.write(Buffer.from(scrubber.end()));
+        if (cutShort) {
+          /*
+           * The headers went out long ago, so there is no status left to say this with. An
+           * error frame is the only way to tell the client the stream is not finished —
+           * without one it receives a 200 that simply stops, which reads as a complete
+           * answer that happens to be short, and is not retried. Closing the translator
+           * instead would say the opposite: message_stop means the model is done.
+           */
+          toClient(
+            wire === 'anthropic'
+              ? `event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'api_error', message: tr(req, 'The upstream did not answer in time; try again') } })}\n\n`
+              : `event: error\ndata: ${JSON.stringify({ type: 'error', code: 'upstream_timeout', message: tr(req, 'The upstream did not answer in time; try again') })}\n\n`,
+            true,
+          );
+        } else if (translator) toClient(Buffer.from(translator.end()), true);
+        else if (scrubber) toClient(Buffer.from(scrubber.end()), true);
       }
       reply.raw.end();
     } else {
-      const text = await upstream.text();
+      const text = await upstream.text().finally(() => {
+        if (idle) clearTimeout(idle);
+      });
       acc.ttftMs = Date.now() - startedAt;
       absorbBody(target.wire, text, acc);
       // Non-streaming is rare — probes and fallbacks — but a Codex-shaped body would carry
       // the shared account's allowance in it just the same
+      // chatResponseToAnthropic returns an error body untouched, whatever the status said
+      // it was — an OpenAI-compatible server answers 200 with one often enough
       reply.raw.write(
-        target.translate && wire === 'anthropic' && status >= 200 && status < 300
+        target.translate && wire === 'anthropic'
           ? chatResponseToAnthropic(text, reqModel)
           : wire === 'anthropic'
             ? text
