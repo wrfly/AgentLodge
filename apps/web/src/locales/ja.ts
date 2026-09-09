@@ -620,4 +620,10 @@ export const ja: Record<string, string> = {
   '{active} in flight · {queued} queued': '実行中 {active} · 待ち {queued}',
   '{n} versions': '{n} バージョン',
   'no longer offered': '現在は提供されていません',
+
+  // Composer attachments
+  'Attach files — paste or drop them here too': 'ファイルを添付 — 貼り付けやドラッグでも',
+  'Remove attachment': '添付を外す',
+  'At most {n} files at a time': '一度に添付できるのは {n} 件までです',
+  'Attached: {files}': '添付：{files}',
 };

@@ -269,6 +269,13 @@ export function mToTokens(m: string): number {
   return Math.round(Number(m) * 1_000_000);
 }
 
+/** A file size, short enough to sit beside a name */
+export function fmtSize(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
 export function fmtDate(iso?: string): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('zh-CN', {

@@ -94,6 +94,14 @@ interface ChatState {
   thinking: boolean;
   /** Place in the queue at the gateway's concurrency gate; 0 means not queued */
   queuePosition: number;
+  /**
+   * Bumped whenever the workspace changes from outside the files panel.
+   *
+   * The composer can now upload — paste, drop, the paperclip — and the panel is its
+   * sibling, holding its own list. Without something to watch, a file attached while the
+   * panel is open simply does not appear in it.
+   */
+  filesVersion: number;
   messages: ChatMessage[];
   streaming: boolean;
   loading: boolean;
@@ -114,6 +122,7 @@ interface ChatState {
   setThinking: (thinking: boolean) => Promise<void>;
   remove: (id: string) => Promise<void>;
   setSidebar: (open: boolean) => void;
+  bumpFiles: () => void;
   dismissError: () => void;
   _applyBatch: (batch: ServerEvent[]) => void;
 }
@@ -176,6 +185,7 @@ export const useChat = create<ChatState>((set, get) => ({
   effort: '',
   thinking: true,
   queuePosition: 0,
+  filesVersion: 0,
   messages: [],
   streaming: false,
   loading: false,
@@ -184,6 +194,7 @@ export const useChat = create<ChatState>((set, get) => ({
   sidebarOpen: false,
 
   setSidebar: (open) => set({ sidebarOpen: open }),
+  bumpFiles: () => set((s) => ({ filesVersion: s.filesVersion + 1 })),
   dismissError: () => set({ error: null }),
 
   async bootstrap(agent) {

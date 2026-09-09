@@ -593,4 +593,10 @@ export const pt: Record<string, string> = {
   '{active} in flight · {queued} queued': '{active} em curso · {queued} em fila',
   '{n} versions': '{n} versões',
   'no longer offered': 'já não é oferecido',
+
+  // Composer attachments
+  'Attach files — paste or drop them here too': 'Anexar ficheiros — também pode colar ou arrastar para aqui',
+  'Remove attachment': 'Remover anexo',
+  'At most {n} files at a time': 'No máximo {n} ficheiros de cada vez',
+  'Attached: {files}': 'Anexos: {files}',
 };
