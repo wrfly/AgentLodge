@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { all, bool, flag, get, nowIso, run } from './index.js';
-import { getNumber } from './settings.js';
+import { getNumber, getString } from './settings.js';
 
 export type Role = 'user' | 'admin';
 export type UserStatus = 'active' | 'suspended';
@@ -95,12 +95,13 @@ const toUser = (r: UserRow): User => ({
 });
 
 /** The one currency quotas are priced in. Kept where it was, next to the only reader. */
-const CURRENCY = 'CNY';
+/** What the price table is written in; the quota is reported in the same unit */
+const CURRENCY = (): string => getString('billing.currency', 'USD');
 
 const toQuota = (r: QuotaRow): Quota => ({
   userId: r.user_id,
   limitKind: r.limit_kind === 'cost' ? 'cost' : 'tokens',
-  currency: CURRENCY,
+  currency: CURRENCY(),
   window: r.window_limit ?? null,
   week: r.week_limit ?? null,
   month: r.month_limit ?? null,
@@ -230,7 +231,7 @@ export function getQuota(userId: string): Quota {
   return {
     userId,
     limitKind: 'tokens',
-    currency: CURRENCY,
+    currency: CURRENCY(),
     window: null,
     week: null,
     month,

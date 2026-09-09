@@ -1,5 +1,5 @@
 import { all, get, nowIso, run } from './index.js';
-import { getString } from './settings.js';
+import { getString, setSetting } from './settings.js';
 
 /**
  * The price table: turning tokens into money.
@@ -82,7 +82,7 @@ export function add(input: UpsertInput): Pricing {
      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.model.trim(),
     (input.providerId ?? '').trim() || null,
-    input.currency ?? getString('billing.currency', 'CNY'),
+    input.currency ?? getString('billing.currency', 'USD'),
     Math.round(input.priceInput),
     Math.round(input.priceCacheRead),
     Math.round(input.priceCacheWrite),
@@ -151,7 +151,27 @@ export interface TokenCounts {
 }
 
 /** Cost in micro-units. No matching price returns 0, and the interface says the model is unpriced. */
-export function costMicro(
+/**
+ * What a single input token of one model costs, in micro-units.
+ *
+ * The unit quota is measured in when `quota.pricingBaseline` names a model: every model's
+ * spend is divided by this to get "tokens of the baseline model", which is a number an
+ * administrator can set a ceiling in and compare across models.
+ */
+export function inputMicroPerToken(model: string, at?: string, providerId?: string | null): number {
+  const p = resolve(model, at, providerId);
+  return p ? p.priceInput / 1_000_000 : 0;
+}
+
+/**
+ * The same sum, unrounded.
+ *
+ * A micro-unit is a millionth, and a cheap model's token is a fraction of one — a DeepSeek
+ * input token is 0.435 of a micro. Rounding before the caller is done with the number turns
+ * that into 0, and a caller that then treats 0 as "cannot price this" gets a cliff: quota
+ * measured this way billed one token as 1, two through five as 0, and six as 1 again.
+ */
+export function costMicroExact(
   model: string | null | undefined,
   u: TokenCounts,
   at?: string,
@@ -160,15 +180,24 @@ export function costMicro(
   const p = resolve(model, at, providerId);
   if (!p) return 0;
   const per = (tokens: number, price: number) => (tokens * price) / 1_000_000;
-  return Math.round(
+  return (
     per(u.inputTokens, p.priceInput) +
-      per(u.cacheReadTokens, p.priceCacheRead) +
-      per(u.cacheCreationTokens, p.priceCacheWrite) +
-      per(u.outputTokens, p.priceOutput),
+    per(u.cacheReadTokens, p.priceCacheRead) +
+    per(u.cacheCreationTokens, p.priceCacheWrite) +
+    per(u.outputTokens, p.priceOutput)
   );
 }
 
-export const formatMoney = (micro: number, currency = 'CNY'): string =>
+export function costMicro(
+  model: string | null | undefined,
+  u: TokenCounts,
+  at?: string,
+  providerId?: string | null,
+): number {
+  return Math.round(costMicroExact(model, u, at, providerId));
+}
+
+export const formatMoney = (micro: number, currency = 'USD'): string =>
   `${currency === 'CNY' ? '¥' : '$'}${(micro / MICRO).toFixed(4)}`;
 
 /**
@@ -180,28 +209,60 @@ export const formatMoney = (micro: number, currency = 'CNY'): string =>
 export function seedDefaults(): void {
   if (get('select 1 as x from model_pricing limit 1')) return;
   const now = nowIso();
+  /*
+   * Units are micro-units per million tokens, so `$10 / MTok` is 10_000_000.
+   *
+   * The published rates, which is more use than a placeholder: quota counts what a turn
+   * cost, so an empty table would weigh every model alike, which is the thing that needed
+   * fixing. Cache writes are the standard 1.25× input; cache reads are **not** a standard
+   * multiple — Claude Fable reads at a fortieth of its input price where the rest of the
+   * range is at a tenth, and that is exactly the sort of thing a table can hold and a
+   * global weight cannot.
+   *
+   * An upstream that is not Anthropic — DeepSeek, a local model, a reseller — needs a row
+   * of its own; until it has one it is costed at the catch-all below, which is Claude Opus
+   * 5's rate. Every row here is in one currency on purpose: the amounts are summed.
+   */
+  /*
+   * Published list prices, in US dollars per million tokens.
+   *
+   * The same numbers the model picker shows — apps/web/src/lib/model-facts.ts — and
+   * scripts/check-pricing.mjs fails the build when the two disagree. They have to agree:
+   * one is what a user is told a model costs and the other is what they are charged, and
+   * nothing else reconciles them.
+   *
+   * Cache write is the standard 1.25x input and cache read the standard tenth, with one
+   * exception spelled out: Claude Fable reads its cache at a fortieth. That exception is
+   * the reason quota reads a table instead of a global weight, so the table has to hold it.
+   */
+  const rate = (input: number, output: number, cacheRead = input / 10) => ({
+    priceInput: Math.round(input * 1_000_000),
+    priceCacheRead: Math.round(cacheRead * 1_000_000),
+    priceCacheWrite: Math.round(input * 1.25 * 1_000_000),
+    priceOutput: Math.round(output * 1_000_000),
+  });
   const seed: UpsertInput[] = [
+    { model: 'claude-fable-5-1', ...rate(10, 50, 0.25) },
+    { model: 'claude-fable-5', ...rate(10, 50, 0.25) },
+    { model: 'claude-opus-5', ...rate(5, 25) },
+    { model: 'claude-opus-4-8', ...rate(5, 25) },
+    { model: 'claude-opus-4-7', ...rate(5, 25) },
+    { model: 'claude-opus-4-6', ...rate(5, 25) },
+    { model: 'claude-opus-4-5', ...rate(5, 25) },
+    { model: 'claude-sonnet-5', ...rate(2, 10) },
+    { model: 'claude-sonnet-4-6', ...rate(3, 15) },
+    { model: 'claude-sonnet-4-5', ...rate(3, 15) },
+    { model: 'claude-haiku-4-5', ...rate(1, 5) },
+    { model: 'deepseek-v4-pro', ...rate(0.435, 0.87) },
+    { model: 'deepseek-v4-flash', ...rate(0.22, 0.66), note: 'Off-peak; DeepSeek doubles these 01:00–04:00 and 06:00–10:00 UTC' },
     {
-      model: 'deepseek',
-      currency: 'CNY',
-      priceInput: 2_000_000,       // ¥2 / 1M
-      priceCacheRead: 200_000,     // ¥0.2 / 1M
-      priceCacheWrite: 2_000_000,
-      priceOutput: 3_000_000,      // ¥3 / 1M
-      effectiveFrom: now,
-      note: 'A default — check against DeepSeek\'s own page and correct it',
-    },
-    {
+      // Also the unit quota is counted in: one billable token is one input token at this rate
       model: '*',
-      currency: 'CNY',
-      priceInput: 2_000_000,
-      priceCacheRead: 200_000,
-      priceCacheWrite: 2_000_000,
-      priceOutput: 3_000_000,
-      effectiveFrom: now,
-      note: 'The catch-all, used by any model without a price of its own',
+      ...rate(5, 25),
+      note: 'The catch-all, used by any model without a price of its own — and the unit billable tokens are counted in',
     },
-  ];
+  ].map((r) => ({ ...r, currency: 'USD', effectiveFrom: now }));
   for (const s of seed) add(s);
-  console.log('[pricing] default price table seeded — check the real unit prices in the console');
+  setSetting('billing.currency', 'USD');
+  console.log('[pricing] price table seeded in USD — check the rates in the console, and add a row for any upstream that is not Anthropic');
 }

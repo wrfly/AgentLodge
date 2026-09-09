@@ -31,13 +31,39 @@ export interface RecordInput {
 }
 
 /**
- * Convert to billable tokens.
+ * Convert to billable tokens: what the turn cost, expressed as a count.
  *
- * A cache hit costs far less than ordinary input and output costs more than input, so a
- * plain sum is badly distorted. The weights are adjustable in system settings
- * (quota.weightCacheRead / quota.weightOutput).
+ * A plain sum of tokens is badly distorted in two directions. Within one turn, a cache hit
+ * costs a fraction of ordinary input and output costs several times more. Across models, the
+ * prices differ by a factor of ten over a single vendor's range — Claude Fable is $10/$50
+ * per MTok against Haiku's $1/$5 — so counting tokens alike means somebody on the expensive
+ * model spends ten times as much and draws exactly as much quota.
+ *
+ * Both come out of the price table, which is where the real numbers already are. The turn is
+ * costed, then divided by what one input token costs at the catch-all price — the `*` row,
+ * which every table has and which nothing else moves. So a billable token means "one input
+ * token at the standard rate", every model converts at the ratio of its own prices, and the
+ * awkward cases need no configuring: Claude Fable reads its cache at a fortieth of its input
+ * price where the rest of the range is at a tenth, which one global weight cannot say.
+ *
+ * The weights below are what is left when the table cannot answer — no rows at all, or a
+ * model priced at zero. Falling through to zero instead would let a mispriced table quietly
+ * make a model free.
  */
-export function billable(u: TurnUsage): number {
+export function billable(u: TurnUsage, model?: string | null, providerId?: string | null): number {
+  /*
+   * Whether the table can price this, not whether the price rounded to something. Gating on
+   * a rounded cost put a cliff in the middle of the scale: on an upstream whose input token
+   * is 0.435 of a micro-unit, one token billed 1 (rounded to zero, so the weights answered),
+   * two through five billed 0, and six billed 1 again. The gateway writes a row per upstream
+   * call, so short calls met it one after another.
+   */
+  const priced = pricing.resolve(model, undefined, providerId);
+  const unit = pricing.resolve('*');
+  if (priced && unit && unit.priceInput > 0) {
+    return Math.round(pricing.costMicroExact(model, u, undefined, providerId) / (unit.priceInput / 1_000_000));
+  }
+
   const w = quotaWeights();
   return Math.round(
     u.inputTokens * w.input +
@@ -68,7 +94,7 @@ export function record(input: RecordInput): void {
     u?.cacheReadTokens ?? 0,
     u?.cacheCreationTokens ?? 0,
     u?.outputTokens ?? 0,
-    u ? billable(u) : 0,
+    u ? billable(u, input.model, input.providerId) : 0,
     u?.costUsd ?? 0,
     u ? pricing.costMicro(input.model, u, undefined, input.providerId) : 0,
     u?.durationMs ?? null,

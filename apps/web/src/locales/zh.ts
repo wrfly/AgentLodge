@@ -240,7 +240,6 @@ export const zh: Record<string, string> = {
   'period started {when}': '周期起点 {when}',
   'an administrator reset it manually': '管理员已手动清零过',
   'warn only, not enforced': '仅告警，不拦截',
-  'Billable tokens = input + cache read×0.1 + cache write + output×1.5 (weights are set by an administrator)': '计费 token = 输入 + 缓存读取×0.1 + 缓存写入 + 输出×1.5（权重由管理员配置）',
   '{n} turns': '{n} 轮',
   'By period': '按时间段查看',
   Custom: '自定义',
@@ -626,4 +625,25 @@ export const zh: Record<string, string> = {
   'Remove attachment': '移除附件',
   'At most {n} files at a time': '一次最多 {n} 个文件',
   'Attached: {files}': '附件：{files}',
+
+
+  // Usage table columns
+  'In': '输入',
+  'Out': '输出',
+  'Cost': '金额',
+
+  // Billing currency and the fallback weights
+  'Currency': '币种',
+  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': '价格表用的币种。改这里只是换标签，不做任何换算——行里的数字要自己改成对应币种。',
+  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': '只在价格表算不出这个模型时才用。配额平时算的是这一轮实际花了多少钱。',
+  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': '计费 token = 这一轮实际花的钱，换算成标准价下的输入 token —— 所以越贵的模型占掉越多同样的配额',
+
+  // Admin: the price table
+  'Price table': '价格表',
+  'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': '按每百万 token 计。配额算的是这一轮实际花了多少钱，所以这张表既决定账单也决定谁被拦下。',
+  'Cache read': '缓存读',
+  'Cache write': '缓存写',
+  'catch-all, and the unit quota is counted in': '兜底行，也是计费 token 的单位',
+  'Add a price': '添加价格',
+  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '改价是加一行新的，所以过去的账单保留当时的价格。整张表只能用一种币种——金额是直接相加的。',
 };

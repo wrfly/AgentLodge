@@ -37,6 +37,7 @@ const K = 1_000;
  * the entry for the model it is a snapshot of. The longest match wins.
  */
 const FACTS: Record<string, ModelFacts> = {
+  'claude-fable-5-1': { context: M, maxOutput: 128 * K, inPrice: 10, outPrice: 50 },
   'claude-fable-5': { context: M, maxOutput: 128 * K, inPrice: 10, outPrice: 50, swe: 95.0 },
   'claude-opus-5': { context: M, maxOutput: 128 * K, inPrice: 5, outPrice: 25 },
   'claude-opus-4-8': { context: M, maxOutput: 128 * K, inPrice: 5, outPrice: 25, swe: 88.6 },

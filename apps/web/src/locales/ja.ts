@@ -240,7 +240,6 @@ export const ja: Record<string, string> = {
   'period started {when}': '期間の開始 {when}',
   'an administrator reset it manually': '管理者が手動でリセットしました',
   'warn only, not enforced': '警告のみ、遮断はしません',
-  'Billable tokens = input + cache read×0.1 + cache write + output×1.5 (weights are set by an administrator)': '課金対象 token = 入力 + キャッシュ読取×0.1 + キャッシュ書込 + 出力×1.5（重みは管理者が設定）',
   '{n} turns': '{n} ターン',
   'By period': '期間別に見る',
   Custom: 'カスタム',
@@ -626,4 +625,25 @@ export const ja: Record<string, string> = {
   'Remove attachment': '添付を外す',
   'At most {n} files at a time': '一度に添付できるのは {n} 件までです',
   'Attached: {files}': '添付：{files}',
+
+
+  // Usage table columns
+  'In': '入力',
+  'Out': '出力',
+  'Cost': '料金',
+
+  // Billing currency and the fallback weights
+  'Currency': '通貨',
+  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': '価格表の通貨です。変更してもラベルが変わるだけで換算はしません。行の数値は自分で書き換えてください。',
+  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': '価格表が値段を出せないモデルにだけ使います。クォータは通常、そのターンの実費を数えます。',
+  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': '課金トークンはそのターンの実費を、標準レートの入力トークンに換算したものです。高価なモデルほど同じクォータを多く消費します',
+
+  // Admin: the price table
+  'Price table': '価格表',
+  'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': '100万トークンあたり。クォータはそのターンの実費を数えるので、この表が請求も拒否も決めます。',
+  'Cache read': 'キャッシュ読取',
+  'Cache write': 'キャッシュ書込',
+  'catch-all, and the unit quota is counted in': 'フォールバック行。課金トークンの単位でもあります',
+  'Add a price': '価格を追加',
+  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '価格変更は新しい行の追加なので、過去の請求は当時の価格のままです。表全体で通貨は一つ — 金額は合算されます。',
 };

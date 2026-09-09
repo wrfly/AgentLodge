@@ -225,7 +225,6 @@ export const es: Record<string, string> = {
   'period started {when}': 'el periodo empezó {when}',
   'an administrator reset it manually': 'un administrador lo reinició a mano',
   'warn only, not enforced': 'solo avisar, sin bloquear',
-  'Billable tokens = input + cache read×0.1 + cache write + output×1.5 (weights are set by an administrator)': 'Tokens facturables = entrada + caché leída×0,1 + caché escrita + salida×1,5 (los pesos los fija un administrador)',
   '{n} turns': '{n} turnos',
   'By period': 'Por periodo',
   Custom: 'Personalizado',
@@ -599,4 +598,25 @@ export const es: Record<string, string> = {
   'Remove attachment': 'Quitar adjunto',
   'At most {n} files at a time': 'Como máximo {n} archivos a la vez',
   'Attached: {files}': 'Adjuntos: {files}',
+
+
+  // Usage table columns
+  'In': 'Entrada',
+  'Out': 'Salida',
+  'Cost': 'Coste',
+
+  // Billing currency and the fallback weights
+  'Currency': 'Moneda',
+  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'La moneda de la tabla de precios. Cambiarla solo reetiqueta, no convierte nada: reescribe las filas para que coincidan.',
+  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Solo para un modelo que la tabla de precios no puede tarifar. Normalmente la cuota cuenta lo que costó el turno.',
+  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Los tokens facturables son lo que costó el turno, expresado en tokens de entrada a la tarifa estándar: un modelo más caro consume más de la misma cuota',
+
+  // Admin: the price table
+  'Price table': 'Tabla de precios',
+  'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': 'Por millón de tokens. La cuota cuenta lo que costó el turno, así que esta tabla decide tanto la factura como los rechazos.',
+  'Cache read': 'Lectura de caché',
+  'Cache write': 'Escritura de caché',
+  'catch-all, and the unit quota is counted in': 'fila comodín, y la unidad de los tokens facturables',
+  'Add a price': 'Añadir un precio',
+  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Un cambio de precio es una fila nueva, así que las facturas pasadas conservan su precio. Una sola moneda para toda la tabla: los importes se suman.',
 };

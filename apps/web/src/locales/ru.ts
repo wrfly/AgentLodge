@@ -240,7 +240,6 @@ export const ru: Record<string, string> = {
   'period started {when}': 'период начался {when}',
   'an administrator reset it manually': 'администратор сбросил вручную',
   'warn only, not enforced': 'только предупреждение, без блокировки',
-  'Billable tokens = input + cache read×0.1 + cache write + output×1.5 (weights are set by an administrator)': 'Оплачиваемые токены = вход + чтение кэша×0,1 + запись кэша + выход×1,5 (веса задаёт администратор)',
   '{n} turns': 'ходов: {n}',
   'By period': 'По периодам',
   Custom: 'Свой период',
@@ -626,4 +625,25 @@ export const ru: Record<string, string> = {
   'Remove attachment': 'Убрать вложение',
   'At most {n} files at a time': 'Не более {n} файлов за раз',
   'Attached: {files}': 'Вложения: {files}',
+
+
+  // Usage table columns
+  'In': 'Вход',
+  'Out': 'Выход',
+  'Cost': 'Стоимость',
+
+  // Billing currency and the fallback weights
+  'Currency': 'Валюта',
+  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'Валюта таблицы цен. Изменение лишь меняет подпись и ничего не пересчитывает — перепишите строки под неё.',
+  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Только для модели, которую таблица цен не может оценить. Обычно квота считает фактическую стоимость хода.',
+  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Тарифицируемые токены — это фактическая стоимость хода, выраженная во входных токенах по стандартной ставке: дорогая модель расходует больше той же квоты',
+
+  // Admin: the price table
+  'Price table': 'Таблица цен',
+  'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': 'За миллион токенов. Квота считает фактическую стоимость хода, поэтому эта таблица определяет и счёт, и отказы.',
+  'Cache read': 'Чтение кэша',
+  'Cache write': 'Запись кэша',
+  'catch-all, and the unit quota is counted in': 'запасная строка, и единица тарифицируемых токенов',
+  'Add a price': 'Добавить цену',
+  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Изменение цены — это новая строка, поэтому прошлые счета сохраняют цену своего времени. Одна валюта на всю таблицу — суммы складываются.',
 };

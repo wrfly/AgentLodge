@@ -276,13 +276,28 @@ export const SETTING_SPECS: SettingSpec[] = [
     hint: '0–23, server time.',
   },
   {
+    /*
+     * One table, one currency. Every amount in the price table is summed — into a turn's
+     * cost, a user's month, the platform's total — and a sum over two currencies is not a
+     * number. Changing this does not convert anything; it relabels, and the rows have to be
+     * rewritten to match.
+     */
+    key: 'billing.currency',
+    span: 2,
+    label: 'Currency',
+    group: 'quota',
+    type: 'string',
+    default: 'USD',
+    hint: 'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.',
+  },
+  {
     key: 'quota.weightCacheRead',
     span: 2,
     label: 'Cache-hit weight',
     group: 'quota',
     type: 'number',
     default: '0.1',
-    hint: 'Multiplier for cache reads.',
+    hint: 'Only for a model the price table cannot price. Quota normally counts what a turn cost.',
   },
   {
     key: 'quota.weightOutput',
@@ -291,7 +306,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'quota',
     type: 'number',
     default: '1.5',
-    hint: 'Multiplier for output tokens.',
+    hint: 'Only for a model the price table cannot price. Quota normally counts what a turn cost.',
   },
 
   // agent

@@ -25,6 +25,7 @@ import { ModelsCard } from './Models';
 import { AuditProxyCard } from './AuditProxy';
 import { WithUnit } from './shared';
 import { GateCard } from './Gate';
+import { PricingCard } from './Pricing';
 
 /* ---------------- System settings ---------------- */
 
@@ -240,6 +241,8 @@ export function SettingsTab() {
       <CredentialsCard />
       <ProvidersCard />
       <ModelsCard />
+      {/* Next to the models it prices, and above the gate: quota reads it */}
+      <PricingCard />
       <AuditProxyCard />
       <GateCard />
 
