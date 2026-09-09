@@ -483,11 +483,21 @@ async function handleProxy(
       // is still parsed from the upstream copy, so accounting uses the real numbers rather
       // than the ones we produced.
       const sniffer = new SseSniffer(target.wire, acc);
-      const translator = !target.translate
-        ? null
-        : wire === 'anthropic'
-          ? new ChatToAnthropic(reqModel)
-          : new ChatToResponses(reqModel);
+      /*
+       * Nothing is translated once the upstream has refused. Claude Code recovers from a
+       * rejected capability — a thinking field the model does not take, a cache_control
+       * marker on a system message — by matching the **upstream's own wording** and
+       * retrying without it, so an error body has to arrive as it was written. Run through
+       * the translator it comes out as a well-formed message with nothing in it, and the
+       * recovery path has nothing to match.
+       */
+      const relayVerbatim = status < 200 || status >= 300;
+      const translator =
+        !target.translate || relayVerbatim
+          ? null
+          : wire === 'anthropic'
+            ? new ChatToAnthropic(reqModel)
+            : new ChatToResponses(reqModel);
       /*
        * Codex carries the shared account's allowance inside the body rather than in
        * headers, so on that side the bytes cannot simply be relayed. A translated stream
@@ -500,14 +510,30 @@ async function handleProxy(
           : null;
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder();
-      // A stream that goes quiet is ended rather than held open: the CLI sees a truncated
-      // answer and retries, instead of waiting on a connection that will never finish
+      // A stream that goes quiet for longer than the client would wait anyway is ended, so
+      // the slot comes back; see config.upstreamIdleTimeoutMs for why it sits above 300s
       const idle = setTimeout(() => ac.abort(new UpstreamTimeout('body')), config.upstreamIdleTimeoutMs);
+      /*
+       * A translated stream produces nothing while the model is still thinking, and the
+       * client counts silence: 300 seconds of it and Claude Code abandons the request. The
+       * upstream we are translating from has no ping frame of its own to relay, so one is
+       * written here. A ping is valid in both directions and carries no content.
+       */
+      const keepAlive =
+        translator && config.streamKeepAliveMs > 0
+          ? setInterval(() => {
+              if (reply.raw.destroyed || ac.signal.aborted) return;
+              reply.raw.write(
+                wire === 'anthropic' ? 'event: ping\ndata: {"type":"ping"}\n\n' : ': ping\n\n',
+              );
+            }, config.streamKeepAliveMs)
+          : null;
       try {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
           idle.refresh();
+          keepAlive?.refresh();
           if (!acc.ttftMs) acc.ttftMs = Date.now() - startedAt;
           const text = decoder.decode(value, { stream: true });
           sniffer.push(text);
@@ -528,6 +554,7 @@ async function handleProxy(
         }
       } finally {
         clearTimeout(idle);
+        if (keepAlive) clearInterval(keepAlive);
       }
       if (!reply.raw.destroyed) {
         if (translator) reply.raw.write(Buffer.from(translator.end()));
@@ -541,7 +568,7 @@ async function handleProxy(
       // Non-streaming is rare — probes and fallbacks — but a Codex-shaped body would carry
       // the shared account's allowance in it just the same
       reply.raw.write(
-        target.translate && wire === 'anthropic'
+        target.translate && wire === 'anthropic' && status >= 200 && status < 300
           ? chatResponseToAnthropic(text, reqModel)
           : wire === 'anthropic'
             ? text
