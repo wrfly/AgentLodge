@@ -17,8 +17,10 @@ export function register(app: FastifyInstance): void {
     const monthStart = usageRepo.periodStart('monthly');
     return usersRepo.list().map((u) => {
       const q = usersRepo.getQuota(u.id);
-      // The 5-hour window is the one that bites first, so it is the one the list shows
-      const windowStart = quota.boundsOf('window').start.toISOString();
+      // The 5-hour window is the one that bites first, so it is the one the list shows —
+      // counted from wherever the gate counts it from, or an operator who has just reset
+      // somebody reads a percentage the reset already forgave
+      const windowStart = quota.countStartOf(q, quota.boundsOf('window').start);
       return {
         ...usersRepo.toPublic(u),
         quota: {

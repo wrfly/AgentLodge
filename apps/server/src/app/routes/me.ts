@@ -108,7 +108,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
 
   /**
    * Three ways to ask:
-   *   ?preset=today|yesterday|week|month|last7|last30|quota|all
+   *   ?preset=window|today|yesterday|week|month|last7|last30|quota|all
    *   ?preset=custom&from=2026-08-01&to=2026-08-15
    *   no parameters → the current quota month
    */

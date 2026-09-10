@@ -65,6 +65,19 @@ function boostOf(q: usersRepo.Quota, scope: QuotaScope, now: Date): number {
   return new Date(q.boost.until).getTime() > now.getTime() ? q.boost.amount : 0;
 }
 
+/**
+ * Where a window's count begins for this user: its boundary, unless a manual reset moved the
+ * start forward inside a window already running. The next window still begins at its own
+ * boundary.
+ *
+ * The rule lives here, and not at each caller, because anything that re-derives it drifts
+ * from the number the gate enforces — and a report disagreeing with the gate about how much
+ * somebody has spent is worse than not showing the figure at all.
+ */
+export function countStartOf(q: usersRepo.Quota, start: Date): string {
+  return q.resetAt && new Date(q.resetAt) > start ? q.resetAt : start.toISOString();
+}
+
 function windowStatus(
   userId: string,
   q: usersRepo.Quota,
@@ -72,10 +85,7 @@ function windowStatus(
   now: Date,
 ): QuotaWindow {
   const { start, end } = boundsOf(scope, now);
-  // A manual reset moves the counting start forward inside a window already running; the
-  // next window still begins at its own boundary
-  const from =
-    q.resetAt && new Date(q.resetAt) > start ? q.resetAt : start.toISOString();
+  const from = countStartOf(q, start);
 
   const totals = usageRepo.totalsForUser(userId, { from, to: end.toISOString() });
   const used = q.limitKind === 'cost' ? totals.costMicro : totals.billableTokens;

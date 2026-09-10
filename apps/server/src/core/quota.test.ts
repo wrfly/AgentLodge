@@ -211,6 +211,27 @@ console.log('\n=== A manual reset moves the counting start, not the boundary ===
   ok('and the count goes back to the boundary', back.countsFrom === back.startsAt, back.countsFrom);
 }
 
+console.log('\n=== The rule for where a count begins is exported, not copied ===');
+{
+  /*
+   * The admin user list draws the same five-hour figure, and used to cut it at the window
+   * boundary while the gate cut it at the reset — so an operator who had just reset somebody
+   * read back a percentage the reset had already forgiven. Both call this now.
+   */
+  const start = new Date('2026-08-23T14:00:00.000Z');
+  users.resetUsage(alice, '2026-08-23T16:00:00.000Z');
+  const q = users.getQuota(alice);
+  ok('a reset inside the window wins', quota.countStartOf(q, start) === '2026-08-23T16:00:00.000Z');
+  ok('and the gate agrees with it',
+    quota.status(alice, new Date('2026-08-23T18:00:00.000Z')).windows.window.countsFrom
+      === quota.countStartOf(q, start));
+
+  const later = new Date('2026-08-23T19:00:00.000Z');
+  ok('a reset behind the boundary does not', quota.countStartOf(q, later) === later.toISOString());
+  users.undoResetUsage(alice);
+  ok('and with no reset it is the boundary', quota.countStartOf(users.getQuota(alice), start) === start.toISOString());
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
