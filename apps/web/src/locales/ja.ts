@@ -649,4 +649,6 @@ export const ja: Record<string, string> = {
   'no limit': '上限なし',
   'This account has no ceiling on any window.': 'このアカウントはどのウィンドウにも上限がありません。',
   'counting from {when}': '{when} から計上',
+  'incl. {amount} topped up': 'うち {amount} は追加分',
+  'tokens': 'トークン',
 };

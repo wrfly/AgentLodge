@@ -3,7 +3,8 @@ import * as usageRepo from './db/usage.js';
 import { WINDOW_MS, periodEndAt, periodStartAt, weekBoundsAt, windowBoundsAt } from './db/period.js';
 import { quotaAnchor } from './db/settings.js';
 import { getStringFresh } from './db/settings.js';
-import type { QuotaScope, QuotaStatus, QuotaWindow } from './protocol.js';
+import type { LimitKind, QuotaScope, QuotaStatus, QuotaWindow } from './protocol.js';
+import { MICRO } from './db/pricing.js';
 
 export type { QuotaStatus, QuotaWindow, LimitKind, QuotaScope } from './protocol.js';
 
@@ -103,9 +104,10 @@ function windowStatus(
   const totals = usageRepo.totalsForUser(userId, { from, to: end.toISOString() });
   const used = q.limitKind === 'cost' ? totals.costMicro : totals.billableTokens;
 
-  const ceiling = ceilingOf(q, scope);
+  // Reported separately so the interface can mark a top-up, but the ceiling itself comes
+  // from the one function that owns that rule
   const boost = boostOf(q, scope, now);
-  const limit = ceiling === null ? null : ceiling + boost;
+  const limit = effectiveCeiling(q, scope, now);
 
   return {
     scope,
@@ -161,9 +163,7 @@ export function check(userId: string, now = new Date()): Verdict {
   if (!s.exceeded || !s.hardStop) return { allow: true, status: s };
 
   const hit = SCOPES.map((scope) => s.windows[scope]).find((w) => w.exceeded)!;
-  const unit = s.limitKind === 'cost' ? s.currency : 'tokens';
-  const amount = (v: number): string =>
-    s.limitKind === 'cost' ? (v / 1_000_000).toFixed(2) : String(v);
+  const { unit, amount } = amountIn(s.limitKind, s.currency);
 
   return {
     allow: false,
@@ -172,6 +172,28 @@ export function check(userId: string, now = new Date()): Verdict {
       + `(${amount(hit.used)} / ${amount(hit.limit ?? 0)} ${unit}, `
       + `resets in ${formatDuration(new Date(hit.endsAt).getTime() - now.getTime())})`,
     status: s,
+  };
+}
+
+/**
+ * How a quota figure is written down, in the unit its ceiling is counted in.
+ *
+ * Both the refusal and the warning mail quote the same pair of numbers, and they used to
+ * format them apart: one `String(v)`, the other `v.toLocaleString()` — so the same 900,000
+ * appeared as `900000` in the refusal and `900,000` in the mail, and on a server with a
+ * non-English `LANG` the mail said `900.000` to an English reader. Neither is worth arguing
+ * about on its own; two spellings of one number in two places is what makes people distrust
+ * both. `en-US` is pinned because these strings are not translated.
+ */
+export function amountIn(
+  limitKind: LimitKind,
+  currency: string,
+): { unit: string; amount: (v: number) => string } {
+  const byCost = limitKind === 'cost';
+  return {
+    unit: byCost ? currency : 'tokens',
+    amount: (v: number) =>
+      byCost ? (v / MICRO).toFixed(2) : v.toLocaleString('en-US'),
   };
 }
 

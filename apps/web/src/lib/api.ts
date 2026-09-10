@@ -862,7 +862,13 @@ export const admin = {
       hardStop?: boolean;
       limitKind?: 'tokens' | 'cost';
     },
-  ) => request<AdminUser>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    /*
+     * Not an `AdminUser`: the route answers with the public user plus the raw quota row, and
+     * carries neither `usage` nor `conversations` nor `windowCeiling`. Nothing reads the
+     * result — the caller reloads the list — but a type that claims fields the response has
+     * never had is a trap for whoever reads it next.
+     */
+  ) => request<PublicUser>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   /** Top up: extra allowance on one of the platform's windows, gone when that window resets */
   topup: (
     id: string,

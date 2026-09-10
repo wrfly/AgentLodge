@@ -26,7 +26,7 @@ process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 const { initDb } = await import('../core/db/index.js');
 initDb();
 const { setSetting } = await import('../core/db/settings.js');
-const { send, quotaWarningMail } = await import('./mail.js');
+const { send, quotaWarningMail, inviteMail } = await import('./mail.js');
 
 let pass = 0;
 let fail = 0;
@@ -239,6 +239,29 @@ console.log('\n=== The quota warning names the unit and the window it is about =
   ok('a token quota still reads as tokens', tokens.text.includes('900,000 of 1,000,000 tokens'), tokens.text);
   ok('for its own window', tokens.text.includes('this week'), tokens.text);
   ok('the subject carries the percentage', tokens.subject.includes('90%'), tokens.subject);
+}
+
+console.log('\n=== Nothing from outside reaches the HTML unescaped ===');
+{
+  /*
+   * A username is whatever somebody typed at sign-up, and the currency is free text on the
+   * admin settings page. Both were interpolated raw, which made the quota mail a delivery
+   * mechanism for either — to every user with a quota, in a client that renders HTML.
+   */
+  const evil = '<img src=x onerror="alert(1)">';
+  const m = quotaWarningMail({
+    username: evil, used: '9.00', limit: '10.00', unit: evil,
+    window: 'week', pct: 90, link: 'https://lodge.example/usage',
+  });
+  ok('no raw tag survives into the body', !m.html.includes('<img'), m.html.slice(m.html.indexOf('<img') - 40, 120));
+  ok('nor a raw attribute quote', !m.html.includes('onerror="alert'));
+  ok('it is still there, as text', m.html.includes('&lt;img src=x'));
+
+  const inv = inviteMail({ to: 'x@example.com', inviterName: evil, code: '<b>X</b>', link: 'https://lodge.example/signup?c=1' });
+  ok('the inviter name is escaped in the HTML', !inv.html.includes('<img'), inv.html.slice(0, 0));
+  ok('and so is the code', !inv.html.includes('<b>X</b>') && inv.html.includes('&lt;b&gt;X&lt;/b&gt;'));
+  ok('but the plain-text body is left alone — nobody wants to read &amp;',
+    inv.text.includes(evil) && !inv.text.includes('&lt;'), inv.text.split('\n')[0]);
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);

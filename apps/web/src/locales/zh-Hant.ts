@@ -623,4 +623,6 @@ export const zhHant: Record<string, string> = {
   'no limit': '無上限',
   'This account has no ceiling on any window.': '這個帳號在任何視窗上都沒有上限。',
   'counting from {when}': '從 {when} 起計',
+  'incl. {amount} topped up': '含加量 {amount}',
+  'tokens': 'token',
 };

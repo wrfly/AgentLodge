@@ -622,4 +622,6 @@ export const es: Record<string, string> = {
   'no limit': 'sin límite',
   'This account has no ceiling on any window.': 'Esta cuenta no tiene techo en ninguna ventana.',
   'counting from {when}': 'contando desde {when}',
+  'incl. {amount} topped up': 'incluye {amount} de recarga',
+  'tokens': 'tokens',
 };

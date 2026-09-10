@@ -86,4 +86,5 @@ export const ja: Record<string, string> = {
   'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'アップストリーム「{name}」の認証情報 {id} は現在使用できません。管理者に連絡してください',
   'Upstream "{name}" has no credential configured; ask an administrator': 'アップストリーム「{name}」に認証情報が設定されていません。管理者に連絡してください',
   'No such model': 'そのモデルはありません',
+  'That window has no ceiling, so a top-up would do nothing — set a limit first': 'このウィンドウには上限がないため、追加しても効きません。先に上限を設定してください',
 };

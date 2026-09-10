@@ -15,8 +15,10 @@ export function register(app: FastifyInstance): void {
 
   app.get('/api/admin/users', guard, async () => {
     const monthStart = usageRepo.periodStart('monthly');
-    // The same boundary for everybody, so it is cut once rather than per row
-    const windowBounds = quota.boundsOf('window');
+    // One clock for the whole list. Cut per row, a request that straddles a boundary would
+    // count a top-up against a window the row above it has already ended
+    const now = new Date();
+    const windowBounds = quota.boundsOf('window', now);
     return usersRepo.list().map((u) => {
       const q = usersRepo.getQuota(u.id);
       // The 5-hour window is the one that bites first, so it is the one the list shows —
@@ -38,7 +40,7 @@ export function register(app: FastifyInstance): void {
            * ceiling, so a user who had just been topped up read past 100% while the gate
            * was still letting them through.
            */
-          windowCeiling: quota.effectiveCeiling(q, 'window'),
+          windowCeiling: quota.effectiveCeiling(q, 'window', now),
           limitKind: q.limitKind,
           // So a cost-limited row is labelled in the money it is actually counted in
           currency: q.currency,
@@ -200,6 +202,17 @@ export function register(app: FastifyInstance): void {
       return reply
         .code(400)
         .send({ error: tr(req, 'This user is billed the other way; change the quota first') });
+
+    /*
+     * A top-up on a window with no ceiling is discarded: `limit` is `ceiling + boost` only
+     * where there is a ceiling. It used to be accepted, written to the row, and then never
+     * applied or mentioned anywhere — the operator saw "ok" and the user got nothing. Say so
+     * instead, and name the window, since the three are set independently.
+     */
+    if (quota.effectiveCeiling(current, scope) === null)
+      return reply.code(400).send({
+        error: tr(req, 'That window has no ceiling, so a top-up would do nothing — set a limit first'),
+      });
 
     usersRepo.grantBoost(id, scope, amount, quota.boundsOf(scope).end.toISOString(), req.user!.id);
     // The boost is the intervention; a previous manual reset should not compound it

@@ -649,4 +649,6 @@ export const ru: Record<string, string> = {
   'no limit': 'без лимита',
   'This account has no ceiling on any window.': 'У этой учётной записи нет потолка ни в одном окне.',
   'counting from {when}': 'счёт идёт с {when}',
+  'incl. {amount} topped up': 'включая пополнение {amount}',
+  'tokens': 'токенов',
 };

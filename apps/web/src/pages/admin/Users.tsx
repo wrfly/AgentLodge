@@ -194,7 +194,22 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
         <div className="w-40 shrink-0">
           <div className="mb-1 flex justify-between font-mono text-[11px] tabular-nums">
             <span>{show(used)}</span>
-            <span className="text-faint">{cap ? show(cap) : t('unlimited')}</span>
+            <span className="text-faint">
+              {cap ? show(cap) : t('unlimited')}
+              {/* The bar divides by the effective ceiling, so the printed denominator is the
+                  boosted one — while the edit form one click away is seeded from the
+                  configured limit. Without a mark the two just look like different numbers.
+                  Kept to a `+n` because the row has no width for a sentence; the sentence is
+                  the tooltip. */}
+              {cap !== null && user.quota.window !== null && cap > user.quota.window && (
+                <span
+                  className="ml-1 text-accent"
+                  title={t('incl. {amount} topped up', { amount: show(cap - user.quota.window) })}
+                >
+                  {`+${show(cap - user.quota.window)}`}
+                </span>
+              )}
+            </span>
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-bubble">
             <div
@@ -202,7 +217,9 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
                 'h-full rounded-full',
                 pct >= 1 ? 'bg-danger' : pct >= 0.9 ? 'bg-amber-500' : 'bg-accent',
               )}
-              style={{ width: `${Math.max(pct * 100, cap ? 2 : 0)}%` }}
+              /* Nothing spent draws nothing: a window that has just rolled over, or a
+                 user who has just been reset, has no usage to mark. */
+              style={{ width: used === 0 ? '0%' : `${Math.max(pct * 100, cap ? 2 : 0)}%` }}
             />
           </div>
         </div>
@@ -234,9 +251,13 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
       {lastReset !== null && (
         <div className="mt-2 flex items-center gap-2 rounded-lg border border-line bg-elevated px-3 py-2 text-[12.5px]">
           <span className="flex-1">
-            {/* `show` so a cost quota reads as money: this said "Zeroed 9,000,000 tokens"
-                to an operator who had just cleared $9.00 */}
-            {t('Zeroed')} <strong className="font-mono">{show(lastReset)}</strong>{' '}
+            {/* Money for a cost quota — it said "Zeroed 9,000,000 tokens" to an operator
+                who had just cleared $9.00 — and the unit noun kept for tokens, which
+                `show` alone drops. */}
+            {t('Zeroed')}{' '}
+            <strong className="font-mono">
+              {byCost ? show(lastReset) : `${lastReset.toLocaleString()} ${t('tokens')}`}
+            </strong>{' '}
             {t('(nothing was deleted; the counting start just moved forward)')}
           </span>
           <Button variant="ghost" onClick={() => void undoReset()} disabled={busy}>

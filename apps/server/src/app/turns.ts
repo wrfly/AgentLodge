@@ -41,14 +41,13 @@ async function maybeWarnQuota(userId: string): Promise<void> {
   // Mark before sending: a failure is not retried, so nobody gets nagged repeatedly
   usersRepo.markWarned(userId, key);
   const base = getString('app.baseUrl', 'http://localhost:5173');
-  // The same unit the refusal names it in, so the mail and the refusal cannot disagree
-  const byCost = status.limitKind === 'cost';
-  const amount = (v: number): string => (byCost ? (v / 1_000_000).toFixed(2) : v.toLocaleString());
+  // The refusal's own formatter, so the mail and the refusal cannot spell one number two ways
+  const { unit, amount } = quota.amountIn(status.limitKind, status.currency);
   const tpl = mail.quotaWarningMail({
     username: user.username,
     used: amount(hit.used),
     limit: amount(hit.limit),
-    unit: byCost ? status.currency : 'tokens',
+    unit,
     window: quota.scopeLabel(hit.scope),
     pct: Math.round((hit.used / hit.limit) * 100),
     link: `${base}/usage`,

@@ -86,4 +86,5 @@ export const de: Record<string, string> = {
   'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': 'Die Zugangsdaten {id} für Upstream „{name}“ sind derzeit nicht verwendbar; wenden Sie sich an einen Administrator',
   'Upstream "{name}" has no credential configured; ask an administrator': 'Für Upstream „{name}“ sind keine Zugangsdaten konfiguriert; wenden Sie sich an einen Administrator',
   'No such model': 'Kein solches Modell',
+  'That window has no ceiling, so a top-up would do nothing — set a limit first': 'Dieses Fenster hat keine Obergrenze, eine Aufstockung bliebe wirkungslos — setzen Sie zuerst ein Limit',
 };

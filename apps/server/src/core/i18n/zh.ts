@@ -86,4 +86,5 @@ export const zh: Record<string, string> = {
   'The credential for upstream "{name}" cannot be used right now ({id}); ask an administrator': '上游「{name}」的凭据 {id} 现在用不了，请找管理员',
   'Upstream "{name}" has no credential configured; ask an administrator': '上游「{name}」没有配置凭据，请找管理员',
   'No such model': '没有这个模型',
+  'That window has no ceiling, so a top-up would do nothing — set a limit first': '这个窗口没有上限，加量不会生效——先设一个限额',
 };

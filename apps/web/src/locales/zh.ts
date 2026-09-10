@@ -649,4 +649,6 @@ export const zh: Record<string, string> = {
   'no limit': '无上限',
   'This account has no ceiling on any window.': '这个账号在任何窗口上都没有上限。',
   'counting from {when}': '从 {when} 起计',
+  'incl. {amount} topped up': '含加量 {amount}',
+  'tokens': 'token',
 };

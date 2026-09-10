@@ -91,10 +91,16 @@ function resolveRange(
         ? new Date(toRaw.length === 10 ? `${toRaw}T00:00:00` : toRaw)
         : new Date(today.getTime() + day);
       const toExclusive = toRaw && toRaw.length === 10 ? new Date(to.getTime() + day) : to;
+      /*
+       * Dates on both sides, never a word. The open-ended form used to read `2026-09-01 ~ now`,
+       * and the heading is rendered through the translator by key — so "now" stayed English in
+       * every locale, in a string composed here that no table can key on.
+       */
+      const day10 = (d: Date) => iso(d).slice(0, 10);
       return {
         from: iso(from),
         to: iso(toExclusive),
-        label: `${fromRaw ?? ''} ~ ${toRaw ?? 'now'}`,
+        label: `${fromRaw ?? day10(from)} ~ ${toRaw ?? day10(new Date(toExclusive.getTime() - 1))}`,
       };
     }
     case 'quota':
