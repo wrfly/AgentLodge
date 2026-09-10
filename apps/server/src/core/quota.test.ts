@@ -205,10 +205,18 @@ console.log('\n=== A manual reset moves the counting start, not the boundary ===
    */
   ok('the count begins at the reset, which is what a report has to draw from',
     s.windows.window.countsFrom === '2026-08-23T16:00:00.000Z', s.windows.window.countsFrom);
+  /*
+   * And the window still knows what was really spent over it. The gate charges 100; the usage
+   * report beside it charges 400. Both are right, and one number alone cannot say so.
+   */
+  ok('what was spent over the whole window is still reported', s.windows.window.spent === 400,
+    String(s.windows.window.spent));
+  ok('which is more than what is counted', s.windows.window.spent > s.windows.window.used);
   users.undoResetUsage(alice);
   const back = quota.status(alice, now).windows.window;
   ok('undoing brings it back', back.used === 400);
   ok('and the count goes back to the boundary', back.countsFrom === back.startsAt, back.countsFrom);
+  ok('with nothing set aside, the two figures are one', back.spent === back.used, String(back.spent));
 }
 
 console.log('\n=== The rule for where a count begins is exported, not copied ===');

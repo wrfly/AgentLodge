@@ -144,12 +144,17 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
                 {capped && <span>{pct}%</span>}
                 {capped && <span>{t('{amount} left', { amount: show(w.remaining ?? 0) })}</span>}
                 <span>{t('resets {when}', { when: fmtDate(w.endsAt) })}</span>
-                {/* An administrator cleared this window part-way through, so the count is
-                    smaller than what was actually spent over the window. Without this the
-                    row just disagrees with the report below it and says nothing about why. */}
-                {w.countsFrom !== w.startsAt && (
+                {/* An administrator cleared this window part-way through and it cost this
+                    row something: the count above is what the gate charges, the figure here
+                    is what the report below and the tiles beside it show. Naming both is what
+                    reconciles them — and when a reset forgave nothing here the two numbers
+                    are already the same, so there is nothing to reconcile and nothing to say. */}
+                {w.spent !== w.used && (
                   <span className="text-accent">
-                    {t('counting from {when}', { when: fmtDate(w.countsFrom) })}
+                    {t('counting from {when} · {spent} spent over the full window', {
+                      when: fmtDate(w.countsFrom),
+                      spent: show(w.spent),
+                    })}
                   </span>
                 )}
               </div>
