@@ -241,14 +241,9 @@ export const zh: Record<string, string> = {
   // Admin: overview, providers, audit proxy, gate
   Users: '用户',
   '{n} active': '{n} 个活跃',
-  'Billed this month': '本月计费',
   'Billed all time': '累计计费',
   'Upstream balance': '上游余额',
   'No API key configured': '未配置 API Key',
-  'Last 30 days, all users': '全站最近 30 天',
-  'No usage yet': '还没有用量',
-  'Top consumers this month': '本月消耗排行',
-  'No data yet': '还没有数据',
   'Agent status': 'Agent 状态',
   available: '可用',
   unavailable: '不可用',
@@ -614,4 +609,14 @@ export const zh: Record<string, string> = {
   'tokens': 'token',
   'counting from {when} · {spent} spent over the full window': '从 {when} 起计 · 整个窗口实际花费 {spent}',
   'counting from {when}': '从 {when} 起计',
+
+  // The admin overview: the live window, and everybody over one period
+  'Usage, all users': '全部用户用量',
+  'Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.': '所有人在「最先拒人」的那个窗口里的消耗。这是平台自己的窗口，对每个用户的起止时刻都相同。',
+  'resets in {d}': '{d} 后重置',
+  '{n}% of the window elapsed': '窗口已过 {n}%',
+  '{n} hit their quota': '{n} 人撞到配额',
+  'gate {active}/{max} in flight': '闸口 {active}/{max} 在飞',
+  '{n} waiting': '{n} 个等待',
+  '{n} failed upstream': '{n} 轮上游失败',
 };

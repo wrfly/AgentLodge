@@ -154,7 +154,15 @@ export async function startTurn(
   if (active.has(conversationId)) throw new Error('This conversation is already generating');
 
   const verdict = quota.check(userId);
-  if (!verdict.allow) throw new QuotaExceededError(verdict.reason!, verdict.status);
+  if (!verdict.allow) {
+    // Same trace the gateway leaves, so a refusal counts wherever it happened
+    usageRepo.noteRefusal({
+      userId,
+      agent: conv.agent,
+      since: verdict.status.windows.window.countsFrom,
+    });
+    throw new QuotaExceededError(verdict.reason!, verdict.status);
+  }
 
   const adapter = getAdapter(conv.agent);
   if (!adapter) throw new Error(`Unknown agent: ${conv.agent}`);

@@ -200,7 +200,7 @@ create table if not exists usage_records (
   cost_micro            integer not null default 0,
   duration_ms           integer,
   num_turns             integer,
-  status                text not null,          -- completed | error | aborted
+  status                text not null,          -- completed | error | aborted | refused
   created_at            text not null,
   day                   text not null,          -- YYYY-MM-DD, local time, for daily totals
   -- cli: the turn total the CLI reported. gateway: one row per call, and more accurate.

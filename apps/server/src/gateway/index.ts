@@ -317,6 +317,16 @@ async function handleProxy(
   // The hard quota gate — the only place that can stop a turn while it is running
   const verdict = quota.check(claims.sub);
   if (!verdict.allow) {
+    /*
+     * Leave a trace. A refusal writes no usage row of its own — there is nothing to bill and
+     * no upstream call to attribute — so a platform turning people away used to be invisible
+     * everywhere except the 402 the client got. One row per user per window, not per attempt.
+     */
+    usageRepo.noteRefusal({
+      userId: claims.sub,
+      agent: claims.agent,
+      since: verdict.status.windows.window.countsFrom,
+    });
     // A non-retryable type, or the CLI hammers the gateway with retries
     return sendError(reply, wire, 402, 'permission_error', 'invalid_request_error', verdict.reason!);
   }

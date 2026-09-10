@@ -5,7 +5,14 @@
  */
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
-import { admin, type AdminOverview, type UpstreamAllowanceView } from '../../lib/api';
+import {
+  admin,
+  fmtMoney,
+  type AdminOverview,
+  type PlatformPreset,
+  type PlatformUsage,
+  type UpstreamAllowanceView,
+} from '../../lib/api';
 import {
   Banner,
   Button,
@@ -13,7 +20,6 @@ import {
   Empty,
   Spinner,
   Stat,
-  fillDays,
   fmtDate,
   fmtTokens
 } from '../../components/ui';
@@ -36,20 +42,17 @@ export function Overview() {
   if (error) return <Banner tone="error">{error}</Banner>;
   if (!data) return <Spinner />;
 
-  const series = fillDays(data.usage.daily, 30);
-  const max = Math.max(...series.map((d) => d.billableTokens), 1);
-
   return (
     <>
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <LiveWindowCard data={data} />
+
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Stat label={t('Users')} value={String(data.users.total)} sub={t('{n} active', { n: data.users.active })} />
         <Stat
-          label={t('Billed this month')}
-          value={fmtTokens(data.usage.month.billableTokens)}
-          sub={t('{n} turns', { n: data.usage.month.turns })}
-          tone="accent"
+          label={t('Billed all time')}
+          value={fmtTokens(data.allTime.billableTokens)}
+          sub={fmtMoney(data.allTime.costMicro, data.currency)}
         />
-        <Stat label={t('Billed all time')} value={fmtTokens(data.usage.allTime.billableTokens)} />
         <Stat
           label={t('Upstream balance')}
           value={
@@ -63,48 +66,7 @@ export function Overview() {
 
       <UpstreamAllowanceCard />
 
-      <Card title={t('Last 30 days, all users')}>
-        {data.usage.daily.length === 0 ? (
-          <Empty text={t('No usage yet')} />
-        ) : (
-          <div className="flex h-28 items-end gap-[3px]">
-            {series.map((d) => (
-              <div
-                key={d.day}
-                title={`${d.day}: ${d.billableTokens.toLocaleString()}`}
-                className={clsx(
-                  'flex-1 rounded-t-sm',
-                  d.billableTokens > 0 ? 'bg-accent/70 hover:bg-accent' : 'bg-line',
-                )}
-                style={{ height: `${d.billableTokens ? Math.max((d.billableTokens / max) * 100, 3) : 2}%` }}
-              />
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card title={t('Top consumers this month')}>
-        {data.usage.topUsers.length === 0 ? (
-          <Empty text={t('No data yet')} />
-        ) : (
-          <div className="space-y-1">
-            {data.usage.topUsers.map((u, i) => (
-              <div key={u.userId} className="flex items-center gap-3 px-1 py-1.5 text-[13px]">
-                <span className="w-5 shrink-0 text-right font-mono text-[11px] text-faint">
-                  {i + 1}
-                </span>
-                <span className="min-w-0 flex-1 truncate">
-                  {u.username}
-                  <span className="ml-2 text-[11.5px] text-faint">{u.email}</span>
-                </span>
-                <span className="shrink-0 font-mono text-[12px] tabular-nums">
-                  {fmtTokens(u.billableTokens)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+      <PlatformUsageCard />
 
       <Card title={t('Agent status')}>
         <div className="space-y-2">
@@ -155,6 +117,247 @@ const WINDOW_LABEL: Record<string, string> = {
  * serves every tenant and the pool's numbers are nobody's allowance in
  * particular.
  */
+/* ---------------- Everybody's usage, over one period ---------------- */
+
+/** Every hour or day in the range, whether or not anything was spent in it */
+function fillSlots(d: PlatformUsage): Array<{ t: string; billableTokens: number }> {
+  const step = d.seriesUnit === 'hour' ? 3600_000 : 86400_000;
+  const from = new Date(d.range.from).getTime();
+  const to = Math.min(new Date(d.range.to).getTime(), Date.now());
+  // "All time" starts at the epoch; padding that would be a million empty bars
+  if (to - from > 400 * 86400_000) return d.series.map((p) => ({ t: p.t, billableTokens: p.billableTokens }));
+  const local = (ms: number) => {
+    const x = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString();
+    return d.seriesUnit === 'hour' ? `${x.slice(0, 13)}:00`.replace('T', ' ') : x.slice(0, 10);
+  };
+  const hit = new Map(d.series.map((p) => [p.t, p.billableTokens]));
+  const out: Array<{ t: string; billableTokens: number }> = [];
+  for (let ms = from; ms <= to; ms += step) {
+    const key = local(ms);
+    out.push({ t: key, billableTokens: hit.get(key) ?? 0 });
+  }
+  return out;
+}
+
+const PLATFORM_PRESETS: Array<{ id: PlatformPreset; label: string }> = [
+  { id: 'today', label: 'Today' },
+  { id: 'last7', label: 'Last 7 days' },
+  { id: 'month', label: 'This month' },
+  { id: 'all', label: 'All time' },
+];
+
+/**
+ * One period control for the total, the shape of it, and who spent it.
+ *
+ * Four ranking cards would answer the same question four times and still not let anybody
+ * compare: somebody who spent heavily this month and nothing today is not the person to go
+ * and talk to. One selector drives all three, so switching the period re-answers everything
+ * at once — the same control the user-facing usage page has, at the other scope.
+ */
+function PlatformUsageCard() {
+  const t = useT();
+  const [preset, setPreset] = useState<PlatformPreset>('today');
+  const [data, setData] = useState<PlatformUsage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    setError(null);
+    void admin
+      .platformUsage(preset)
+      .then((d) => { if (live) setData(d); })
+      .catch((e) => { if (live) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [preset]);
+
+  /*
+   * Empty buckets included, or a quiet period draws one bar across the whole card and reads
+   * like a progress meter that is full. The shape of usage is the point of the chart, and a
+   * single busy hour in a quiet day is a shape.
+   */
+  const slots = data ? fillSlots(data) : [];
+  const max = Math.max(...slots.map((d) => d.billableTokens), 1);
+  // An hourly stamp reads `2026-09-10 14:00`, a daily one `2026-09-10`
+  const short = (stamp: string) =>
+    data?.seriesUnit === 'hour' ? stamp.slice(11, 16) : stamp.slice(5);
+
+  return (
+    <Card title={t('Usage, all users')}>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {PLATFORM_PRESETS.map((p) => (
+          <Button
+            key={p.id}
+            variant={preset === p.id ? 'primary' : 'ghost'}
+            onClick={() => setPreset(p.id)}
+          >
+            {t(p.label)}
+          </Button>
+        ))}
+      </div>
+
+      {error ? (
+        <Banner tone="error">{error}</Banner>
+      ) : !data ? (
+        <Spinner />
+      ) : (
+        <>
+          <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="font-mono text-[17px] tabular-nums">
+              {data.totals.billableTokens.toLocaleString()}
+            </span>
+            <span className="font-mono text-[13px] text-muted tabular-nums">
+              {fmtMoney(data.totals.costMicro, data.currency)}
+            </span>
+            <span className="text-[12px] text-faint">
+              {t('{n} turns', { n: data.totals.turns })}
+            </span>
+          </div>
+
+          {slots.length === 0 ? (
+            <Empty text={t('No usage in this period')} />
+          ) : (
+            <>
+              <div className="flex h-24 items-end gap-[3px]">
+                {slots.map((d) => (
+                  <div
+                    key={d.t}
+                    title={`${d.t}: ${d.billableTokens.toLocaleString()}`}
+                    className={clsx(
+                      'flex-1 rounded-t-sm',
+                      d.billableTokens > 0 ? 'bg-accent/70 hover:bg-accent' : 'bg-line',
+                    )}
+                    style={{ height: d.billableTokens ? `${Math.max((d.billableTokens / max) * 100, 3)}%` : '2%' }}
+                  />
+                ))}
+              </div>
+              <div className="mt-1 flex justify-between text-[11px] text-faint">
+                <span>{short(slots[0]!.t)}</span>
+                <span>{short(slots[slots.length - 1]!.t)}</span>
+              </div>
+            </>
+          )}
+
+          <div className="mt-4 space-y-1">
+            {data.topUsers.length === 0 ? (
+              <Empty text={t('No data in this period')} />
+            ) : (
+              data.topUsers.map((u, i) => (
+                <div key={u.userId} className="flex items-center gap-3 px-1 py-1.5 text-[13px]">
+                  <span className="w-5 shrink-0 text-right font-mono text-[11px] text-faint">{i + 1}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {u.username}
+                    <span className="ml-2 text-[11.5px] text-faint">{u.email}</span>
+                  </span>
+                  {/* Tokens and money both: two models differ by a factor of ten per token,
+                      so a column of counts on its own does not say where the budget went */}
+                  <span className="shrink-0 font-mono text-[12px] tabular-nums">
+                    {fmtTokens(u.billableTokens)}
+                  </span>
+                  <span className="w-16 shrink-0 text-right font-mono text-[12px] tabular-nums text-muted">
+                    {fmtMoney(u.costMicro, data.currency)}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+/* ---------------- The live window ---------------- */
+
+/** "2h 14m", or "4m", counted down to the given instant */
+function untilText(endsAt: string, now: number): string {
+  const ms = Math.max(new Date(endsAt).getTime() - now, 0);
+  const mins = Math.round(ms / 60_000);
+  return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+/**
+ * The five-hour window, platform-wide, and whether anything is going wrong inside it.
+ *
+ * Not one preset among several. The month and the last seven days are things that happened;
+ * this one is a countdown, and the question it answers — are we going to hit the wall before
+ * it resets — has no meaning for the others. Putting it behind the same selector would hide
+ * the only thing about it that is different.
+ *
+ * The bar is the clock, not the spend. Platform-side consumption has no ceiling of its own to
+ * divide by; what makes the number legible is how far through the window it arrived. Burning
+ * 80% of a shared subscription's allowance 30% of the way in is the shape of trouble, and
+ * neither figure says that alone.
+ */
+function LiveWindowCard({ data }: { data: AdminOverview }) {
+  const t = useT();
+  const [now, setNow] = useState(() => Date.now());
+  // The countdown is the point of the card, so it has to actually count down
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const w = data.window;
+  const elapsed = w.elapsed === null ? 0 : Math.round(w.elapsed * 100);
+  const refused = w.statuses.refused;
+  const failed = w.statuses.error;
+  const gate = data.gate as { active?: number; maxConcurrency?: number; queued?: number; unreachable?: boolean };
+
+  return (
+    <Card
+      title={t('This 5-hour window')}
+      description={t('Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.')}
+    >
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <span className="font-mono text-[22px] tabular-nums">{fmtTokens(w.totals.billableTokens)}</span>
+        <span className="font-mono text-[14px] text-muted tabular-nums">
+          {fmtMoney(w.totals.costMicro, data.currency)}
+        </span>
+        <span className="text-[12.5px] text-faint">{t('{n} turns', { n: w.totals.turns })}</span>
+        <span className="ml-auto text-[12.5px] text-muted">
+          {t('resets in {d}', { d: untilText(w.endsAt, now) })}
+        </span>
+      </div>
+
+      <div className="h-1.5 overflow-hidden rounded-full bg-bubble">
+        <div className="h-full rounded-full bg-muted/40" style={{ width: `${elapsed}%` }} />
+      </div>
+      <div className="mt-1 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
+        <span>{t('{n}% of the window elapsed', { n: elapsed })}</span>
+        <span>{fmtDate(w.startsAt)} → {fmtDate(w.endsAt)}</span>
+      </div>
+
+      {(refused > 0 || failed > 0) && (
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12.5px]">
+          {refused > 0 && (
+            <span className="text-danger">
+              {/* People, not attempts: a refused client that retries in a loop would
+                  otherwise report its own retry policy rather than anything actionable */}
+              {t('{n} hit their quota', { n: refused })}
+            </span>
+          )}
+          {failed > 0 && <span className="text-amber-600">{t('{n} failed upstream', { n: failed })}</span>}
+        </div>
+      )}
+
+      {!gate.unreachable && typeof gate.active === 'number' && (
+        <div className="mt-2 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
+          <span>
+            {t('gate {active}/{max} in flight', {
+              active: gate.active,
+              max: gate.maxConcurrency ?? '—',
+            })}
+          </span>
+          {(gate.queued ?? 0) > 0 && (
+            <span className="text-amber-600">{t('{n} waiting', { n: gate.queued ?? 0 })}</span>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function UpstreamAllowanceCard() {
   const t = useT();
   const [view, setView] = useState<UpstreamAllowanceView | null>(null);

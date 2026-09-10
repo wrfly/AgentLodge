@@ -11,6 +11,14 @@ import * as pricing from './pricing.js';
 export type { QuotaPeriod };
 import type { AgentId, TurnUsage } from '../protocol.js';
 
+/**
+ * `refused` is the quota gate turning a turn away before it ran, so there is nothing to bill
+ * and no upstream call to attribute. It is here because the alternative is that a platform
+ * refusing people leaves no trace anywhere: the gateway answers 402 and the row that would
+ * have said so was never written.
+ */
+export type TurnStatus = 'completed' | 'error' | 'aborted' | 'refused';
+
 export interface RecordInput {
   userId: string;
   conversationId?: string;
@@ -21,7 +29,7 @@ export interface RecordInput {
   providerId?: string;
   effort?: string;
   usage?: TurnUsage;
-  status: 'completed' | 'error' | 'aborted';
+  status: TurnStatus;
   /** cli: the turn total the CLI reported. gateway: one row per upstream call, recorded by the gateway. */
   source?: 'cli' | 'gateway';
   /** Non-empty means this usage came from a user's own CLI on a long-lived api key, not from our containers */
@@ -259,6 +267,44 @@ export function totalsAllInRange(range: Range, providerId?: string): Totals {
   );
 }
 
+/**
+ * How many turns ended each way over a window, everybody's.
+ *
+ * The console's live band asks one question — is anything going wrong right now — and two
+ * numbers answer it: turns the upstream failed, and people the quota turned away.
+ */
+export function statusCountsAll(range: Range): Record<TurnStatus, number> {
+  const [from, to] = bounds(range);
+  const rows = all<{ status: string; n: number }>(
+    `select status, count(*) as n from usage_records
+     where created_at >= ? and created_at < ? group by status`,
+    from,
+    to,
+  );
+  const out: Record<TurnStatus, number> = { completed: 0, error: 0, aborted: 0, refused: 0 };
+  for (const r of rows) if (r.status in out) out[r.status as TurnStatus] += r.n;
+  return out;
+}
+
+/**
+ * One row per user who was refused inside this window, not one per refusal.
+ *
+ * A client that retries a refused request in a loop would otherwise write a row a second,
+ * forever, and the number the console shows would be a measure of that client's retry policy
+ * rather than of anything an operator can act on. "Four people hit the wall this window" is
+ * both bounded and the more useful sentence.
+ */
+export function noteRefusal(input: { userId: string; agent: AgentId; since: string }): void {
+  const seen = get<{ n: number }>(
+    `select count(*) as n from usage_records
+     where user_id = ? and status = 'refused' and created_at >= ?`,
+    input.userId,
+    input.since,
+  );
+  if ((seen?.n ?? 0) > 0) return;
+  record({ userId: input.userId, agent: input.agent, status: 'refused' });
+}
+
 export interface DailyPoint extends Totals {
   day: string;
 }
@@ -372,17 +418,47 @@ export interface UserLeaderRow extends Totals {
   email: string;
 }
 
-export function topUsers(since?: string, limit = 20): UserLeaderRow[] {
+export function topUsers(range?: Range | string, limit = 20): UserLeaderRow[] {
+  const [from, to] = bounds(range);
   return all<TotalsRow & { user_id: string; username: string; email: string }>(
     `select u.user_id, us.username, us.email, ${SUM('u.')}
      from usage_records u join users us on us.id = u.user_id
-     where u.created_at >= ?
+     where u.created_at >= ? and u.created_at < ?
      group by u.user_id
+     -- Somebody whose only row in the window is a refusal spent nothing, and a list of who
+     -- spent the most should not have them in it at all. Spelled as the aggregates rather
+     -- than the output aliases: billable_tokens is also a real column, so SQLite binds the
+     -- bare name to some arbitrary row of the group and a user with one zero row vanishes.
+     having sum(u.billable_tokens) > 0 or sum(u.cost_micro) > 0
      order by billable_tokens desc
      limit ?`,
-    since ?? '1970-01-01T00:00:00.000Z',
+    from,
+    to,
     limit,
   ).map((r) => ({ userId: r.user_id, username: r.username, email: r.email, ...toTotals(r) }));
+}
+
+export function dailyAllInRange(range: Range): DailyPoint[] {
+  const [from, to] = bounds(range);
+  return all<TotalsRow & { day: string }>(
+    `select day, ${SUM()} from usage_records
+     where created_at >= ? and created_at < ? group by day order by day`,
+    from,
+    to,
+  ).map((r) => ({ day: r.day, ...toTotals(r) }));
+}
+
+export function hourlyAllInRange(range: Range): HourlyPoint[] {
+  const [from, to] = bounds(range);
+  // SQLite's datetime functions work in UTC; the localtime modifier moves them to local
+  return all<TotalsRow & { hour: string }>(
+    `select strftime('%Y-%m-%d %H:00', created_at, 'localtime') as hour, ${SUM()}
+     from usage_records
+     where created_at >= ? and created_at < ?
+     group by hour order by hour`,
+    from,
+    to,
+  ).map((r) => ({ hour: r.hour, ...toTotals(r) }));
 }
 
 export function dailyAll(days = 30): DailyPoint[] {

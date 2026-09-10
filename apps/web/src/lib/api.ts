@@ -534,16 +534,36 @@ export interface BalanceResult {
   error?: string;
 }
 
+export type TurnStatus = 'completed' | 'error' | 'aborted' | 'refused';
+
+/** What is true right now, as opposed to what a period adds up to */
 export interface AdminOverview {
   users: { total: number; active: number };
-  usage: {
-    month: UsageTotals;
-    allTime: UsageTotals;
-    daily: DailyPoint[];
-    topUsers: Array<UsageTotals & { userId: string; username: string; email: string }>;
+  window: {
+    startsAt: string;
+    endsAt: string;
+    /** 0..1 through the window by the clock, or null for a degenerate one */
+    elapsed: number | null;
+    totals: UsageTotals;
+    statuses: Record<TurnStatus, number>;
   };
+  currency: string;
+  allTime: UsageTotals;
+  /** Whatever the gateway reports about its concurrency gate, or why it could not be asked */
+  gate: Record<string, unknown>;
   balance: BalanceResult | null;
   agents: AgentInfo[];
+}
+
+export type PlatformPreset = 'window' | 'today' | 'last7' | 'month' | 'all';
+
+export interface PlatformUsage {
+  range: { from: string; to: string; label: string };
+  currency: string;
+  totals: UsageTotals;
+  series: SeriesPoint[];
+  seriesUnit: 'hour' | 'day';
+  topUsers: Array<UsageTotals & { userId: string; username: string; email: string }>;
 }
 
 export interface PricingRow {
@@ -849,6 +869,8 @@ export interface AuditEntry {
 
 export const admin = {
   overview: () => request<AdminOverview>('/api/admin/overview'),
+  platformUsage: (preset: PlatformPreset) =>
+    request<PlatformUsage>(`/api/admin/usage?preset=${preset}`),
   users: () => request<AdminUser[]>('/api/admin/users'),
   updateUser: (
     id: string,
