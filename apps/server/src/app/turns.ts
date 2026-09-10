@@ -218,13 +218,28 @@ export async function startTurn(
     createdAt: new Date().toISOString(),
   })!;
 
+  /*
+   * `turn.started` goes first, and the title after it, because that is the order a client
+   * connecting late can still see both in.
+   *
+   * A first connection replays from `turn.started` (`liveStartSeq` in core/events.ts returns
+   * its seq - 1) — anything published before it is not replayed at all. That was harmless
+   * while the stream was always opened long before the first message. It is not any more:
+   * the conversation is created by the first message now, so the client opens the stream and
+   * posts the message back to back, and the server routinely handles the post before the SSE
+   * route subscribes. Titled first, the derived title was dropped and the header read "New
+   * chat" for the whole of the most-watched turn in the product.
+   *
+   * The client handles the two independently, so nothing cares that the turn now starts a
+   * line before the conversation is named.
+   */
+  publish(conversationId, { type: 'turn.started', turnId });
+
   if (isFirst) {
     const title = convRepo.deriveTitle(text);
     convRepo.update(conversationId, userId, { title });
     publish(conversationId, { type: 'title.updated', conversationId, title });
   }
-
-  publish(conversationId, { type: 'turn.started', turnId });
 
   const startRun = (resumeSessionId?: string) =>
     adapter.run({
