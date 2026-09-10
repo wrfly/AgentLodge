@@ -101,8 +101,20 @@ function windowStatus(
   const { start, end } = boundsOf(scope, now);
   const from = countStartOf(q, start);
 
-  const totals = usageRepo.totalsForUser(userId, { from, to: end.toISOString() });
-  const used = q.limitKind === 'cost' ? totals.costMicro : totals.billableTokens;
+  const amountOf = (t: usageRepo.Totals) => (q.limitKind === 'cost' ? t.costMicro : t.billableTokens);
+  const to = end.toISOString();
+  const used = amountOf(usageRepo.totalsForUser(userId, { from, to }));
+  /*
+   * What was actually spent over the whole window, reset or no reset.
+   *
+   * `used` is what the gate counts; this is what the usage report counts. They are the same
+   * number until an administrator clears somebody part-way through, and then they are not —
+   * and a page showing both with no way to reconcile them is a page nobody trusts. The
+   * second query only happens when they can differ.
+   */
+  const spent = from === start.toISOString()
+    ? used
+    : amountOf(usageRepo.totalsForUser(userId, { from: start.toISOString(), to }));
 
   // Reported separately so the interface can mark a top-up, but the ceiling itself comes
   // from the one function that owns that rule
@@ -114,6 +126,7 @@ function windowStatus(
     limit,
     boost,
     used,
+    spent,
     remaining: limit === null ? null : Math.max(limit - used, 0),
     ratio: limit === null || limit <= 0 ? 0 : Math.min(used / limit, 1),
     startsAt: start.toISOString(),
