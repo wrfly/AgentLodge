@@ -322,10 +322,12 @@ async function handleProxy(
      * no upstream call to attribute — so a platform turning people away used to be invisible
      * everywhere except the 402 the client got. One row per user per window, not per attempt.
      */
+    const hit = verdict.status.tightest ?? 'window';
     usageRepo.noteRefusal({
       userId: claims.sub,
       agent: claims.agent,
-      since: verdict.status.windows.window.countsFrom,
+      scope: hit,
+      windowStart: verdict.status.windows[hit].startsAt,
     });
     // A non-retryable type, or the CLI hammers the gateway with retries
     return sendError(reply, wire, 402, 'permission_error', 'invalid_request_error', verdict.reason!);

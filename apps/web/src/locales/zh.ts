@@ -619,4 +619,5 @@ export const zh: Record<string, string> = {
   'gate {active}/{max} in flight': '闸口 {active}/{max} 在飞',
   '{n} waiting': '{n} 个等待',
   '{n} failed upstream': '{n} 轮上游失败',
+  'this window has ended': '这个窗口已经结束',
 };

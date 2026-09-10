@@ -619,4 +619,5 @@ export const ru: Record<string, string> = {
   'gate {active}/{max} in flight': 'шлюз {active}/{max} в работе',
   '{n} waiting': '{n} в очереди',
   '{n} failed upstream': '{n} с ошибкой вверх по потоку',
+  'this window has ended': 'это окно закончилось',
 };

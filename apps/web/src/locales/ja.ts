@@ -619,4 +619,5 @@ export const ja: Record<string, string> = {
   'gate {active}/{max} in flight': 'ゲート {active}/{max} 実行中',
   '{n} waiting': '{n} 件待機',
   '{n} failed upstream': '{n} 件が上流で失敗',
+  'this window has ended': 'このウィンドウは終了しました',
 };

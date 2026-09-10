@@ -156,10 +156,12 @@ export async function startTurn(
   const verdict = quota.check(userId);
   if (!verdict.allow) {
     // Same trace the gateway leaves, so a refusal counts wherever it happened
+    const hit = verdict.status.tightest ?? 'window';
     usageRepo.noteRefusal({
       userId,
       agent: conv.agent,
-      since: verdict.status.windows.window.countsFrom,
+      scope: hit,
+      windowStart: verdict.status.windows[hit].startsAt,
     });
     throw new QuotaExceededError(verdict.reason!, verdict.status);
   }

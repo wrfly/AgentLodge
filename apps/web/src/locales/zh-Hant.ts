@@ -593,4 +593,5 @@ export const zhHant: Record<string, string> = {
   'gate {active}/{max} in flight': '閘口 {active}/{max} 在飛',
   '{n} waiting': '{n} 個等待',
   '{n} failed upstream': '{n} 輪上游失敗',
+  'this window has ended': '這個視窗已經結束',
 };

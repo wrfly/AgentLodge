@@ -592,4 +592,5 @@ export const pt: Record<string, string> = {
   'gate {active}/{max} in flight': 'portão {active}/{max} em voo',
   '{n} waiting': '{n} à espera',
   '{n} failed upstream': '{n} falharam no upstream',
+  'this window has ended': 'esta janela terminou',
 };

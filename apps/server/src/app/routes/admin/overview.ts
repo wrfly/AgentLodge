@@ -6,14 +6,7 @@ import * as quota from '../../../core/quota.js';
 import { getString } from '../../../core/db/settings.js';
 import { fetchBalance } from '../../agents/provider.js';
 import { listAgents } from '../../agents/registry.js';
-import { gateStats, guard } from './shared.js';
-
-/** A number between 0 and 1, or null when the two instants are the same */
-function fractionElapsed(start: Date, end: Date, now: Date): number | null {
-  const span = end.getTime() - start.getTime();
-  if (span <= 0) return null;
-  return Math.min(Math.max((now.getTime() - start.getTime()) / span, 0), 1);
-}
+import { guard } from './shared.js';
 
 export function register(app: FastifyInstance): void {
 
@@ -23,15 +16,11 @@ export function register(app: FastifyInstance): void {
    * Split from the period report below because the two are asked at different rates: this one
    * is a dashboard somebody leaves open, and the other is a question somebody asks.
    */
-  app.get('/api/admin/overview', guard, async (req) => {
+  app.get('/api/admin/overview', guard, async () => {
     const now = new Date();
     const w = quota.boundsOf('window', now);
     const range = { from: w.start.toISOString(), to: w.end.toISOString() };
-    const [balance, agents, gate] = await Promise.all([
-      fetchBalance(),
-      listAgents(),
-      gateStats(req.headers.authorization),
-    ]);
+    const [balance, agents] = await Promise.all([fetchBalance(), listAgents()]);
     return {
       users: {
         total: usersRepo.count(),
@@ -45,17 +34,21 @@ export function register(app: FastifyInstance): void {
        * The bar to compare it against is the upstream's own utilisation, reported separately
        * by the allowance card: consumption running ahead of the clock is the shape of hitting
        * the wall before the window resets.
+       *
+       * How far through it is is not sent. It is a function of the two boundaries and the
+       * clock, and computing it once at fetch left a card that counted down correctly beside
+       * a bar frozen at whatever it read when the tab was opened.
        */
       window: {
         startsAt: range.from,
         endsAt: range.to,
-        elapsed: fractionElapsed(w.start, w.end, now),
         totals: usageRepo.totalsAllInRange(range),
         statuses: usageRepo.statusCountsAll(range),
+        /** People the gate turned away in this window, not attempts */
+        refused: usageRepo.refusedCount(range),
       },
       currency: getString('billing.currency', 'USD'),
       allTime: usageRepo.totalsAll(),
-      gate,
       balance,
       agents,
     };
@@ -78,16 +71,16 @@ export function register(app: FastifyInstance): void {
       range,
       currency: getString('billing.currency', 'USD'),
       totals: usageRepo.totalsAllInRange(range),
-      series: byHour
-        ? usageRepo.hourlyAllInRange(range).map((p) => ({ t: p.hour, ...p }))
-        : usageRepo.dailyAllInRange(range).map((p) => ({ t: p.day, ...p })),
+      // Padded here: the bucket keys are the server's local time, and a client rebuilding
+      // them from its own clock matches nothing
+      series: usageRepo.seriesAllInRange(range, byHour ? 'hour' : 'day'),
       seriesUnit: byHour ? ('hour' as const) : ('day' as const),
       topUsers: usageRepo.topUsers(range, 10),
     };
   });
 }
 
-export type PlatformPreset = 'window' | 'today' | 'last7' | 'month' | 'all';
+export type PlatformPreset = 'today' | 'last7' | 'last30' | 'month' | 'all';
 
 function platformRange(preset: PlatformPreset): { from: string; to: string; label: string } {
   const now = new Date();
@@ -97,17 +90,12 @@ function platformRange(preset: PlatformPreset): { from: string; to: string; labe
   const endOfToday = iso(new Date(today.getTime() + 86400_000));
 
   switch (preset) {
-    /*
-     * From the quota's own bounds, not a rolling five hours: these are the platform's
-     * boundaries, the same instants for everybody, and a span measured backwards from now
-     * would not be the window anything is enforced against.
-     */
-    case 'window': {
-      const w = quota.boundsOf('window', now);
-      return { from: iso(w.start), to: iso(w.end), label: 'This 5-hour window' };
-    }
     case 'last7':
       return { from: iso(new Date(today.getTime() - 6 * 86400_000)), to: endOfToday, label: 'Last 7 days' };
+    // The old landing page always drew thirty days, and one preset short of it is a
+    // regression on the first of a month, when "This month" is a single bar
+    case 'last30':
+      return { from: iso(new Date(today.getTime() - 29 * 86400_000)), to: endOfToday, label: 'Last 30 days' };
     case 'month':
       return { from: usageRepo.periodStart('monthly'), to: endOfToday, label: 'This month' };
     case 'all':

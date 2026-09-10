@@ -534,7 +534,7 @@ export interface BalanceResult {
   error?: string;
 }
 
-export type TurnStatus = 'completed' | 'error' | 'aborted' | 'refused';
+export type TurnStatus = 'completed' | 'error' | 'aborted';
 
 /** What is true right now, as opposed to what a period adds up to */
 export interface AdminOverview {
@@ -542,20 +542,19 @@ export interface AdminOverview {
   window: {
     startsAt: string;
     endsAt: string;
-    /** 0..1 through the window by the clock, or null for a degenerate one */
-    elapsed: number | null;
     totals: UsageTotals;
+    /** Turns that ran, by how they ended. A refusal is not one of them. */
     statuses: Record<TurnStatus, number>;
+    /** People the gate turned away in this window, not attempts */
+    refused: number;
   };
   currency: string;
   allTime: UsageTotals;
-  /** Whatever the gateway reports about its concurrency gate, or why it could not be asked */
-  gate: Record<string, unknown>;
   balance: BalanceResult | null;
   agents: AgentInfo[];
 }
 
-export type PlatformPreset = 'window' | 'today' | 'last7' | 'month' | 'all';
+export type PlatformPreset = 'today' | 'last7' | 'last30' | 'month' | 'all';
 
 export interface PlatformUsage {
   range: { from: string; to: string; label: string };

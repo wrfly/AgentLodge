@@ -1,12 +1,15 @@
 /**
- * A refusal leaves a trace, and only one per person per window.
+ * A refusal leaves a trace, in its own table, and only one per person per window.
  *
  * The gate answers 402 and writes no usage row — there is nothing to bill and no upstream
  * call to attribute — so a platform turning people away was invisible everywhere except the
- * status code the client got. Recording it is easy; recording it once is the part with a
- * failure mode. A client that retries a refused request in a loop would write a row a second
- * for as long as it runs, and the console's number would measure that client's retry policy
- * rather than anything an operator can act on.
+ * status code the client got.
+ *
+ * Two things about it have failure modes. Recording it *once*: a client retrying a refused
+ * request in a loop would otherwise write a row a second, and the console's number would
+ * measure that client's retry policy. And keeping it *out of* `usage_records`: every
+ * aggregate over that table reads a row as a turn that ran, so a refusal filed there put a
+ * phantom line on the user's own usage page and counted itself as a turn in every total.
  *
  * Run: npm -w @agentlodge/server run test:refusal
  */
@@ -67,44 +70,53 @@ const backdate = (userId: string, at: string) =>
     REAL_NOW,
   );
 
+const refuse = (userId: string, windowStart: string, at: string) => {
+  usage.noteRefusal({ userId, agent: 'claude', scope: 'window', windowStart });
+  run(`update quota_refusals set created_at = ? where user_id = ? and window_start = ?`,
+    at, userId, windowStart);
+};
+
 console.log('\n=== One row per person per window, however many attempts ===');
 {
-  for (let i = 0; i < 5; i++) {
-    usage.noteRefusal({ userId: alice, agent: 'claude', since: WINDOW.from });
-    backdate(alice, '2026-08-23T15:00:00.000Z');
-  }
-  const counts = usage.statusCountsAll(WINDOW);
-  ok('five attempts leave one row', counts.refused === 1, String(counts.refused));
+  for (let i = 0; i < 5; i++) refuse(alice, WINDOW.from, '2026-08-23T15:00:00.000Z');
+  ok('five attempts leave one row', usage.refusedCount(WINDOW) === 1, String(usage.refusedCount(WINDOW)));
   ok('and nothing is billed for it', usage.totalsAllInRange(WINDOW).billableTokens === 0);
-  ok('nor counted as a turn that ran', counts.completed === 0 && counts.error === 0);
 }
 
 console.log('\n=== A second person is a second row ===');
 {
-  usage.noteRefusal({ userId: bob, agent: 'codex', since: WINDOW.from });
-  backdate(bob, '2026-08-23T16:30:00.000Z');
-  ok('two people, two rows', usage.statusCountsAll(WINDOW).refused === 2);
+  refuse(bob, WINDOW.from, '2026-08-23T16:30:00.000Z');
+  ok('two people, two rows', usage.refusedCount(WINDOW) === 2);
 }
 
 console.log('\n=== The next window starts over ===');
 {
   /*
-   * The dedupe key is the window's own start, so it cannot silence a refusal in the window
-   * after it — which would be the same as not recording refusals at all for anybody who is
-   * over their quota for a whole day.
+   * Keyed on the window's own boundary, so it cannot silence a refusal in the window after
+   * it — which would be the same as not recording refusals at all for somebody who is over
+   * their quota for a whole day.
    */
-  usage.noteRefusal({ userId: alice, agent: 'claude', since: NEXT.from });
-  backdate(alice, '2026-08-23T20:00:00.000Z');
-  ok('the same person is recorded again', usage.statusCountsAll(NEXT).refused === 1);
-  ok('and the earlier window is untouched', usage.statusCountsAll(WINDOW).refused === 2);
+  refuse(alice, NEXT.from, '2026-08-23T20:00:00.000Z');
+  ok('the same person is recorded again', usage.refusedCount(NEXT) === 1);
+  ok('and the earlier window is untouched', usage.refusedCount(WINDOW) === 2);
 }
 
-console.log('\n=== A refusal is not a failure ===');
+console.log('\n=== And it is not a turn ===');
 {
-  usage.record({ userId: bob, agent: 'claude', status: 'error' });
-  backdate(bob, '2026-08-23T20:30:00.000Z');
-  const c = usage.statusCountsAll(NEXT);
-  ok('the two are counted apart', c.refused === 1 && c.error === 1, JSON.stringify(c));
+  /*
+   * The reason this lives in its own table. Filed as a fourth `usage_records.status` it put a
+   * `(claude, null)` line on the user's own "by agent and model" table reading one turn and
+   * nothing else, and `count(distinct coalesce(turn_id, id))` counted it as a turn in every
+   * total the user sees.
+   */
+  usage.record({ userId: alice, agent: 'claude', status: 'completed', usage: SPEND });
+  backdate(alice, '2026-08-23T20:15:00.000Z');
+  const mine = usage.totalsForUser(alice, NEXT);
+  ok('the user is charged one turn, not two', mine.turns === 1, String(mine.turns));
+  ok('and one upstream call', mine.calls === 1, String(mine.calls));
+  const rows = usage.byAgentForUser(alice, NEXT);
+  ok('with no phantom line beside it', rows.length === 1, JSON.stringify(rows.map((r) => [r.agent, r.model, r.turns])));
+  ok('while the refusal is still counted where it belongs', usage.refusedCount(NEXT) === 1);
 }
 
 console.log('\n=== Who spent the most does not list people who spent nothing ===');
@@ -124,8 +136,6 @@ console.log('\n=== Who spent the most does not list people who spent nothing ===
    */
   usage.record({ userId: alice, agent: 'claude', status: 'error' });
   backdate(alice, '2026-08-23T20:10:00.000Z');
-  usage.record({ userId: alice, agent: 'claude', status: 'completed', usage: SPEND });
-  backdate(alice, '2026-08-23T21:00:00.000Z');
   usage.record({ userId: alice, agent: 'claude', status: 'aborted' });
   backdate(alice, '2026-08-23T22:30:00.000Z');
   const top = usage.topUsers(NEXT, 10);

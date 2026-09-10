@@ -3,12 +3,13 @@
  *
  * Split out of AdminPage.tsx, which had grown to 2700 lines; one file per tab now.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import {
   admin,
   fmtMoney,
   type AdminOverview,
+  type GateStatus,
   type PlatformPreset,
   type PlatformUsage,
   type UpstreamAllowanceView,
@@ -32,19 +33,21 @@ export function Overview() {
   const [data, setData] = useState<AdminOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     void admin
       .overview()
       .then(setData)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
+  // Fetched once, but the window it describes ends; the card asks for a fresh one when it does
+  useEffect(reload, [reload]);
 
   if (error) return <Banner tone="error">{error}</Banner>;
   if (!data) return <Spinner />;
 
   return (
     <>
-      <LiveWindowCard data={data} />
+      <LiveWindowCard data={data} onStale={reload} />
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Stat label={t('Users')} value={String(data.users.total)} sub={t('{n} active', { n: data.users.active })} />
@@ -109,39 +112,12 @@ const WINDOW_LABEL: Record<string, string> = {
   overage: 'Overage'
 };
 
-/**
- * The shared plan's own allowance.
- *
- * The one screen where the upstream's figures are the right answer. Everywhere
- * else they are replaced with the asking user's quota, because one subscription
- * serves every tenant and the pool's numbers are nobody's allowance in
- * particular.
- */
 /* ---------------- Everybody's usage, over one period ---------------- */
-
-/** Every hour or day in the range, whether or not anything was spent in it */
-function fillSlots(d: PlatformUsage): Array<{ t: string; billableTokens: number }> {
-  const step = d.seriesUnit === 'hour' ? 3600_000 : 86400_000;
-  const from = new Date(d.range.from).getTime();
-  const to = Math.min(new Date(d.range.to).getTime(), Date.now());
-  // "All time" starts at the epoch; padding that would be a million empty bars
-  if (to - from > 400 * 86400_000) return d.series.map((p) => ({ t: p.t, billableTokens: p.billableTokens }));
-  const local = (ms: number) => {
-    const x = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString();
-    return d.seriesUnit === 'hour' ? `${x.slice(0, 13)}:00`.replace('T', ' ') : x.slice(0, 10);
-  };
-  const hit = new Map(d.series.map((p) => [p.t, p.billableTokens]));
-  const out: Array<{ t: string; billableTokens: number }> = [];
-  for (let ms = from; ms <= to; ms += step) {
-    const key = local(ms);
-    out.push({ t: key, billableTokens: hit.get(key) ?? 0 });
-  }
-  return out;
-}
 
 const PLATFORM_PRESETS: Array<{ id: PlatformPreset; label: string }> = [
   { id: 'today', label: 'Today' },
   { id: 'last7', label: 'Last 7 days' },
+  { id: 'last30', label: 'Last 30 days' },
   { id: 'month', label: 'This month' },
   { id: 'all', label: 'All time' },
 ];
@@ -171,12 +147,9 @@ function PlatformUsageCard() {
     return () => { live = false; };
   }, [preset]);
 
-  /*
-   * Empty buckets included, or a quiet period draws one bar across the whole card and reads
-   * like a progress meter that is full. The shape of usage is the point of the chart, and a
-   * single busy hour in a quiet day is a shape.
-   */
-  const slots = data ? fillSlots(data) : [];
+  // Already padded with empty buckets by the server, which is the only place that knows
+  // which timezone its own bucket keys were cut in
+  const slots = data?.series ?? [];
   const max = Math.max(...slots.map((d) => d.billableTokens), 1);
   // An hourly stamp reads `2026-09-10 14:00`, a daily one `2026-09-10`
   const short = (stamp: string) =>
@@ -272,7 +245,8 @@ function PlatformUsageCard() {
 /** "2h 14m", or "4m", counted down to the given instant */
 function untilText(endsAt: string, now: number): string {
   const ms = Math.max(new Date(endsAt).getTime() - now, 0);
-  const mins = Math.round(ms / 60_000);
+  // Floor, not round: rounding 59m40s up gave "60m", which is not how anybody writes an hour
+  const mins = Math.floor(ms / 60_000);
   return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
@@ -289,7 +263,7 @@ function untilText(endsAt: string, now: number): string {
  * 80% of a shared subscription's allowance 30% of the way in is the shape of trouble, and
  * neither figure says that alone.
  */
-function LiveWindowCard({ data }: { data: AdminOverview }) {
+function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () => void }) {
   const t = useT();
   const [now, setNow] = useState(() => Date.now());
   // The countdown is the point of the card, so it has to actually count down
@@ -298,11 +272,27 @@ function LiveWindowCard({ data }: { data: AdminOverview }) {
     return () => clearInterval(id);
   }, []);
 
+  /*
+   * Its own request. `/api/admin/gate` already exists and is already typed, and the landing
+   * page has no business blocking on it — asking through the overview meant a five-second
+   * wait for every admin whenever the gateway container was down.
+   */
+  const [gate, setGate] = useState<GateStatus | null>(null);
+  useEffect(() => { void admin.gate().then(setGate).catch(() => setGate(null)); }, []);
+
   const w = data.window;
-  const elapsed = w.elapsed === null ? 0 : Math.round(w.elapsed * 100);
-  const refused = w.statuses.refused;
+  const started = new Date(w.startsAt).getTime();
+  const ends = new Date(w.endsAt).getTime();
+  // From the clock on every tick, not from a fraction the server computed once: the two came
+  // from the same window, and a bar frozen beside a live countdown is worse than no bar
+  const elapsed = ends > started ? Math.round(Math.min(Math.max((now - started) / (ends - started), 0), 1) * 100) : 0;
+  const rolled = now >= ends;
+  // The totals belong to a window that has ended; say so rather than keep showing them
+  useEffect(() => { if (rolled) onStale(); }, [rolled, onStale]);
+  const refused = w.refused;
   const failed = w.statuses.error;
-  const gate = data.gate as { active?: number; maxConcurrency?: number; queued?: number; unreachable?: boolean };
+  const inFlight = gate?.pools?.reduce((n, p) => n + p.active, 0) ?? null;
+  const queued = gate?.pools?.reduce((n, p) => n + p.queued, 0) ?? 0;
 
   return (
     <Card
@@ -316,7 +306,7 @@ function LiveWindowCard({ data }: { data: AdminOverview }) {
         </span>
         <span className="text-[12.5px] text-faint">{t('{n} turns', { n: w.totals.turns })}</span>
         <span className="ml-auto text-[12.5px] text-muted">
-          {t('resets in {d}', { d: untilText(w.endsAt, now) })}
+          {rolled ? t('this window has ended') : t('resets in {d}', { d: untilText(w.endsAt, now) })}
         </span>
       </div>
 
@@ -341,23 +331,26 @@ function LiveWindowCard({ data }: { data: AdminOverview }) {
         </div>
       )}
 
-      {!gate.unreachable && typeof gate.active === 'number' && (
+      {gate && !gate.unreachable && inFlight !== null && (
         <div className="mt-2 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
-          <span>
-            {t('gate {active}/{max} in flight', {
-              active: gate.active,
-              max: gate.maxConcurrency ?? '—',
-            })}
-          </span>
-          {(gate.queued ?? 0) > 0 && (
-            <span className="text-amber-600">{t('{n} waiting', { n: gate.queued ?? 0 })}</span>
-          )}
+          {/* Summed across pools, the way the Gate tab does it: `active` and `queued` are
+              per upstream, and the ceiling every pool starts from is `max` */}
+          <span>{t('gate {active}/{max} in flight', { active: inFlight, max: gate.max })}</span>
+          {queued > 0 && <span className="text-amber-600">{t('{n} waiting', { n: queued })}</span>}
         </div>
       )}
     </Card>
   );
 }
 
+/**
+ * The shared plan's own allowance.
+ *
+ * The one screen where the upstream's figures are the right answer. Everywhere
+ * else they are replaced with the asking user's quota, because one subscription
+ * serves every tenant and the pool's numbers are nobody's allowance in
+ * particular.
+ */
 function UpstreamAllowanceCard() {
   const t = useT();
   const [view, setView] = useState<UpstreamAllowanceView | null>(null);

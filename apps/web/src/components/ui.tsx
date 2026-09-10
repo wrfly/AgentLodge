@@ -320,24 +320,3 @@ export function fmtDate(iso?: string): string {
   });
 }
 
-/**
- * Pad sparse daily usage out to N consecutive days.
- *
- * Without it, a single day of data renders as one flat bar across the whole chart, which
- * reads as anything but a trend.
- */
-export function fillDays<T extends { day: string; billableTokens: number; turns: number }>(
-  data: T[],
-  days = 30,
-): Array<{ day: string; billableTokens: number; turns: number }> {
-  const map = new Map(data.map((d) => [d.day, d]));
-  const out: Array<{ day: string; billableTokens: number; turns: number }> = [];
-  const today = new Date();
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today.getTime() - i * 86400_000);
-    const key = new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
-    const hit = map.get(key);
-    out.push({ day: key, billableTokens: hit?.billableTokens ?? 0, turns: hit?.turns ?? 0 });
-  }
-  return out;
-}
