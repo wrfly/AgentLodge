@@ -589,7 +589,7 @@ export const fr: Record<string, string> = {
   'resets in {d}': 'réinitialisation dans {d}',
   '{n}% of the window elapsed': '{n}% de la fenêtre écoulée',
   '{n} hit their quota': '{n} ont atteint leur quota',
-  'gate {active}/{max} in flight': 'file {active}/{max} en vol',
+  'gate {active}/{max} in flight': 'file {active}/{max} en cours',
   '{n} waiting': '{n} en attente',
   '{n} failed upstream': '{n} en échec côté amont',
   'this window has ended': 'cette fenêtre est terminée',

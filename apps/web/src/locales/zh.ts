@@ -616,7 +616,7 @@ export const zh: Record<string, string> = {
   'resets in {d}': '{d} 后重置',
   '{n}% of the window elapsed': '窗口已过 {n}%',
   '{n} hit their quota': '{n} 人撞到配额',
-  'gate {active}/{max} in flight': '闸口 {active}/{max} 在飞',
+  'gate {active}/{max} in flight': '闸口 {active}/{max} 进行中',
   '{n} waiting': '{n} 个等待',
   '{n} failed upstream': '{n} 轮上游失败',
   'this window has ended': '这个窗口已经结束',

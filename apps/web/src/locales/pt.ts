@@ -589,7 +589,7 @@ export const pt: Record<string, string> = {
   'resets in {d}': 'reinicia em {d}',
   '{n}% of the window elapsed': '{n}% da janela decorrido',
   '{n} hit their quota': '{n} chegaram à quota',
-  'gate {active}/{max} in flight': 'portão {active}/{max} em voo',
+  'gate {active}/{max} in flight': 'portão {active}/{max} em curso',
   '{n} waiting': '{n} à espera',
   '{n} failed upstream': '{n} falharam no upstream',
   'this window has ended': 'esta janela terminou',

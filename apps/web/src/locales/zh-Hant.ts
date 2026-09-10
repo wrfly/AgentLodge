@@ -590,7 +590,7 @@ export const zhHant: Record<string, string> = {
   'resets in {d}': '{d} 後重置',
   '{n}% of the window elapsed': '視窗已過 {n}%',
   '{n} hit their quota': '{n} 人撞到配額',
-  'gate {active}/{max} in flight': '閘口 {active}/{max} 在飛',
+  'gate {active}/{max} in flight': '閘口 {active}/{max} 進行中',
   '{n} waiting': '{n} 個等待',
   '{n} failed upstream': '{n} 輪上游失敗',
   'this window has ended': '這個視窗已經結束',
