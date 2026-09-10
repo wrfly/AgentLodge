@@ -107,6 +107,16 @@ interface ChatState {
   loading: boolean;
   connected: boolean;
   error: string | null;
+  /**
+   * The agent whose workspace has been bootstrapped, or null.
+   *
+   * `activeId` used to answer this: it was non-null the moment the chat page had been set
+   * up, because setting it up created a conversation. A draft has no id and is a perfectly
+   * initialised state, so the question needs its own answer — without one, coming back from
+   * the settings page would re-bootstrap and drop somebody who was drafting into their
+   * newest old thread.
+   */
+  bootstrappedFor: AgentId | null;
   /** The mobile drawer. Transient: choosing a conversation closes it again */
   sidebarOpen: boolean;
   /**
@@ -119,6 +129,19 @@ interface ChatState {
   reset: () => void;
   refreshList: () => Promise<void>;
   newConversation: () => Promise<void>;
+  /**
+   * The id to act on, creating the conversation this draft stands for if it has none yet.
+   *
+   * A conversation is a row from the first message on, not from the moment somebody looked
+   * at the chat page. Everything conversation-shaped on the server — the stream, the
+   * message, an upload — needs the row first, so whoever is about to do one of those calls
+   * this and works with what it returns.
+   *
+   * Returns null when the draft was abandoned while the create was in the air; the caller
+   * has nothing to do in that case. Throws when the create itself failed, so the caller's
+   * own error handling — which it has, because it was about to make a request — reports it.
+   */
+  ensureConversation: () => Promise<string | null>;
   select: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
   abort: () => Promise<void>;
@@ -147,6 +170,27 @@ interface ChatState {
 let closeSource: (() => void) | null = null;
 let queue: ServerEvent[] = [];
 let raf: number | null = null;
+
+/**
+ * The conversation being created right now, if one is.
+ *
+ * Two acts can turn the same draft into a row at almost the same instant: a second file
+ * dropped while the first is still uploading, or a drop and a send. Both would POST, and the
+ * second row would be the one nobody is looking at. Out here rather than in the store for
+ * the same reason the stream is — it is not something React renders.
+ */
+let creating: Promise<string | null> | null = null;
+
+/**
+ * Which draft the store is on, counted rather than named.
+ *
+ * A create takes a round trip, and the person does not have to wait for it: they can click
+ * another conversation, switch agent or sign out while it is in the air. The response would
+ * then make a conversation active that nobody asked for, in a list belonging to the other
+ * agent, and take the stream with it. Bumped by everything that moves off the draft, and
+ * read back after the await to decide whether the answer still has a place to go.
+ */
+let draftEpoch = 0;
 
 function flush() {
   raf = null;
@@ -214,6 +258,7 @@ export const useChat = create<ChatState>((set, get) => ({
   loading: false,
   connected: false,
   error: null,
+  bootstrappedFor: null,
   sidebarOpen: false,
   sidebarCollapsed: localStorage.getItem(COLLAPSED_KEY) === '1',
 
@@ -231,6 +276,8 @@ export const useChat = create<ChatState>((set, get) => ({
 
   async bootstrap(agent) {
     closeStream();
+    draftEpoch++;
+    creating = null;
     set({
       agent,
       conversations: [],
@@ -242,15 +289,21 @@ export const useChat = create<ChatState>((set, get) => ({
       thinking: true,
       streaming: false,
       error: null,
+      // Claimed before the awaits below, not after them: React runs this effect twice in
+      // development, and a flag set at the end lets the second pass straight through
+      bootstrappedFor: agent,
     });
     await get().refreshList();
     const first = get().conversations[0];
+    // Nothing to select is not a reason to create anything — the state set above is already
+    // a draft, and it stays one until somebody says something
     if (first) await get().select(first.id);
-    else await get().newConversation();
   },
 
   reset() {
     closeStream();
+    draftEpoch++;
+    creating = null;
     set({
       conversations: [],
       messages: [],
@@ -262,6 +315,9 @@ export const useChat = create<ChatState>((set, get) => ({
       streaming: false,
       connected: false,
       error: null,
+      // An agent whose CLI stops answering comes through here. Keeping the flag would mean
+      // it never bootstraps again once it comes back
+      bootstrappedFor: null,
     });
   },
 
@@ -273,44 +329,95 @@ export const useChat = create<ChatState>((set, get) => ({
     }
   },
 
+  /**
+   * Open a draft. Nothing is posted: the row is `ensureConversation`'s to make, when there
+   * is finally something to put in it.
+   *
+   * The button used to post one on every press, so pressing it twice left two "New chat"
+   * entries and pressing it again left a third, none of them with a message in them. A
+   * conversation nobody has said anything in is not history yet, and three of them are just
+   * three ways to lose the one that matters.
+   *
+   * Model, effort and thinking are left alone on purpose — a new conversation inherits the
+   * settings on screen rather than asking again every time, and they travel with the draft
+   * until it is created.
+   */
   async newConversation() {
-    try {
-      // A new conversation inherits the current settings, rather than asking again every time
-      const conv = await api.createConversation(
-        get().agent,
-        get().model || undefined,
-        get().effort || undefined,
-        get().thinking,
-      );
-      set((s) => ({
-        conversations: [
-          {
-            id: conv.id,
-            title: conv.title,
-            agent: conv.agent,
-            createdAt: conv.createdAt,
-            updatedAt: conv.updatedAt,
-            messageCount: 0,
-          },
-          ...s.conversations,
-        ],
-        activeId: conv.id,
-        title: conv.title,
-        model: conv.model ?? '',
-        effort: conv.effort ?? '',
-        thinking: conv.thinking ?? true,
-        messages: [],
-        streaming: false,
-        sidebarOpen: false,
-      }));
-      openStream(conv.id);
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-    }
+    closeStream();
+    draftEpoch++;
+    creating = null;
+    set({
+      activeId: null,
+      title: '',
+      messages: [],
+      streaming: false,
+      loading: false,
+      queuePosition: 0,
+      error: null,
+      // On a phone this click came from inside the drawer
+      sidebarOpen: false,
+    });
+  },
+
+  async ensureConversation() {
+    const open = get().activeId;
+    if (open) return open;
+    if (creating) return creating;
+
+    const mine = draftEpoch;
+    creating = (async () => {
+      try {
+        const conv = await api.createConversation(
+          get().agent,
+          get().model || undefined,
+          get().effort || undefined,
+          get().thinking,
+        );
+
+        /*
+         * The draft this answers is gone — another conversation was clicked, the agent was
+         * switched, somebody signed out. The row exists server-side and will show up in the
+         * list; what must not happen is it becoming the active conversation, in whichever
+         * list is on screen now, and taking the stream from the one that is.
+         */
+        if (draftEpoch !== mine) return null;
+
+        set((s) => ({
+          conversations: [
+            {
+              id: conv.id,
+              title: conv.title,
+              agent: conv.agent,
+              createdAt: conv.createdAt,
+              updatedAt: conv.updatedAt,
+              messageCount: 0,
+            },
+            ...s.conversations,
+          ],
+          activeId: conv.id,
+          title: conv.title,
+        }));
+        /*
+         * `messages` is not cleared and the three settings are not read back: the caller may
+         * already have put its own message on screen, and a picker moved while this was in
+         * the air holds the newer value. What was sent is what the row was created with; the
+         * draft is the authority on the rest.
+         */
+
+        // Before the caller's own request goes out, so a turn's first events are not missed
+        openStream(conv.id);
+        return conv.id;
+      } finally {
+        creating = null;
+      }
+    })();
+    return creating;
   },
 
   async select(id) {
     if (get().activeId === id && get().messages.length) return;
+    // Whatever draft was being created is no longer the one on screen
+    draftEpoch++;
     set({ loading: true, activeId: id, messages: [], sidebarOpen: false });
     try {
       const conv = await api.getConversation(id);
@@ -330,10 +437,11 @@ export const useChat = create<ChatState>((set, get) => ({
   },
 
   async send(text) {
-    const id = get().activeId;
-    if (!id || get().streaming) return;
+    if (get().streaming) return;
 
-    // Append the user's message optimistically, so the interface responds at once
+    // Append the user's message optimistically, so the interface responds at once. Setting
+    // `streaming` in the same breath is what stops a second Enter from sending twice — and,
+    // now, from creating a second conversation.
     const optimistic: ChatMessage = {
       id: `local-${Date.now()}`,
       role: 'user',
@@ -343,6 +451,17 @@ export const useChat = create<ChatState>((set, get) => ({
     set((s) => ({ messages: [...s.messages, optimistic], streaming: true }));
 
     try {
+      // The first message is the moment the row is worth having
+      const id = await get().ensureConversation();
+      if (!id) {
+        // The draft was abandoned mid-flight; this message has nowhere to go and the
+        // conversation now on screen is not the one it was typed into
+        set((s) => ({
+          streaming: false,
+          messages: s.messages.filter((m) => m.id !== optimistic.id),
+        }));
+        return;
+      }
       const { userMessage } = await api.sendMessage(id, text);
       set((s) => ({
         messages: s.messages.map((m) => (m.id === optimistic.id ? toChatMessage(userMessage) : m)),
@@ -359,8 +478,16 @@ export const useChat = create<ChatState>((set, get) => ({
   },
 
   async abort() {
-    const id = get().activeId;
-    if (id) await api.abort(id);
+    // Stop is on screen from the instant a message is sent, and for the first message that
+    // instant is before the conversation exists. Wait for the id rather than doing nothing.
+    const id = get().activeId ?? (creating ? await creating : null);
+    if (!id) return;
+    try {
+      await api.abort(id);
+    } catch {
+      // Nothing was running any more — the turn finished between the click and this call.
+      // Not worth a banner, and `void abort()` has nowhere to put a rejection.
+    }
   },
 
   async rename(id, title) {
@@ -371,9 +498,19 @@ export const useChat = create<ChatState>((set, get) => ({
     }));
   },
 
+  /*
+   * The three below share a shape: a draft keeps the value locally and hands it over when it
+   * is created, and a conversation that exists is patched. `creating` is awaited rather than
+   * treated as a draft — a picker moved while the create is in the air belongs to the row
+   * that create is making, and setting it locally would leave the screen and the server
+   * disagreeing about what the next turn runs on.
+   */
   async setModel(model) {
-    const id = get().activeId;
-    if (!id) return;
+    const id = get().activeId ?? (creating ? await creating : null);
+    if (!id) {
+      set({ model });
+      return;
+    }
     const prev = get().model;
     set({ model });
     try {
@@ -384,8 +521,11 @@ export const useChat = create<ChatState>((set, get) => ({
   },
 
   async setEffort(effort) {
-    const id = get().activeId;
-    if (!id) return;
+    const id = get().activeId ?? (creating ? await creating : null);
+    if (!id) {
+      set({ effort });
+      return;
+    }
     const prev = get().effort;
     set({ effort });
     try {
@@ -396,8 +536,11 @@ export const useChat = create<ChatState>((set, get) => ({
   },
 
   async setThinking(thinking) {
-    const id = get().activeId;
-    if (!id) return;
+    const id = get().activeId ?? (creating ? await creating : null);
+    if (!id) {
+      set({ thinking });
+      return;
+    }
     const prev = get().thinking;
     set({ thinking });
     try {

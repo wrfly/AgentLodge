@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config } from '../config.js';
+import { config, paths } from '../config.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -106,7 +106,7 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -282,6 +282,57 @@ function migrate(d: DatabaseSync): void {
       primary key (user_id, window_start)
     )`);
     d.exec('create index if not exists idx_refusal_window on quota_refusals(window_start)');
+  }
+
+  if (from < 10) {
+    /*
+     * Sweep up the empty conversations the old interface left behind.
+     *
+     * A row used to be posted the moment somebody opened the chat page, and again on every
+     * press of "New chat", so a deployment of any age has a pile of them: "New chat", no
+     * messages, nothing to read. Conversations are created by the first message now, so this
+     * is a one-off tidy of what the previous rule accumulated, not a policy.
+     *
+     * **A conversation with files in its workspace is not empty**, whatever the message
+     * count says. Attaching a file uploads it there and then, so a file attached and never
+     * sent is a real thing somebody may be coming back for, and the row is their only handle
+     * on it — deleting it here would strand the directory on disk for ever and take away the
+     * one way to reach it. Hence the readdir: this step touches the filesystem because the
+     * only alternative is losing somebody's files.
+     */
+    const orphans = d
+      .prepare(
+        `select id, user_id from conversations
+          where not exists (select 1 from messages m where m.conversation_id = conversations.id)`,
+      )
+      .all() as Array<{ id: string; user_id: string }>;
+
+    const drop = d.prepare('delete from conversations where id = ?');
+    let removed = 0;
+    let kept = 0;
+    for (const row of orphans) {
+      // Built here rather than borrowed from app/turns.ts: core may not depend on app, and
+      // check-layers.mjs fails the build over it
+      const dir = path.join(paths.workspaces, row.user_id, row.id);
+      let empty: boolean;
+      try {
+        empty = fs.readdirSync(dir).length === 0;
+      } catch {
+        empty = true; // never had a workspace, which is the common case by far
+      }
+      if (empty) {
+        drop.run(row.id);
+        removed++;
+      } else {
+        kept++;
+      }
+    }
+    if (removed || kept) {
+      console.log(
+        `[db] removed ${removed} conversation(s) with nothing in them` +
+          (kept ? `; kept ${kept} that still hold uploaded files` : ''),
+      );
+    }
   }
 
   d.exec(`pragma user_version = ${SCHEMA_VERSION}`);

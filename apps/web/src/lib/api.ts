@@ -554,7 +554,7 @@ export interface AdminOverview {
   agents: AgentInfo[];
 }
 
-export type PlatformPreset = 'today' | 'last7' | 'last30' | 'month' | 'all';
+export type PlatformPreset = 'window' | 'today' | 'last7' | 'last30' | 'month' | 'all';
 
 export interface PlatformUsage {
   range: { from: string; to: string; label: string };

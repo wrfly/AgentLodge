@@ -80,7 +80,7 @@ export function register(app: FastifyInstance): void {
   });
 }
 
-export type PlatformPreset = 'today' | 'last7' | 'last30' | 'month' | 'all';
+export type PlatformPreset = 'window' | 'today' | 'last7' | 'last30' | 'month' | 'all';
 
 function platformRange(preset: PlatformPreset): { from: string; to: string; label: string } {
   const now = new Date();
@@ -90,6 +90,15 @@ function platformRange(preset: PlatformPreset): { from: string; to: string; labe
   const endOfToday = iso(new Date(today.getTime() + 86400_000));
 
   switch (preset) {
+    /*
+     * The same bounds the live card above reports, from the same function, so the two cannot
+     * disagree about where the window starts — and the period control can answer "who spent
+     * it" for the window that refuses first, which was the one period it could not.
+     */
+    case 'window': {
+      const w = quota.boundsOf('window', now);
+      return { from: iso(w.start), to: iso(w.end), label: 'This window' };
+    }
     case 'last7':
       return { from: iso(new Date(today.getTime() - 6 * 86400_000)), to: endOfToday, label: 'Last 7 days' };
     // The old landing page always drew thirty days, and one preset short of it is a

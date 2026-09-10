@@ -446,6 +446,7 @@ export const ru: Record<string, string> = {
   'month': 'месяц',
   '{scope} window': 'окно: {scope}',
   'Which window': 'Какое окно',
+  'This window': 'Текущее окно',
   'This 5-hour window': 'Текущее 5-часовое окно',
   'Per 5 hours': 'За 5 часов',
   'empty = unlimited': 'пусто = без ограничений',
@@ -612,7 +613,6 @@ export const ru: Record<string, string> = {
 
   // The admin overview: the live window, and everybody over one period
   'Usage, all users': 'Расход, все пользователи',
-  'Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.': 'Расход всех за окно, которое отказывает первым. Это окно самой платформы, поэтому оно начинается и заканчивается в одни и те же моменты для каждого.',
   'resets in {d}': 'сброс через {d}',
   '{n}% of the window elapsed': 'прошло {n}% окна',
   '{n} hit their quota': '{n} упёрлись в квоту',

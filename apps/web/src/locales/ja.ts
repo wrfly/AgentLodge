@@ -446,6 +446,7 @@ export const ja: Record<string, string> = {
   'month': '月',
   '{scope} window': '{scope} ウィンドウ',
   'Which window': '対象ウィンドウ',
+  'This window': '現在のウィンドウ',
   'This 5-hour window': '現在の 5 時間ウィンドウ',
   'Per 5 hours': '5 時間あたり',
   'empty = unlimited': '空欄 = 無制限',
@@ -612,7 +613,6 @@ export const ja: Record<string, string> = {
 
   // The admin overview: the live window, and everybody over one period
   'Usage, all users': '全ユーザーの使用量',
-  'Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.': '最初に拒否されるウィンドウでの全員の消費。プラットフォーム自身のウィンドウなので、開始と終了は全ユーザーで同じ時刻です。',
   'resets in {d}': '{d} 後にリセット',
   '{n}% of the window elapsed': 'ウィンドウの {n}% が経過',
   '{n} hit their quota': '{n} 人がクォータに到達',

@@ -115,6 +115,9 @@ const WINDOW_LABEL: Record<string, string> = {
 /* ---------------- Everybody's usage, over one period ---------------- */
 
 const PLATFORM_PRESETS: Array<{ id: PlatformPreset; label: string }> = [
+  // First, and the shortest span offered: it is the window that refuses first, so "who is
+  // burning it right now" is the question this card gets asked in anger
+  { id: 'window', label: 'This window' },
   { id: 'today', label: 'Today' },
   { id: 'last7', label: 'Last 7 days' },
   { id: 'last30', label: 'Last 30 days' },
@@ -295,10 +298,7 @@ function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () =>
   const queued = gate?.pools?.reduce((n, p) => n + p.queued, 0) ?? 0;
 
   return (
-    <Card
-      title={t('This 5-hour window')}
-      description={t('Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.')}
-    >
+    <Card title={t('This 5-hour window')}>
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <span className="font-mono text-[22px] tabular-nums">{fmtTokens(w.totals.billableTokens)}</span>
         <span className="font-mono text-[14px] text-muted tabular-nums">

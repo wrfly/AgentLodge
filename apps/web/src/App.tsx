@@ -54,13 +54,14 @@ function ChatPane({ agent }: { agent: 'claude' | 'codex' }) {
     // activeId and reselect the first row, which reads as clicking a
     // conversation doing nothing.
     //
-    // The test is activeId, not "the list is non-empty": Shell now preloads the
-    // list on non-chat routes (see below), so a non-empty list no longer means
-    // this workspace has been initialised. Using it would make
-    // deep-link-to-settings-then-chat skip bootstrap and land on a chat pane
-    // with nothing selected.
-    const s = useChat.getState();
-    if (s.agent === agent && s.activeId) return;
+    // The test is a flag bootstrap sets, not "the list is non-empty" and no
+    // longer activeId either. The list will not do: Shell preloads it on
+    // non-chat routes (see below), so a non-empty list does not mean this
+    // workspace has been initialised. And activeId stopped meaning it when a
+    // conversation became something the first message creates — a draft has no
+    // id, so the old test would re-bootstrap and drop somebody who was part-way
+    // through typing into their newest old thread.
+    if (useChat.getState().bootstrappedFor === agent) return;
     void bootstrap(agent);
   }, [agent, agentsLoaded, available, bootstrap, reset]);
 
