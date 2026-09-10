@@ -15,18 +15,30 @@ export function register(app: FastifyInstance): void {
 
   app.get('/api/admin/users', guard, async () => {
     const monthStart = usageRepo.periodStart('monthly');
+    // The same boundary for everybody, so it is cut once rather than per row
+    const windowBounds = quota.boundsOf('window');
     return usersRepo.list().map((u) => {
       const q = usersRepo.getQuota(u.id);
       // The 5-hour window is the one that bites first, so it is the one the list shows —
       // counted from wherever the gate counts it from, or an operator who has just reset
       // somebody reads a percentage the reset already forgave
-      const windowStart = quota.countStartOf(q, quota.boundsOf('window').start);
+      const windowStart = quota.countStartOf(q, windowBounds.start);
       return {
         ...usersRepo.toPublic(u),
         quota: {
+          // The configured ceilings, and only those: the edit form is seeded from them, so
+          // folding a top-up in here would bake a temporary allowance into a permanent limit
+          // the moment somebody pressed save
           window: q.window,
           week: q.week,
           month: q.month,
+          /*
+           * What the gate will actually enforce on the 5-hour window right now, top-up
+           * included. The list draws its bar against this. It used to divide by the raw
+           * ceiling, so a user who had just been topped up read past 100% while the gate
+           * was still letting them through.
+           */
+          windowCeiling: quota.effectiveCeiling(q, 'window'),
           limitKind: q.limitKind,
           // So a cost-limited row is labelled in the money it is actually counted in
           currency: q.currency,

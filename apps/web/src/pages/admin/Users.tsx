@@ -109,7 +109,9 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
   // The list shows the 5-hour window: it is the one that bites first, and usage.period is
   // measured over exactly that window on the server
   const used = byCost ? user.usage.period.costMicro : user.usage.period.billableTokens;
-  const cap = user.quota.window;
+  // The effective ceiling, not the configured one: a live top-up raises what the gate lets
+  // through, and a bar drawn against the raw number reads past 100% while it still does
+  const cap = user.quota.windowCeiling;
   const pct = cap ? Math.min(used / cap, 1) : 0;
   const show = (v: number) => (byCost ? fmtMoney(v, user.quota.currency) : fmtTokens(v));
 
@@ -232,7 +234,9 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
       {lastReset !== null && (
         <div className="mt-2 flex items-center gap-2 rounded-lg border border-line bg-elevated px-3 py-2 text-[12.5px]">
           <span className="flex-1">
-            {t('Zeroed')} <strong className="font-mono">{lastReset.toLocaleString()}</strong> tokens
+            {/* `show` so a cost quota reads as money: this said "Zeroed 9,000,000 tokens"
+                to an operator who had just cleared $9.00 */}
+            {t('Zeroed')} <strong className="font-mono">{show(lastReset)}</strong>{' '}
             {t('(nothing was deleted; the counting start just moved forward)')}
           </span>
           <Button variant="ghost" onClick={() => void undoReset()} disabled={busy}>

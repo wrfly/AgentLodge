@@ -299,21 +299,31 @@ export function resetMail(input: { link: string; ttlMinutes: number }): {
   };
 }
 
+/**
+ * `used`, `limit` and `unit` arrive already formatted, because only the caller knows whether
+ * the ceiling counts tokens or money. This said "9,000,000 of 10,000,000 tokens this month"
+ * to somebody on a $10 monthly cost quota — the right number in the wrong unit, and the wrong
+ * window besides, since the one that trips is as often the five hours or the week.
+ */
 export function quotaWarningMail(input: {
   username: string;
-  used: number;
-  limit: number;
+  used: string;
+  limit: string;
+  unit: string;
+  /** The window that is nearly full: "5-hour window", "week", "month" */
+  window: string;
+  pct: number;
   link: string;
 }): { subject: string; html: string; text: string } {
-  const pct = Math.round((input.used / input.limit) * 100);
+  const amount = `${input.used} of ${input.limit} ${input.unit}`;
   return {
-    subject: `AgentLodge quota is ${pct}% used`,
+    subject: `AgentLodge quota is ${input.pct}% used`,
     html: layout(
-      `Quota is ${pct}% used`,
-      `<p style="${P}">${input.username}, you have used <strong>${input.used.toLocaleString()}</strong> of ${input.limit.toLocaleString()} tokens this month.</p>
+      `Quota is ${input.pct}% used`,
+      `<p style="${P}">${input.username}, you have used <strong>${input.used}</strong> of ${input.limit} ${input.unit} for this ${input.window}.</p>
        <p style="${P}">Once the quota is used up you cannot start new conversations until an administrator adjusts it.</p>
        ${button(input.link, 'See the breakdown')}`,
     ),
-    text: `You have used ${input.used} of ${input.limit} tokens this month (${pct}%). Breakdown: ${input.link}`,
+    text: `You have used ${amount} for this ${input.window} (${input.pct}%). Breakdown: ${input.link}`,
   };
 }

@@ -78,6 +78,19 @@ export function countStartOf(q: usersRepo.Quota, start: Date): string {
   return q.resetAt && new Date(q.resetAt) > start ? q.resetAt : start.toISOString();
 }
 
+/**
+ * The ceiling the gate will actually enforce: the configured one plus any live top-up, or
+ * null when the window is uncapped and a top-up would be discarded.
+ *
+ * Exported because the admin list draws a bar against it. It used to draw against the raw
+ * `q.window`, so a user who had just been topped up read past 100% while the gate was still
+ * letting them through — the list saying "refused" about somebody it was not refusing.
+ */
+export function effectiveCeiling(q: usersRepo.Quota, scope: QuotaScope, now = new Date()): number | null {
+  const ceiling = ceilingOf(q, scope);
+  return ceiling === null ? null : ceiling + boostOf(q, scope, now);
+}
+
 function windowStatus(
   userId: string,
   q: usersRepo.Quota,

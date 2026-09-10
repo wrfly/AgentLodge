@@ -221,7 +221,6 @@ export const zhHant: Record<string, string> = {
   'resets in {n} days': '{n} 天後重置',
   Quota: '配額',
   'This quota period has ended — ask an administrator to top it up': '這個配額週期已結束——請管理員充值',
-  'This account has no limit. Used this {period}:': '這個帳號沒有上限。本{period}已用：',
   'period started {when}': '週期起於 {when}',
   'an administrator reset it manually': '管理員手動重置過',
   'warn only, not enforced': '僅警告，不攔截',
@@ -471,7 +470,6 @@ export const zhHant: Record<string, string> = {
   'empty = unlimited': '留空 = 不限',
   'Per week': '每週',
   'Per month': '每月',
-  'This account has no limit. Used this month:': '這個帳號沒有上限。本月已用：',
   '+{amount} topped up': '已充值 +{amount}',
   'resets {when}': '{when} 重置',
   'Upstream 5-hour window reset': '上游 5 小時視窗重置時刻',
@@ -624,4 +622,5 @@ export const zhHant: Record<string, string> = {
   'This quota month': '本配額月',
   'no limit': '無上限',
   'This account has no ceiling on any window.': '這個帳號在任何視窗上都沒有上限。',
+  'counting from {when}': '從 {when} 起計',
 };

@@ -235,7 +235,6 @@ export const ja: Record<string, string> = {
   'resets in {n} days': '{n} 日後にリセット',
   Quota: '利用枠',
   'This quota period has ended — ask an administrator to top it up': '今回の利用枠の期間が終了しました。管理者に補充を依頼してください',
-  'This account has no limit. Used this {period}:': 'このアカウントに上限はありません。今{period}の使用量：',
   'period started {when}': '期間の開始 {when}',
   'an administrator reset it manually': '管理者が手動でリセットしました',
   'warn only, not enforced': '警告のみ、遮断はしません',
@@ -495,7 +494,6 @@ export const ja: Record<string, string> = {
   'empty = unlimited': '空欄 = 無制限',
   'Per week': '週あたり',
   'Per month': '月あたり',
-  'This account has no limit. Used this month:': 'このアカウントに上限はありません。今月の使用量：',
   '+{amount} topped up': '+{amount} 追加済み',
   'resets {when}': '{when} にリセット',
   'Upstream 5-hour window reset': '上流の 5 時間ウィンドウのリセット',
@@ -650,4 +648,5 @@ export const ja: Record<string, string> = {
   'This quota month': '今回のクォータ月',
   'no limit': '上限なし',
   'This account has no ceiling on any window.': 'このアカウントはどのウィンドウにも上限がありません。',
+  'counting from {when}': '{when} から計上',
 };

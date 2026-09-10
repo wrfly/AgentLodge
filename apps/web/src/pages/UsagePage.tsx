@@ -109,7 +109,10 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
               <div className="mb-1 flex items-baseline justify-between">
                 <span className="text-[12.5px]">
                   {title[scope]}
-                  {w.boost > 0 && (
+                  {/* `limit = ceiling + boost` only when there is a ceiling, so a top-up
+                      granted against an uncapped window changes nothing. Drawing it here
+                      would advertise an allowance the gate never applies. */}
+                  {capped && w.boost > 0 && (
                     <span className="ml-1.5 text-[11px] text-accent">
                       {t('+{amount} topped up', { amount: show(w.boost) })}
                     </span>
@@ -130,7 +133,10 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
                       'h-full rounded-full transition-all',
                       w.exceeded ? 'bg-danger' : w.ratio >= 0.9 ? 'bg-amber-500' : 'bg-accent',
                     )}
-                    style={{ width: `${Math.max(pct, 1)}%` }}
+                    /* A sliver so that 1% is visible at all — but nothing spent draws
+                       nothing, or a freshly reset window shows a mark for usage it has
+                       none of */
+                    style={{ width: w.used === 0 ? '0%' : `${Math.max(pct, 1)}%` }}
                   />
                 </div>
               )}
@@ -138,6 +144,14 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
                 {capped && <span>{pct}%</span>}
                 {capped && <span>{t('{amount} left', { amount: show(w.remaining ?? 0) })}</span>}
                 <span>{t('resets {when}', { when: fmtDate(w.endsAt) })}</span>
+                {/* An administrator cleared this window part-way through, so the count is
+                    smaller than what was actually spent over the window. Without this the
+                    row just disagrees with the report below it and says nothing about why. */}
+                {w.countsFrom !== w.startsAt && (
+                  <span className="text-accent">
+                    {t('counting from {when}', { when: fmtDate(w.countsFrom) })}
+                  </span>
+                )}
               </div>
             </div>
           );
@@ -263,7 +277,7 @@ export function UsagePage() {
             </div>
 
             <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-line pt-3">
-              <span className="text-[13px] font-medium">{data.range.label}</span>
+              <span className="text-[13px] font-medium">{t(data.range.label)}</span>
               <span className="font-mono text-[17px] font-semibold text-accent tabular-nums">
                 {data.totals.billableTokens.toLocaleString()}
               </span>
@@ -284,7 +298,7 @@ export function UsagePage() {
             <Chart data={data.series} unit={data.seriesUnit} />
           </Card>
 
-          <Card title={`${t('By agent and model')} · ${data.range.label}`}>
+          <Card title={`${t('By agent and model')} · ${t(data.range.label)}`}>
             {data.byAgent.length === 0 ? (
               <Empty text={t('No usage in this period')} />
             ) : (
@@ -330,7 +344,7 @@ export function UsagePage() {
             )}
           </Card>
 
-          <Card title={`${t('Heaviest conversations')} · ${data.range.label}`}>
+          <Card title={`${t('Heaviest conversations')} · ${t(data.range.label)}`}>
             {data.byConversation.length === 0 ? (
               <Empty text={t('No data in this period')} />
             ) : (

@@ -235,7 +235,6 @@ export const ru: Record<string, string> = {
   'resets in {n} days': 'сброс через {n} дн',
   Quota: 'Квота',
   'This quota period has ended — ask an administrator to top it up': 'Текущий период квоты закончился — попросите администратора пополнить её',
-  'This account has no limit. Used this {period}:': 'У этого аккаунта нет лимита. Использовано за {period}:',
   'period started {when}': 'период начался {when}',
   'an administrator reset it manually': 'администратор сбросил вручную',
   'warn only, not enforced': 'только предупреждение, без блокировки',
@@ -495,7 +494,6 @@ export const ru: Record<string, string> = {
   'empty = unlimited': 'пусто = без ограничений',
   'Per week': 'За неделю',
   'Per month': 'За месяц',
-  'This account has no limit. Used this month:': 'У этой учётной записи нет лимита. Использовано за месяц:',
   '+{amount} topped up': 'пополнено на {amount}',
   'resets {when}': 'сброс {when}',
   'Upstream 5-hour window reset': 'Сброс 5-часового окна апстрима',
@@ -650,4 +648,5 @@ export const ru: Record<string, string> = {
   'This quota month': 'Текущий месяц квоты',
   'no limit': 'без лимита',
   'This account has no ceiling on any window.': 'У этой учётной записи нет потолка ни в одном окне.',
+  'counting from {when}': 'счёт идёт с {when}',
 };

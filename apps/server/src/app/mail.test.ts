@@ -26,7 +26,7 @@ process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 const { initDb } = await import('../core/db/index.js');
 initDb();
 const { setSetting } = await import('../core/db/settings.js');
-const { send } = await import('./mail.js');
+const { send, quotaWarningMail } = await import('./mail.js');
 
 let pass = 0;
 let fail = 0;
@@ -215,6 +215,31 @@ console.log('\n=== An upgrade from SendGrid says so ===');
 }
 
 fs.rmSync(box, { recursive: true, force: true });
+
+console.log('\n=== The quota warning names the unit and the window it is about ===');
+{
+  /*
+   * It used to hardcode both: "9,000,000 of 10,000,000 tokens this month" went to somebody
+   * on a $10 monthly cost quota, and the same sentence went out when what filled up was the
+   * five-hour window. Nothing in the mail was true except the number.
+   */
+  const money = quotaWarningMail({
+    username: 'alice', used: '9.00', limit: '10.00', unit: 'USD',
+    window: '5-hour window', pct: 90, link: 'https://lodge.example/usage',
+  });
+  ok('a cost quota reads as money', money.text.includes('9.00 of 10.00 USD'), money.text);
+  ok('not as tokens', !/tokens/.test(money.text) && !/tokens/.test(money.html));
+  ok('and it names the window that is nearly full', money.text.includes('this 5-hour window'), money.text);
+  ok('which is not necessarily the month', !/this month/.test(money.text) && !/this month/.test(money.html));
+
+  const tokens = quotaWarningMail({
+    username: 'bob', used: '900,000', limit: '1,000,000', unit: 'tokens',
+    window: 'week', pct: 90, link: 'https://lodge.example/usage',
+  });
+  ok('a token quota still reads as tokens', tokens.text.includes('900,000 of 1,000,000 tokens'), tokens.text);
+  ok('for its own window', tokens.text.includes('this week'), tokens.text);
+  ok('the subject carries the percentage', tokens.subject.includes('90%'), tokens.subject);
+}
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

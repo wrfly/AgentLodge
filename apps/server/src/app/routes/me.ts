@@ -7,6 +7,7 @@ import * as recap from '../recap.js';
 import * as memory from '../memory.js';
 import * as quota from '../../core/quota.js';
 import * as trace from '../../core/trace.js';
+import type { QuotaStatus } from '../../core/protocol.js';
 import { requireUser } from '../../core/auth/guard.js';
 import { config } from '../../core/config.js';
 import { tr } from '../../core/i18n/locale.js';
@@ -38,10 +39,15 @@ const startOfDay = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), d.
  */
 function resolveRange(
   preset: RangePreset,
+  /*
+   * Required, so that no preset can fall back to a window of its own invention. The five-hour
+   * range used to take an optional one and default to a rolling five hours from now — exactly
+   * the per-user window `quota.boundsOf` exists to prevent. Dead code that contradicted the
+   * comment above it, and one careless call away from being live.
+   */
+  quotaStatus: QuotaStatus,
   fromRaw?: string,
   toRaw?: string,
-  quotaStart?: string,
-  fiveHour?: { countsFrom: string; endsAt: string },
 ): { from: string; to: string; label: string } {
   const now = new Date();
   const today = startOfDay(now);
@@ -56,12 +62,10 @@ function resolveRange(
      * rolling five hours from now, and it counts from wherever the quota counts from — a
      * manual reset moves that forward — so both come from the quota, not from the clock.
      */
-    case 'window':
-      return {
-        from: fiveHour?.countsFrom ?? iso(new Date(now.getTime() - 5 * 3600_000)),
-        to: fiveHour?.endsAt ?? endOfToday,
-        label: 'This 5-hour window',
-      };
+    case 'window': {
+      const w = quotaStatus.windows.window;
+      return { from: w.countsFrom, to: w.endsAt, label: 'This 5-hour window' };
+    }
     case 'today':
       return { from: iso(today), to: endOfToday, label: 'Today' };
     case 'yesterday':
@@ -96,7 +100,7 @@ function resolveRange(
     case 'quota':
     default:
       return {
-        from: quotaStart ?? usageRepo.periodStart('monthly'),
+        from: quotaStatus.windows.month.countsFrom,
         to: endOfToday,
         label: 'This quota month',
       };
@@ -117,13 +121,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
     const q = req.query as { preset?: RangePreset; from?: string; to?: string };
     const quotaStatus = quota.status(userId);
 
-    const range = resolveRange(
-      q.preset ?? 'quota',
-      q.from,
-      q.to,
-      quotaStatus.windows.month.countsFrom,
-      quotaStatus.windows.window,
-    );
+    const range = resolveRange(q.preset ?? 'quota', quotaStatus, q.from, q.to);
     const window = { from: range.from, to: range.to };
 
     // Two days or less is shown hourly, longer spans daily — grouping "today" by day is one bar
@@ -143,8 +141,8 @@ export function registerMeRoutes(app: FastifyInstance): void {
       byConversation: usageRepo.byConversationForUser(userId, 10, window),
       /** A few figures people look at often, so the frontend does not fire several requests */
       quick: {
-        today: usageRepo.totalsForUser(userId, resolveRange('today')),
-        month: usageRepo.totalsForUser(userId, resolveRange('month')),
+        today: usageRepo.totalsForUser(userId, resolveRange('today', quotaStatus)),
+        month: usageRepo.totalsForUser(userId, resolveRange('month', quotaStatus)),
         allTime: usageRepo.totalsForUser(userId),
       },
     };

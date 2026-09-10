@@ -476,6 +476,8 @@ export interface AdminUser extends PublicUser {
     window: number | null;
     week: number | null;
     month: number | null;
+    /** What the gate enforces on the 5-hour window right now, top-up included */
+    windowCeiling: number | null;
     limitKind: 'tokens' | 'cost';
     currency: string;
     hardStop: boolean;

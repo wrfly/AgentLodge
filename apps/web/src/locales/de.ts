@@ -220,7 +220,6 @@ export const de: Record<string, string> = {
   'resets in {n} days': 'wird in {n} Tagen zurückgesetzt',
   Quota: 'Kontingent',
   'This quota period has ended — ask an administrator to top it up': 'Dieser Kontingentzeitraum ist beendet — bitten Sie einen Administrator um Aufstockung',
-  'This account has no limit. Used this {period}:': 'Dieses Konto hat kein Limit. In diesem Zeitraum ({period}) verbraucht:',
   'period started {when}': 'Zeitraum begann {when}',
   'an administrator reset it manually': 'ein Administrator hat es von Hand zurückgesetzt',
   'warn only, not enforced': 'nur warnen, nicht durchsetzen',
@@ -470,7 +469,6 @@ export const de: Record<string, string> = {
   'empty = unlimited': 'leer = unbegrenzt',
   'Per week': 'Pro Woche',
   'Per month': 'Pro Monat',
-  'This account has no limit. Used this month:': 'Dieses Konto hat kein Limit. Diesen Monat verbraucht:',
   '+{amount} topped up': '+{amount} aufgestockt',
   'resets {when}': 'wird {when} zurückgesetzt',
   'Upstream 5-hour window reset': 'Zurücksetzen des 5-Stunden-Fensters upstream',
@@ -623,4 +621,5 @@ export const de: Record<string, string> = {
   'This quota month': 'Dieser Kontingentmonat',
   'no limit': 'kein Limit',
   'This account has no ceiling on any window.': 'Dieses Konto hat in keinem Fenster eine Obergrenze.',
+  'counting from {when}': 'zählt ab {when}',
 };

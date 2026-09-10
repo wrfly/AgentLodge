@@ -235,7 +235,6 @@ export const zh: Record<string, string> = {
   'resets in {n} days': '{n} 天后重置',
   Quota: '额度',
   'This quota period has ended — ask an administrator to top it up': '本次额度的有效期已过，请联系管理员重新充值',
-  'This account has no limit. Used this {period}:': '当前账号不限额，本{period}已用',
   'period started {when}': '周期起点 {when}',
   'an administrator reset it manually': '管理员已手动清零过',
   'warn only, not enforced': '仅告警，不拦截',
@@ -495,7 +494,6 @@ export const zh: Record<string, string> = {
   'empty = unlimited': '留空 = 不限',
   'Per week': '每周',
   'Per month': '每月',
-  'This account has no limit. Used this month:': '这个账号没有上限。本月已用：',
   '+{amount} topped up': '已充值 +{amount}',
   'resets {when}': '{when} 重置',
   'Upstream 5-hour window reset': '上游 5 小时窗口重置时刻',
@@ -650,4 +648,5 @@ export const zh: Record<string, string> = {
   'This quota month': '本配额月',
   'no limit': '无上限',
   'This account has no ceiling on any window.': '这个账号在任何窗口上都没有上限。',
+  'counting from {when}': '从 {when} 起计',
 };

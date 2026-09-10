@@ -232,6 +232,30 @@ console.log('\n=== The rule for where a count begins is exported, not copied ===
   ok('and with no reset it is the boundary', quota.countStartOf(users.getQuota(alice), start) === start.toISOString());
 }
 
+console.log('\n=== The ceiling the gate enforces, top-up included ===');
+{
+  /*
+   * The admin list draws a bar against this. It divided by the configured ceiling, so a user
+   * who had just been topped up read past 100% in the list while the gate was still letting
+   * them through — the console saying "refused" about somebody it was not refusing.
+   */
+  const at = new Date('2026-08-23T18:00:00.000Z');
+  users.setQuota(alice, { window: 1000, week: null, month: null });
+  ok('with no top-up it is the configured ceiling',
+    quota.effectiveCeiling(users.getQuota(alice), 'window', at) === 1000);
+
+  users.grantBoost(alice, 'window', 500, '2026-08-23T19:00:00.000Z');
+  ok('a live top-up raises it', quota.effectiveCeiling(users.getQuota(alice), 'window', at) === 1500);
+  ok('and it matches what the gate reports', quota.status(alice, at).windows.window.limit === 1500);
+  ok('a top-up on one window leaves the others alone',
+    quota.effectiveCeiling(users.getQuota(alice), 'week', at) === null);
+
+  const after = new Date('2026-08-23T19:30:00.000Z');
+  ok('an expired top-up counts for nothing',
+    quota.effectiveCeiling(users.getQuota(alice), 'window', after) === 1000);
+  users.clearBoost(alice);
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
