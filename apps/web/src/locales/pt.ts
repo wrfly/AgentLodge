@@ -421,6 +421,7 @@ export const pt: Record<string, string> = {
   'month': 'mês',
   '{scope} window': 'janela {scope}',
   'Which window': 'Que janela',
+  'This window': 'Esta janela',
   'This 5-hour window': 'Esta janela de 5 horas',
   'Per 5 hours': 'Por 5 horas',
   'empty = unlimited': 'vazio = sem limite',
@@ -585,7 +586,6 @@ export const pt: Record<string, string> = {
 
   // The admin overview: the live window, and everybody over one period
   'Usage, all users': 'Consumo, todos os utilizadores',
-  'Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.': 'Toda a gente, na janela que recusa primeiro. É a janela da própria plataforma, por isso começa e termina nos mesmos instantes para cada utilizador.',
   'resets in {d}': 'reinicia em {d}',
   '{n}% of the window elapsed': '{n}% da janela decorrido',
   '{n} hit their quota': '{n} chegaram à quota',

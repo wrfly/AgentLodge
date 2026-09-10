@@ -446,6 +446,7 @@ export const zh: Record<string, string> = {
   'month': '月',
   '{scope} window': '{scope}窗口',
   'Which window': '作用于哪个窗口',
+  'This window': '本窗口',
   'This 5-hour window': '当前 5 小时窗口',
   'Per 5 hours': '每 5 小时',
   'empty = unlimited': '留空 = 不限',
@@ -612,7 +613,6 @@ export const zh: Record<string, string> = {
 
   // The admin overview: the live window, and everybody over one period
   'Usage, all users': '全部用户用量',
-  'Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.': '所有人在「最先拒人」的那个窗口里的消耗。这是平台自己的窗口，对每个用户的起止时刻都相同。',
   'resets in {d}': '{d} 后重置',
   '{n}% of the window elapsed': '窗口已过 {n}%',
   '{n} hit their quota': '{n} 人撞到配额',

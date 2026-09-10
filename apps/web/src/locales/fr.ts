@@ -421,6 +421,7 @@ export const fr: Record<string, string> = {
   'month': 'mois',
   '{scope} window': 'fenêtre {scope}',
   'Which window': 'Quelle fenêtre',
+  'This window': 'Cette fenêtre',
   'This 5-hour window': 'Cette fenêtre de 5 heures',
   'Per 5 hours': 'Par 5 heures',
   'empty = unlimited': 'vide = sans limite',
@@ -585,7 +586,6 @@ export const fr: Record<string, string> = {
 
   // The admin overview: the live window, and everybody over one period
   'Usage, all users': 'Consommation, tous les utilisateurs',
-  'Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.': 'Tout le monde, sur la fenêtre qui refuse en premier. C’est la fenêtre de la plateforme : elle commence et finit aux mêmes instants pour chacun.',
   'resets in {d}': 'réinitialisation dans {d}',
   '{n}% of the window elapsed': '{n}% de la fenêtre écoulée',
   '{n} hit their quota': '{n} ont atteint leur quota',

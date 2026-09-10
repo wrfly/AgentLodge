@@ -422,6 +422,7 @@ export const zhHant: Record<string, string> = {
   'month': '月',
   '{scope} window': '{scope}視窗',
   'Which window': '哪個視窗',
+  'This window': '本視窗',
   'This 5-hour window': '這 5 小時視窗',
   'Per 5 hours': '每 5 小時',
   'empty = unlimited': '留空 = 不限',
@@ -586,7 +587,6 @@ export const zhHant: Record<string, string> = {
 
   // The admin overview: the live window, and everybody over one period
   'Usage, all users': '全部使用者用量',
-  'Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.': '所有人在「最先拒人」的那個視窗裡的消耗。這是平台自己的視窗，對每個使用者的起訖時刻都相同。',
   'resets in {d}': '{d} 後重置',
   '{n}% of the window elapsed': '視窗已過 {n}%',
   '{n} hit their quota': '{n} 人撞到配額',
