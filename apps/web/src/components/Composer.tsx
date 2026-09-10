@@ -82,6 +82,7 @@ export function Composer({ agent }: { agent: AgentId }) {
   const setThinking = useChat((s) => s.setThinking);
 
   const bumpFiles = useChat((s) => s.bumpFiles);
+  const ensureConversation = useChat((s) => s.ensureConversation);
 
   const quota = useQuota((s) => s.quota);
   const blocked = Boolean(quota?.exceeded && quota?.hardStop);
@@ -103,9 +104,20 @@ export function Composer({ agent }: { agent: AgentId }) {
     if (!streaming) ref.current?.focus();
   }, [streaming]);
 
-  // Switching conversation leaves the previous one's attachments behind: they are in that
-  // workspace, not this one, and a stale row would name a file the agent cannot see
+  /*
+   * Switching conversation leaves the previous one's attachments behind: they are in that
+   * workspace, not this one, and a stale row would name a file the agent cannot see.
+   *
+   * A draft becoming real is not a switch, though it moves the same value. Attaching a file
+   * is one of the two things that create the conversation, so `null → id` arrives in the
+   * middle of `attach` — clearing there would drop the rows for the very files being
+   * uploaded, leaving nothing on screen and nothing for `submit` to name.
+   */
+  const wasActive = useRef(activeId);
   useEffect(() => {
+    const was = wasActive.current;
+    wasActive.current = activeId;
+    if (was === null && activeId) return;
     setAttached([]);
     setAttachError(null);
   }, [activeId]);
@@ -117,9 +129,13 @@ export function Composer({ agent }: { agent: AgentId }) {
    * there is still something to do about it, and what lets the row show a size. The cost is
    * that a file attached and never sent stays in the workspace — the same as one put there
    * through the files panel, and removable the same way.
+   *
+   * It is also why attaching creates the conversation: the file has to land in a workspace,
+   * and a workspace belongs to a row. Uploading is an act, not a look, so the row it needs
+   * is a row worth having.
    */
   const attach = async (list: File[], fromPaste = false) => {
-    if (!activeId || !list.length) return;
+    if (!list.length) return;
     if (list.length > MAX_PER_UPLOAD) {
       setAttachError(t('At most {n} files at a time', { n: MAX_PER_UPLOAD }));
       return;
@@ -140,7 +156,16 @@ export function Composer({ agent }: { agent: AgentId }) {
     setAttached((prev) => [...prev, ...rows]);
 
     try {
-      const res = await files.upload(activeId, named);
+      // Inside the try, so a create that fails marks these rows red like a failed upload
+      const id = await ensureConversation();
+      // The draft was left behind while this was in the air; the files belong to a
+      // conversation nobody is looking at now
+      if (!id) {
+        const ids = new Set(rows.map((r) => r.id));
+        setAttached((prev) => prev.filter((a) => !ids.has(a.id)));
+        return;
+      }
+      const res = await files.upload(id, named);
       /*
        * The server decides the final name — it strips separators and leading dots — and
        * that name is what the message will say and what removing one will ask to delete.
@@ -210,8 +235,14 @@ export function Composer({ agent }: { agent: AgentId }) {
 
   const canSend = (value.trim().length > 0 || ready.length > 0) && !streaming && !blocked;
   const busyAttaching = attached.some((a) => a.status === 'uploading');
-  /** The controls under the box all change the next turn, so none of them moves during one */
-  const locked = !activeId || streaming;
+  /**
+   * The controls under the box all change the next turn, so none of them moves during one.
+   *
+   * A missing conversation is no longer a reason to disable them. A draft is where the model
+   * and the effort for the first turn get chosen, and the paperclip is one of the two things
+   * that bring the conversation into being.
+   */
+  const locked = streaming;
 
   return (
     <div className="pointer-events-none shrink-0 bg-bg pt-3">
