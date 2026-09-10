@@ -230,7 +230,9 @@ create table if not exists model_pricing (
   -- upstreams can cost two different amounts, and a row without a provider is the
   -- fallback for whichever of them has no price of its own.
   provider_id       text,
-  currency          text not null default 'CNY',
+  -- Only ever a fallback: every insert passes the currency from billing.currency. It said
+  -- CNY back when the seed was priced in yuan, and stayed behind when the seed moved to USD.
+  currency          text not null default 'USD',
   price_input       integer not null,   -- input that missed the cache
   price_cache_read  integer not null,   -- input that hit it, usually an order of magnitude cheaper
   price_cache_write integer not null,

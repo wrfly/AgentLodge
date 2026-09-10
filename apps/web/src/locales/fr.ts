@@ -204,7 +204,6 @@ export const fr: Record<string, string> = {
   'This month': 'Ce mois-ci',
   'Last 7 days': '7 derniers jours',
   'Last 30 days': '30 derniers jours',
-  'This quota period': 'Période de quota en cours',
   'All time': 'Depuis toujours',
   'rolling window': 'fenêtre glissante',
   daily: 'quotidien',
@@ -221,7 +220,6 @@ export const fr: Record<string, string> = {
   'resets in {n} days': 'réinitialisation dans {n} jours',
   Quota: 'Quota',
   'This quota period has ended — ask an administrator to top it up': 'Cette période de quota est terminée — demandez à un administrateur de la recharger',
-  'This account has no limit. Used this {period}:': 'Ce compte n\'a pas de limite. Utilisé ce {period} :',
   'period started {when}': 'période commencée {when}',
   'an administrator reset it manually': 'un administrateur l\'a réinitialisé à la main',
   'warn only, not enforced': 'avertir seulement, sans bloquer',
@@ -471,7 +469,6 @@ export const fr: Record<string, string> = {
   'empty = unlimited': 'vide = sans limite',
   'Per week': 'Par semaine',
   'Per month': 'Par mois',
-  'This account has no limit. Used this month:': 'Ce compte n\'a pas de limite. Utilisé ce mois-ci :',
   '+{amount} topped up': '+{amount} rechargé',
   'resets {when}': 'réinitialisation {when}',
   'Upstream 5-hour window reset': 'Réinitialisation de la fenêtre de 5 heures en amont',
@@ -619,4 +616,12 @@ export const fr: Record<string, string> = {
   'catch-all, and the unit quota is counted in': 'ligne par défaut, et unité des tokens facturés',
   'Add a price': 'Ajouter un prix',
   'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Un changement de prix est une nouvelle ligne, si bien que les factures passées gardent le prix de leur époque. Une seule devise pour toute la table : les montants sont additionnés.',
+
+  // Quota card: every window, capped or not
+  'This quota month': 'Ce mois de quota',
+  'no limit': 'sans limite',
+  'This account has no ceiling on any window.': 'Ce compte n\'a de plafond sur aucune fenêtre.',
+  'counting from {when}': 'compté depuis {when}',
+  'incl. {amount} topped up': 'dont {amount} de recharge',
+  'tokens': 'tokens',
 };

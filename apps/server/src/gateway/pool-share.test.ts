@@ -69,6 +69,7 @@ function win(scope: QuotaScope, over: Partial<QuotaWindow> = {}): QuotaWindow {
     ratio: limit === null || limit <= 0 ? 0 : Math.min(used / limit, 1),
     startsAt: STARTS[scope],
     endsAt: ENDS[scope],
+    countsFrom: STARTS[scope],
     exceeded: limit !== null && used >= limit,
     ...over,
   };

@@ -68,6 +68,13 @@ export interface QuotaWindow {
    */
   startsAt: string;
   endsAt: string;
+  /**
+   * Where `used` actually starts counting. The same as `startsAt`, except after a manual
+   * reset inside a running window, which moves the count forward without moving the window.
+   *
+   * Anything reporting a number next to `used` has to draw from this one, or the two disagree.
+   */
+  countsFrom: string;
   exceeded: boolean;
 }
 

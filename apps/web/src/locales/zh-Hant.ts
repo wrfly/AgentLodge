@@ -205,7 +205,6 @@ export const zhHant: Record<string, string> = {
   'This month': '本月',
   'Last 7 days': '近 7 天',
   'Last 30 days': '近 30 天',
-  'This quota period': '本配額週期',
   'All time': '全部',
   'rolling window': '滾動視窗',
   daily: '每日',
@@ -222,7 +221,6 @@ export const zhHant: Record<string, string> = {
   'resets in {n} days': '{n} 天後重置',
   Quota: '配額',
   'This quota period has ended — ask an administrator to top it up': '這個配額週期已結束——請管理員充值',
-  'This account has no limit. Used this {period}:': '這個帳號沒有上限。本{period}已用：',
   'period started {when}': '週期起於 {when}',
   'an administrator reset it manually': '管理員手動重置過',
   'warn only, not enforced': '僅警告，不攔截',
@@ -472,7 +470,6 @@ export const zhHant: Record<string, string> = {
   'empty = unlimited': '留空 = 不限',
   'Per week': '每週',
   'Per month': '每月',
-  'This account has no limit. Used this month:': '這個帳號沒有上限。本月已用：',
   '+{amount} topped up': '已充值 +{amount}',
   'resets {when}': '{when} 重置',
   'Upstream 5-hour window reset': '上游 5 小時視窗重置時刻',
@@ -620,4 +617,12 @@ export const zhHant: Record<string, string> = {
   'catch-all, and the unit quota is counted in': '兜底列，也是計費 token 的單位',
   'Add a price': '新增價格',
   'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '改價是加一列新的，所以過去的帳單保留當時的價格。整張表只能用一種幣別——金額是直接相加的。',
+
+  // Quota card: every window, capped or not
+  'This quota month': '本配額月',
+  'no limit': '無上限',
+  'This account has no ceiling on any window.': '這個帳號在任何視窗上都沒有上限。',
+  'counting from {when}': '從 {when} 起計',
+  'incl. {amount} topped up': '含加量 {amount}',
+  'tokens': 'token',
 };

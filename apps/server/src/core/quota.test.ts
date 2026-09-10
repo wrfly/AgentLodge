@@ -196,8 +196,64 @@ console.log('\n=== A manual reset moves the counting start, not the boundary ===
   const s = quota.status(alice, now);
   ok('what came before the reset stops counting', s.windows.window.used === 100, String(s.windows.window.used));
   ok('the window still ends when everybody else’s does', s.windows.window.endsAt === '2026-08-23T19:00:00.000Z');
+  ok('and still starts where everybody else’s does', s.windows.window.startsAt === '2026-08-23T14:00:00.000Z');
+  /*
+   * The usage page draws a range for this window and prints its total next to `used`.
+   * If it drew from `startsAt` it would re-include the 300 the reset just forgave, and the
+   * page would show two different numbers for the same window with no way to tell which is
+   * the quota's.
+   */
+  ok('the count begins at the reset, which is what a report has to draw from',
+    s.windows.window.countsFrom === '2026-08-23T16:00:00.000Z', s.windows.window.countsFrom);
   users.undoResetUsage(alice);
-  ok('undoing brings it back', quota.status(alice, now).windows.window.used === 400);
+  const back = quota.status(alice, now).windows.window;
+  ok('undoing brings it back', back.used === 400);
+  ok('and the count goes back to the boundary', back.countsFrom === back.startsAt, back.countsFrom);
+}
+
+console.log('\n=== The rule for where a count begins is exported, not copied ===');
+{
+  /*
+   * The admin user list draws the same five-hour figure, and used to cut it at the window
+   * boundary while the gate cut it at the reset — so an operator who had just reset somebody
+   * read back a percentage the reset had already forgiven. Both call this now.
+   */
+  const start = new Date('2026-08-23T14:00:00.000Z');
+  users.resetUsage(alice, '2026-08-23T16:00:00.000Z');
+  const q = users.getQuota(alice);
+  ok('a reset inside the window wins', quota.countStartOf(q, start) === '2026-08-23T16:00:00.000Z');
+  ok('and the gate agrees with it',
+    quota.status(alice, new Date('2026-08-23T18:00:00.000Z')).windows.window.countsFrom
+      === quota.countStartOf(q, start));
+
+  const later = new Date('2026-08-23T19:00:00.000Z');
+  ok('a reset behind the boundary does not', quota.countStartOf(q, later) === later.toISOString());
+  users.undoResetUsage(alice);
+  ok('and with no reset it is the boundary', quota.countStartOf(users.getQuota(alice), start) === start.toISOString());
+}
+
+console.log('\n=== The ceiling the gate enforces, top-up included ===');
+{
+  /*
+   * The admin list draws a bar against this. It divided by the configured ceiling, so a user
+   * who had just been topped up read past 100% in the list while the gate was still letting
+   * them through — the console saying "refused" about somebody it was not refusing.
+   */
+  const at = new Date('2026-08-23T18:00:00.000Z');
+  users.setQuota(alice, { window: 1000, week: null, month: null });
+  ok('with no top-up it is the configured ceiling',
+    quota.effectiveCeiling(users.getQuota(alice), 'window', at) === 1000);
+
+  users.grantBoost(alice, 'window', 500, '2026-08-23T19:00:00.000Z');
+  ok('a live top-up raises it', quota.effectiveCeiling(users.getQuota(alice), 'window', at) === 1500);
+  ok('and it matches what the gate reports', quota.status(alice, at).windows.window.limit === 1500);
+  ok('a top-up on one window leaves the others alone',
+    quota.effectiveCeiling(users.getQuota(alice), 'week', at) === null);
+
+  const after = new Date('2026-08-23T19:30:00.000Z');
+  ok('an expired top-up counts for nothing',
+    quota.effectiveCeiling(users.getQuota(alice), 'window', after) === 1000);
+  users.clearBoost(alice);
 }
 
 fs.rmSync(box, { recursive: true, force: true });

@@ -3,7 +3,8 @@ import * as usageRepo from './db/usage.js';
 import { WINDOW_MS, periodEndAt, periodStartAt, weekBoundsAt, windowBoundsAt } from './db/period.js';
 import { quotaAnchor } from './db/settings.js';
 import { getStringFresh } from './db/settings.js';
-import type { QuotaScope, QuotaStatus, QuotaWindow } from './protocol.js';
+import type { LimitKind, QuotaScope, QuotaStatus, QuotaWindow } from './protocol.js';
+import { MICRO } from './db/pricing.js';
 
 export type { QuotaStatus, QuotaWindow, LimitKind, QuotaScope } from './protocol.js';
 
@@ -65,6 +66,32 @@ function boostOf(q: usersRepo.Quota, scope: QuotaScope, now: Date): number {
   return new Date(q.boost.until).getTime() > now.getTime() ? q.boost.amount : 0;
 }
 
+/**
+ * Where a window's count begins for this user: its boundary, unless a manual reset moved the
+ * start forward inside a window already running. The next window still begins at its own
+ * boundary.
+ *
+ * The rule lives here, and not at each caller, because anything that re-derives it drifts
+ * from the number the gate enforces — and a report disagreeing with the gate about how much
+ * somebody has spent is worse than not showing the figure at all.
+ */
+export function countStartOf(q: usersRepo.Quota, start: Date): string {
+  return q.resetAt && new Date(q.resetAt) > start ? q.resetAt : start.toISOString();
+}
+
+/**
+ * The ceiling the gate will actually enforce: the configured one plus any live top-up, or
+ * null when the window is uncapped and a top-up would be discarded.
+ *
+ * Exported because the admin list draws a bar against it. It used to draw against the raw
+ * `q.window`, so a user who had just been topped up read past 100% while the gate was still
+ * letting them through — the list saying "refused" about somebody it was not refusing.
+ */
+export function effectiveCeiling(q: usersRepo.Quota, scope: QuotaScope, now = new Date()): number | null {
+  const ceiling = ceilingOf(q, scope);
+  return ceiling === null ? null : ceiling + boostOf(q, scope, now);
+}
+
 function windowStatus(
   userId: string,
   q: usersRepo.Quota,
@@ -72,17 +99,15 @@ function windowStatus(
   now: Date,
 ): QuotaWindow {
   const { start, end } = boundsOf(scope, now);
-  // A manual reset moves the counting start forward inside a window already running; the
-  // next window still begins at its own boundary
-  const from =
-    q.resetAt && new Date(q.resetAt) > start ? q.resetAt : start.toISOString();
+  const from = countStartOf(q, start);
 
   const totals = usageRepo.totalsForUser(userId, { from, to: end.toISOString() });
   const used = q.limitKind === 'cost' ? totals.costMicro : totals.billableTokens;
 
-  const ceiling = ceilingOf(q, scope);
+  // Reported separately so the interface can mark a top-up, but the ceiling itself comes
+  // from the one function that owns that rule
   const boost = boostOf(q, scope, now);
-  const limit = ceiling === null ? null : ceiling + boost;
+  const limit = effectiveCeiling(q, scope, now);
 
   return {
     scope,
@@ -93,6 +118,7 @@ function windowStatus(
     ratio: limit === null || limit <= 0 ? 0 : Math.min(used / limit, 1),
     startsAt: start.toISOString(),
     endsAt: end.toISOString(),
+    countsFrom: from,
     exceeded: limit !== null && used >= limit,
   };
 }
@@ -137,9 +163,7 @@ export function check(userId: string, now = new Date()): Verdict {
   if (!s.exceeded || !s.hardStop) return { allow: true, status: s };
 
   const hit = SCOPES.map((scope) => s.windows[scope]).find((w) => w.exceeded)!;
-  const unit = s.limitKind === 'cost' ? s.currency : 'tokens';
-  const amount = (v: number): string =>
-    s.limitKind === 'cost' ? (v / 1_000_000).toFixed(2) : String(v);
+  const { unit, amount } = amountIn(s.limitKind, s.currency);
 
   return {
     allow: false,
@@ -148,6 +172,28 @@ export function check(userId: string, now = new Date()): Verdict {
       + `(${amount(hit.used)} / ${amount(hit.limit ?? 0)} ${unit}, `
       + `resets in ${formatDuration(new Date(hit.endsAt).getTime() - now.getTime())})`,
     status: s,
+  };
+}
+
+/**
+ * How a quota figure is written down, in the unit its ceiling is counted in.
+ *
+ * Both the refusal and the warning mail quote the same pair of numbers, and they used to
+ * format them apart: one `String(v)`, the other `v.toLocaleString()` — so the same 900,000
+ * appeared as `900000` in the refusal and `900,000` in the mail, and on a server with a
+ * non-English `LANG` the mail said `900.000` to an English reader. Neither is worth arguing
+ * about on its own; two spellings of one number in two places is what makes people distrust
+ * both. `en-US` is pinned because these strings are not translated.
+ */
+export function amountIn(
+  limitKind: LimitKind,
+  currency: string,
+): { unit: string; amount: (v: number) => string } {
+  const byCost = limitKind === 'cost';
+  return {
+    unit: byCost ? currency : 'tokens',
+    amount: (v: number) =>
+      byCost ? (v / MICRO).toFixed(2) : v.toLocaleString('en-US'),
   };
 }
 

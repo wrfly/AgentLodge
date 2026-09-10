@@ -219,7 +219,6 @@ export const ru: Record<string, string> = {
   'This month': 'Этот месяц',
   'Last 7 days': 'Последние 7 дней',
   'Last 30 days': 'Последние 30 дней',
-  'This quota period': 'Текущий период квоты',
   'All time': 'За всё время',
   'rolling window': 'скользящее окно',
   daily: 'ежедневно',
@@ -236,7 +235,6 @@ export const ru: Record<string, string> = {
   'resets in {n} days': 'сброс через {n} дн',
   Quota: 'Квота',
   'This quota period has ended — ask an administrator to top it up': 'Текущий период квоты закончился — попросите администратора пополнить её',
-  'This account has no limit. Used this {period}:': 'У этого аккаунта нет лимита. Использовано за {period}:',
   'period started {when}': 'период начался {when}',
   'an administrator reset it manually': 'администратор сбросил вручную',
   'warn only, not enforced': 'только предупреждение, без блокировки',
@@ -496,7 +494,6 @@ export const ru: Record<string, string> = {
   'empty = unlimited': 'пусто = без ограничений',
   'Per week': 'За неделю',
   'Per month': 'За месяц',
-  'This account has no limit. Used this month:': 'У этой учётной записи нет лимита. Использовано за месяц:',
   '+{amount} topped up': 'пополнено на {amount}',
   'resets {when}': 'сброс {when}',
   'Upstream 5-hour window reset': 'Сброс 5-часового окна апстрима',
@@ -646,4 +643,12 @@ export const ru: Record<string, string> = {
   'catch-all, and the unit quota is counted in': 'запасная строка, и единица тарифицируемых токенов',
   'Add a price': 'Добавить цену',
   'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Изменение цены — это новая строка, поэтому прошлые счета сохраняют цену своего времени. Одна валюта на всю таблицу — суммы складываются.',
+
+  // Quota card: every window, capped or not
+  'This quota month': 'Текущий месяц квоты',
+  'no limit': 'без лимита',
+  'This account has no ceiling on any window.': 'У этой учётной записи нет потолка ни в одном окне.',
+  'counting from {when}': 'счёт идёт с {when}',
+  'incl. {amount} topped up': 'включая пополнение {amount}',
+  'tokens': 'токенов',
 };

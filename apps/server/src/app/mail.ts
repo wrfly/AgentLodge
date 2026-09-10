@@ -237,9 +237,29 @@ function layout(title: string, bodyHtml: string): string {
 </body></html>`;
 }
 
+/**
+ * Anything that reaches the HTML body from outside this file goes through here.
+ *
+ * A username is whatever the person typed at sign-up, and the currency is free text an
+ * administrator edits on the settings page. Both were being interpolated raw, which makes
+ * the quota mail a delivery mechanism for whatever either of them contains — to every user
+ * with a quota, in a client that renders HTML. Nothing here needs markup, so escaping is
+ * unconditional rather than a judgement per call site.
+ */
+function esc(v: string | number): string {
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function button(href: string, label: string): string {
+  // The href is built from app.baseUrl, which an administrator types in; a quote in it would
+  // otherwise close the attribute
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:18px 0;"><tr><td style="border-radius:8px;background:#c96442;">
-    <a href="${href}" style="display:inline-block;padding:11px 22px;font-size:14px;font-weight:500;color:#ffffff;text-decoration:none;">${label}</a>
+    <a href="${esc(href)}" style="display:inline-block;padding:11px 22px;font-size:14px;font-weight:500;color:#ffffff;text-decoration:none;">${label}</a>
   </td></tr></table>`;
 }
 
@@ -256,7 +276,9 @@ export interface InviteMailInput {
 }
 
 export function inviteMail(input: InviteMailInput): { subject: string; html: string; text: string } {
+  // Two spellings on purpose: escaping the plain-text body would mail somebody `A&amp;B`
   const who = input.inviterName ? `${input.inviterName} ` : '';
+  const whoHtml = input.inviterName ? `${esc(input.inviterName)} ` : '';
   const quotaLine =
     input.tokenLimit != null
       ? `<p style="${P}">Your account quota is <strong>${input.tokenLimit.toLocaleString()}</strong> tokens per month.</p>`
@@ -269,12 +291,12 @@ export function inviteMail(input: InviteMailInput): { subject: string; html: str
     subject: 'You have been invited to AgentLodge',
     html: layout(
       'You have been invited to AgentLodge',
-      `<p style="${P}">${who}invited you to AgentLodge — an AI chat service built on Claude Code and Codex.</p>
+      `<p style="${P}">${whoHtml}invited you to AgentLodge — an AI chat service built on Claude Code and Codex.</p>
        <p style="${P}">Use the button below to finish signing up; the invite code is filled in for you:</p>
        ${button(input.link, 'Accept and sign up')}
-       <p style="${P}">Or enter the code by hand: <strong style="font-family:ui-monospace,Menlo,monospace;font-size:15px;letter-spacing:0.04em;">${input.code}</strong></p>
+       <p style="${P}">Or enter the code by hand: <strong style="font-family:ui-monospace,Menlo,monospace;font-size:15px;letter-spacing:0.04em;">${esc(input.code)}</strong></p>
        ${quotaLine}${expiryLine}
-       <p style="${SMALL}">If the button does not work, copy this link:<br>${input.link}</p>`,
+       <p style="${SMALL}">If the button does not work, copy this link:<br>${esc(input.link)}</p>`,
     ),
     text: `${who}invited you to AgentLodge.\n\nSign-up link: ${input.link}\nInvite code: ${input.code}\n`,
   };
@@ -293,27 +315,37 @@ export function resetMail(input: { link: string; ttlMinutes: number }): {
        ${button(input.link, 'Set a new password')}
        <p style="${P}">The link is valid for <strong>${input.ttlMinutes} minutes</strong> and works once.</p>
        <p style="${P}">If this was not you, ignore this email — your password will not change.</p>
-       <p style="${SMALL}">If the button does not work, copy this link:<br>${input.link}</p>`,
+       <p style="${SMALL}">If the button does not work, copy this link:<br>${esc(input.link)}</p>`,
     ),
     text: `Reset your AgentLodge password: ${input.link}\n\nValid for ${input.ttlMinutes} minutes, and works once.`,
   };
 }
 
+/**
+ * `used`, `limit` and `unit` arrive already formatted, because only the caller knows whether
+ * the ceiling counts tokens or money. This said "9,000,000 of 10,000,000 tokens this month"
+ * to somebody on a $10 monthly cost quota — the right number in the wrong unit, and the wrong
+ * window besides, since the one that trips is as often the five hours or the week.
+ */
 export function quotaWarningMail(input: {
   username: string;
-  used: number;
-  limit: number;
+  used: string;
+  limit: string;
+  unit: string;
+  /** The window that is nearly full: "5-hour window", "week", "month" */
+  window: string;
+  pct: number;
   link: string;
 }): { subject: string; html: string; text: string } {
-  const pct = Math.round((input.used / input.limit) * 100);
+  const amount = `${input.used} of ${input.limit} ${input.unit}`;
   return {
-    subject: `AgentLodge quota is ${pct}% used`,
+    subject: `AgentLodge quota is ${input.pct}% used`,
     html: layout(
-      `Quota is ${pct}% used`,
-      `<p style="${P}">${input.username}, you have used <strong>${input.used.toLocaleString()}</strong> of ${input.limit.toLocaleString()} tokens this month.</p>
+      `Quota is ${input.pct}% used`,
+      `<p style="${P}">${esc(input.username)}, you have used <strong>${esc(input.used)}</strong> of ${esc(input.limit)} ${esc(input.unit)} for this ${esc(input.window)}.</p>
        <p style="${P}">Once the quota is used up you cannot start new conversations until an administrator adjusts it.</p>
        ${button(input.link, 'See the breakdown')}`,
     ),
-    text: `You have used ${input.used} of ${input.limit} tokens this month (${pct}%). Breakdown: ${input.link}`,
+    text: `You have used ${amount} for this ${input.window} (${input.pct}%). Breakdown: ${input.link}`,
   };
 }

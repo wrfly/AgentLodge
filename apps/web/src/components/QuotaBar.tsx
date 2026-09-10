@@ -69,7 +69,9 @@ export function QuotaBar() {
             'h-full rounded-full transition-all',
             quota.exceeded ? 'bg-danger' : quota.warning ? 'bg-amber-500' : 'bg-accent',
           )}
-          style={{ width: `${Math.max(pct, 2)}%` }}
+          /* Nothing spent draws nothing. The sliver exists so 1% is visible at all,
+             and a window that has just rolled over has no usage to mark. */
+          style={{ width: w.used === 0 ? '0%' : `${Math.max(pct, 2)}%` }}
         />
       </div>
     </button>

@@ -237,7 +237,7 @@ export type { QuotaScope, QuotaStatus, QuotaWindow, LimitKind } from './protocol
 import type { QuotaScope, QuotaStatus } from './protocol';
 
 export type RangePreset =
-  | 'today' | 'yesterday' | 'week' | 'month'
+  | 'window' | 'today' | 'yesterday' | 'week' | 'month'
   | 'last7' | 'last30' | 'quota' | 'all' | 'custom';
 
 export interface UsageTotals {
@@ -476,7 +476,10 @@ export interface AdminUser extends PublicUser {
     window: number | null;
     week: number | null;
     month: number | null;
+    /** What the gate enforces on the 5-hour window right now, top-up included */
+    windowCeiling: number | null;
     limitKind: 'tokens' | 'cost';
+    currency: string;
     hardStop: boolean;
   };
   usage: { period: UsageTotals; month: UsageTotals; allTime: UsageTotals };
@@ -859,7 +862,13 @@ export const admin = {
       hardStop?: boolean;
       limitKind?: 'tokens' | 'cost';
     },
-  ) => request<AdminUser>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    /*
+     * Not an `AdminUser`: the route answers with the public user plus the raw quota row, and
+     * carries neither `usage` nor `conversations` nor `windowCeiling`. Nothing reads the
+     * result — the caller reloads the list — but a type that claims fields the response has
+     * never had is a trap for whoever reads it next.
+     */
+  ) => request<PublicUser>(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   /** Top up: extra allowance on one of the platform's windows, gone when that window resets */
   topup: (
     id: string,
@@ -1125,7 +1134,14 @@ export async function exportConversation(id: string, title: string): Promise<voi
 
 /** Micro-units to something readable */
 export const MICRO = 1_000_000;
-export function fmtMoney(micro: number | null | undefined, currency = 'CNY'): string {
+/*
+ * The currency is required on purpose. It used to default to CNY, which was right while the
+ * price table was seeded in yuan — and silently wrong everywhere once the seed moved to USD.
+ * The same page then printed ¥8.14 in one card and $8.14 in the table below it, for the same
+ * money. Every caller has the quota's currency in scope; making it an argument is what stops
+ * the two from drifting apart again.
+ */
+export function fmtMoney(micro: number | null | undefined, currency: string): string {
   if (micro === null || micro === undefined) return '—';
   const sym = currency === 'CNY' ? '¥' : '$';
   const v = micro / MICRO;

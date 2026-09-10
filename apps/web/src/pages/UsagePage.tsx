@@ -18,13 +18,15 @@ import {
 import { useT } from '../lib/i18n';
 
 const PRESETS: Array<{ id: RangePreset; label: string }> = [
+  // First, because it is the window that refuses first
+  { id: 'window', label: 'This 5-hour window' },
   { id: 'today', label: 'Today' },
   { id: 'yesterday', label: 'Yesterday' },
   { id: 'week', label: 'This week' },
   { id: 'month', label: 'This month' },
   { id: 'last7', label: 'Last 7 days' },
   { id: 'last30', label: 'Last 30 days' },
-  { id: 'quota', label: 'This quota period' },
+  { id: 'quota', label: 'This quota month' },
   { id: 'all', label: 'All time' },
 ];
 
@@ -84,53 +86,80 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
     month: t('This month'),
   };
 
-  const limited = SCOPES.filter((s) => quota.windows[s].limit !== null);
+  /*
+   * Every window, not only the ones with a ceiling.
+   *
+   * It drew the limited ones and nothing else, so somebody with a monthly ceiling and no
+   * five-hour one could not see the five hours at all — and the five hours is what the gate
+   * refuses on first, and the number they want the moment they are told to wait. The figure
+   * was always computed; only the row was missing. With no ceiling there is nothing to draw
+   * a bar against, so the row is the count and when it resets.
+   */
+  const anyLimit = SCOPES.some((s) => quota.windows[s].limit !== null);
 
   return (
     <Card title={t('Quota')}>
-      {limited.length === 0 ? (
-        <div className="text-[13px] text-muted">
-          {t('This account has no limit. Used this month:')}{' '}
-          <span className="font-mono">{quota.windows.month.used.toLocaleString()}</span>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {limited.map((scope) => {
-            const w = quota.windows[scope];
-            const pct = Math.round(w.ratio * 100);
-            return (
-              <div key={scope}>
-                <div className="mb-1 flex items-baseline justify-between">
-                  <span className="text-[12.5px]">
-                    {title[scope]}
-                    {w.boost > 0 && (
-                      <span className="ml-1.5 text-[11px] text-accent">
-                        {t('+{amount} topped up', { amount: show(w.boost) })}
-                      </span>
-                    )}
+      <div className="space-y-3">
+        {SCOPES.map((scope) => {
+          const w = quota.windows[scope];
+          const pct = Math.round(w.ratio * 100);
+          const capped = w.limit !== null;
+          return (
+            <div key={scope}>
+              <div className="mb-1 flex items-baseline justify-between">
+                <span className="text-[12.5px]">
+                  {title[scope]}
+                  {/* `limit = ceiling + boost` only when there is a ceiling, so a top-up
+                      granted against an uncapped window changes nothing. Drawing it here
+                      would advertise an allowance the gate never applies. */}
+                  {capped && w.boost > 0 && (
+                    <span className="ml-1.5 text-[11px] text-accent">
+                      {t('+{amount} topped up', { amount: show(w.boost) })}
+                    </span>
+                  )}
+                </span>
+                <span className="font-mono text-[12.5px] tabular-nums">
+                  {show(w.used)}
+                  <span className="text-faint">
+                    {' / '}
+                    {capped ? show(w.limit ?? 0) : t('no limit')}
                   </span>
-                  <span className="font-mono text-[12.5px] tabular-nums">
-                    {show(w.used)}
-                    <span className="text-faint">{' / '}{show(w.limit ?? 0)}</span>
-                  </span>
-                </div>
+                </span>
+              </div>
+              {capped && (
                 <div className="h-2 overflow-hidden rounded-full bg-bubble">
                   <div
                     className={clsx(
                       'h-full rounded-full transition-all',
                       w.exceeded ? 'bg-danger' : w.ratio >= 0.9 ? 'bg-amber-500' : 'bg-accent',
                     )}
-                    style={{ width: `${Math.max(pct, 1)}%` }}
+                    /* A sliver so that 1% is visible at all — but nothing spent draws
+                       nothing, or a freshly reset window shows a mark for usage it has
+                       none of */
+                    style={{ width: w.used === 0 ? '0%' : `${Math.max(pct, 1)}%` }}
                   />
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
-                  <span>{pct}%</span>
-                  <span>{t('{amount} left', { amount: show(w.remaining ?? 0) })}</span>
-                  <span>{t('resets {when}', { when: fmtDate(w.endsAt) })}</span>
-                </div>
+              )}
+              <div className="mt-1 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
+                {capped && <span>{pct}%</span>}
+                {capped && <span>{t('{amount} left', { amount: show(w.remaining ?? 0) })}</span>}
+                <span>{t('resets {when}', { when: fmtDate(w.endsAt) })}</span>
+                {/* An administrator cleared this window part-way through, so the count is
+                    smaller than what was actually spent over the window. Without this the
+                    row just disagrees with the report below it and says nothing about why. */}
+                {w.countsFrom !== w.startsAt && (
+                  <span className="text-accent">
+                    {t('counting from {when}', { when: fmtDate(w.countsFrom) })}
+                  </span>
+                )}
               </div>
-            );
-          })}
+            </div>
+          );
+        })}
+      </div>
+      {!anyLimit && (
+        <div className="mt-3 text-[12px] text-muted">
+          {t('This account has no ceiling on any window.')}
         </div>
       )}
       {!quota.hardStop && (
@@ -201,17 +230,17 @@ export function UsagePage() {
             <Stat
               label={t('Today')}
               value={fmtTokens(data.quick.today.billableTokens)}
-              sub={`${fmtMoney(data.quick.today.costMicro)} · ${t('{n} turns', { n: data.quick.today.turns })}`}
+              sub={`${fmtMoney(data.quick.today.costMicro, data.quota.currency)} · ${t('{n} turns', { n: data.quick.today.turns })}`}
             />
             <Stat
               label={t('This month')}
               value={fmtTokens(data.quick.month.billableTokens)}
-              sub={`${fmtMoney(data.quick.month.costMicro)} · ${t('{n} turns', { n: data.quick.month.turns })}`}
+              sub={`${fmtMoney(data.quick.month.costMicro, data.quota.currency)} · ${t('{n} turns', { n: data.quick.month.turns })}`}
             />
             <Stat
               label={t('All time')}
               value={fmtTokens(data.quick.allTime.billableTokens)}
-              sub={`${fmtMoney(data.quick.allTime.costMicro)} · ${t('{n} turns', { n: data.quick.allTime.turns })}`}
+              sub={`${fmtMoney(data.quick.allTime.costMicro, data.quota.currency)} · ${t('{n} turns', { n: data.quick.allTime.turns })}`}
             />
           </div>
 
@@ -248,12 +277,12 @@ export function UsagePage() {
             </div>
 
             <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-line pt-3">
-              <span className="text-[13px] font-medium">{data.range.label}</span>
+              <span className="text-[13px] font-medium">{t(data.range.label)}</span>
               <span className="font-mono text-[17px] font-semibold text-accent tabular-nums">
                 {data.totals.billableTokens.toLocaleString()}
               </span>
               <span className="font-mono text-[13px] text-muted">
-                {fmtMoney(data.totals.costMicro)}
+                {fmtMoney(data.totals.costMicro, data.quota.currency)}
               </span>
               <span className="text-[12px] text-faint">
                 {t('{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output', {
@@ -269,7 +298,7 @@ export function UsagePage() {
             <Chart data={data.series} unit={data.seriesUnit} />
           </Card>
 
-          <Card title={`${t('By agent and model')} · ${data.range.label}`}>
+          <Card title={`${t('By agent and model')} · ${t(data.range.label)}`}>
             {data.byAgent.length === 0 ? (
               <Empty text={t('No usage in this period')} />
             ) : (
@@ -315,7 +344,7 @@ export function UsagePage() {
             )}
           </Card>
 
-          <Card title={`${t('Heaviest conversations')} · ${data.range.label}`}>
+          <Card title={`${t('Heaviest conversations')} · ${t(data.range.label)}`}>
             {data.byConversation.length === 0 ? (
               <Empty text={t('No data in this period')} />
             ) : (
