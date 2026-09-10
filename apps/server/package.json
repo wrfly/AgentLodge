@@ -41,7 +41,9 @@
     "test:events": "tsx src/core/events.test.ts",
     "test:translate": "tsx src/gateway/translate.test.ts",
     "test:relay": "tsx src/gateway/relay.test.ts",
-    "test:billable": "tsx src/core/db/billable.test.ts"
+    "test:billable": "tsx src/core/db/billable.test.ts",
+    "test:refusal": "tsx src/core/db/refusal.test.ts",
+    "test:series": "tsx src/core/db/series.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

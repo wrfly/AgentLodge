@@ -534,16 +534,35 @@ export interface BalanceResult {
   error?: string;
 }
 
+export type TurnStatus = 'completed' | 'error' | 'aborted';
+
+/** What is true right now, as opposed to what a period adds up to */
 export interface AdminOverview {
   users: { total: number; active: number };
-  usage: {
-    month: UsageTotals;
-    allTime: UsageTotals;
-    daily: DailyPoint[];
-    topUsers: Array<UsageTotals & { userId: string; username: string; email: string }>;
+  window: {
+    startsAt: string;
+    endsAt: string;
+    totals: UsageTotals;
+    /** Turns that ran, by how they ended. A refusal is not one of them. */
+    statuses: Record<TurnStatus, number>;
+    /** People the gate turned away in this window, not attempts */
+    refused: number;
   };
+  currency: string;
+  allTime: UsageTotals;
   balance: BalanceResult | null;
   agents: AgentInfo[];
+}
+
+export type PlatformPreset = 'today' | 'last7' | 'last30' | 'month' | 'all';
+
+export interface PlatformUsage {
+  range: { from: string; to: string; label: string };
+  currency: string;
+  totals: UsageTotals;
+  series: SeriesPoint[];
+  seriesUnit: 'hour' | 'day';
+  topUsers: Array<UsageTotals & { userId: string; username: string; email: string }>;
 }
 
 export interface PricingRow {
@@ -849,6 +868,8 @@ export interface AuditEntry {
 
 export const admin = {
   overview: () => request<AdminOverview>('/api/admin/overview'),
+  platformUsage: (preset: PlatformPreset) =>
+    request<PlatformUsage>(`/api/admin/usage?preset=${preset}`),
   users: () => request<AdminUser[]>('/api/admin/users'),
   updateUser: (
     id: string,

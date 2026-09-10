@@ -106,7 +106,7 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -268,6 +268,20 @@ function migrate(d: DatabaseSync): void {
           .run('billing.currency', row.currency, new Date().toISOString());
       }
     }
+  }
+
+  if (from < 9) {
+    // Refusals used to leave no trace at all; see the table's own comment for why it is not
+    // a fourth status on usage_records
+    d.exec(`create table if not exists quota_refusals (
+      user_id      text not null references users(id) on delete cascade,
+      window_start text not null,
+      agent        text not null,
+      scope        text not null,
+      created_at   text not null,
+      primary key (user_id, window_start)
+    )`);
+    d.exec('create index if not exists idx_refusal_window on quota_refusals(window_start)');
   }
 
   d.exec(`pragma user_version = ${SCHEMA_VERSION}`);

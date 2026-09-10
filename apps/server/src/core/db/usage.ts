@@ -11,6 +11,8 @@ import * as pricing from './pricing.js';
 export type { QuotaPeriod };
 import type { AgentId, TurnUsage } from '../protocol.js';
 
+export type TurnStatus = 'completed' | 'error' | 'aborted';
+
 export interface RecordInput {
   userId: string;
   conversationId?: string;
@@ -21,7 +23,7 @@ export interface RecordInput {
   providerId?: string;
   effort?: string;
   usage?: TurnUsage;
-  status: 'completed' | 'error' | 'aborted';
+  status: TurnStatus;
   /** cli: the turn total the CLI reported. gateway: one row per upstream call, recorded by the gateway. */
   source?: 'cli' | 'gateway';
   /** Non-empty means this usage came from a user's own CLI on a long-lived api key, not from our containers */
@@ -259,6 +261,67 @@ export function totalsAllInRange(range: Range, providerId?: string): Totals {
   );
 }
 
+/**
+ * How many turns ended each way over a window, everybody's.
+ *
+ * Refusals are not in here — they are not turns and live in their own table. This counts what
+ * actually ran, so the console can say how many of them the upstream failed.
+ */
+export function statusCountsAll(range: Range): Record<TurnStatus, number> {
+  const [from, to] = bounds(range);
+  const rows = all<{ status: string; n: number }>(
+    `select status, count(*) as n from usage_records
+     where created_at >= ? and created_at < ? group by status`,
+    from,
+    to,
+  );
+  const out: Record<TurnStatus, number> = { completed: 0, error: 0, aborted: 0 };
+  // `hasOwn`, not `in`: `'constructor' in {}` is true, and a row with that status would
+  // append a number to a function
+  for (const r of rows) if (Object.hasOwn(out, r.status)) out[r.status as TurnStatus] += r.n;
+  return out;
+}
+
+/**
+ * A turn the quota gate refused, in the window it was refused in.
+ *
+ * At most one per person per window, enforced by the table's primary key rather than by
+ * looking first: the app and the gateway are separate processes over the same file, so a
+ * check-then-insert between them is a race, and a client retrying in a loop would otherwise
+ * write a row a second — a figure measuring that client's retry policy and nothing else.
+ *
+ * Keyed on the window's own boundary. `countsFrom` moves forward when an administrator
+ * resets somebody mid-window, which would let the same window record the same person twice.
+ */
+export function noteRefusal(input: {
+  userId: string;
+  agent: AgentId;
+  scope: string;
+  windowStart: string;
+}): void {
+  run(
+    `insert or ignore into quota_refusals (user_id, window_start, agent, scope, created_at)
+     values (?, ?, ?, ?, ?)`,
+    input.userId,
+    input.windowStart,
+    input.agent,
+    input.scope,
+    nowIso(),
+  );
+}
+
+/** How many people the gate turned away inside this window */
+export function refusedCount(range: Range): number {
+  const [from, to] = bounds(range);
+  return (
+    get<{ n: number }>(
+      `select count(*) as n from quota_refusals where created_at >= ? and created_at < ?`,
+      from,
+      to,
+    )?.n ?? 0
+  );
+}
+
 export interface DailyPoint extends Totals {
   day: string;
 }
@@ -372,17 +435,110 @@ export interface UserLeaderRow extends Totals {
   email: string;
 }
 
-export function topUsers(since?: string, limit = 20): UserLeaderRow[] {
+export function topUsers(range?: Range | string, limit = 20): UserLeaderRow[] {
+  const [from, to] = bounds(range);
   return all<TotalsRow & { user_id: string; username: string; email: string }>(
     `select u.user_id, us.username, us.email, ${SUM('u.')}
      from usage_records u join users us on us.id = u.user_id
-     where u.created_at >= ?
+     where u.created_at >= ? and u.created_at < ?
      group by u.user_id
+     -- Somebody whose only row in the window is a refusal spent nothing, and a list of who
+     -- spent the most should not have them in it at all. Spelled as the aggregates rather
+     -- than the output aliases: billable_tokens is also a real column, so SQLite binds the
+     -- bare name to some arbitrary row of the group and a user with one zero row vanishes.
+     having sum(u.billable_tokens) > 0 or sum(u.cost_micro) > 0
      order by billable_tokens desc
      limit ?`,
-    since ?? '1970-01-01T00:00:00.000Z',
+    from,
+    to,
     limit,
   ).map((r) => ({ userId: r.user_id, username: r.username, email: r.email, ...toTotals(r) }));
+}
+
+export function dailyAllInRange(range: Range): DailyPoint[] {
+  const [from, to] = bounds(range);
+  return all<TotalsRow & { day: string }>(
+    `select day, ${SUM()} from usage_records
+     where created_at >= ? and created_at < ? group by day order by day`,
+    from,
+    to,
+  ).map((r) => ({ day: r.day, ...toTotals(r) }));
+}
+
+/**
+ * The same series with a bucket for every hour or day in the range, spent or not.
+ *
+ * Padded here rather than in the browser. The keys come out of SQLite's `localtime`, which is
+ * the *server's* local time, and a client rebuilding them from its own clock produces keys
+ * that match nothing — an admin in Shanghai reading a UTC server saw a chart of empty bars
+ * over a headline reading 500,000. Reconstructing them also has to guess whether `from` sits
+ * on the bucket grid (a configured reset hour means it does not, and the newest bucket goes
+ * missing) and what to do at a DST boundary, where an hour occurs twice or not at all.
+ *
+ * Walking the calendar from the server's own bucket keys sidesteps all three.
+ */
+function padded<T extends { t: string }>(
+  rows: T[],
+  from: string,
+  to: string,
+  unit: 'hour' | 'day',
+  blank: Omit<T, 't'>,
+): T[] {
+  const hit = new Map(rows.map((r) => [r.t, r]));
+  const step = unit === 'hour' ? 3600_000 : 86400_000;
+  const start = new Date(from);
+  const end = Math.min(new Date(to).getTime(), Date.now());
+  // Anchor on the bucket the range starts inside, not on `from` itself
+  if (unit === 'hour') start.setMinutes(0, 0, 0);
+  else start.setHours(0, 0, 0, 0);
+
+  const out: T[] = [];
+  for (let ms = start.getTime(); ms <= end; ms += step) {
+    const d = new Date(ms);
+    // Fixed-size steps drift by an hour across a DST change; re-anchoring each bucket to the
+    // calendar is what keeps one bucket per hour and one per day either way
+    if (unit === 'hour') d.setMinutes(0, 0, 0);
+    else d.setHours(0, 0, 0, 0);
+    const key = keyOf(d, unit);
+    if (out.length && out[out.length - 1]!.t === key) continue;
+    out.push(hit.get(key) ?? ({ ...blank, t: key } as T));
+  }
+  return out;
+}
+
+const two = (n: number) => String(n).padStart(2, '0');
+/** The same shape SQLite's `localtime` strftime produces */
+const keyOf = (d: Date, unit: 'hour' | 'day'): string =>
+  unit === 'hour'
+    ? `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:00`
+    : `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+
+const EMPTY_TOTALS: Totals = {
+  calls: 0, inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0,
+  billableTokens: 0, costUsd: 0, costMicro: 0, turns: 0,
+};
+
+/** Everybody's series over a range, one point per bucket, empty ones included */
+export function seriesAllInRange(range: Range, unit: 'hour' | 'day'): Array<Totals & { t: string }> {
+  const [from, to] = bounds(range);
+  const rows: Array<Totals & { t: string }> =
+    unit === 'hour'
+      ? hourlyAllInRange(range).map(({ hour, ...rest }) => ({ ...rest, t: hour }))
+      : dailyAllInRange(range).map(({ day, ...rest }) => ({ ...rest, t: day }));
+  return padded(rows, from, to, unit, EMPTY_TOTALS);
+}
+
+export function hourlyAllInRange(range: Range): HourlyPoint[] {
+  const [from, to] = bounds(range);
+  // SQLite's datetime functions work in UTC; the localtime modifier moves them to local
+  return all<TotalsRow & { hour: string }>(
+    `select strftime('%Y-%m-%d %H:00', created_at, 'localtime') as hour, ${SUM()}
+     from usage_records
+     where created_at >= ? and created_at < ?
+     group by hour order by hour`,
+    from,
+    to,
+  ).map((r) => ({ hour: r.hour, ...toTotals(r) }));
 }
 
 export function dailyAll(days = 30): DailyPoint[] {

@@ -241,14 +241,9 @@ export const ja: Record<string, string> = {
   // Admin: overview, providers, audit proxy, gate
   Users: 'ユーザー',
   '{n} active': 'アクティブ {n}',
-  'Billed this month': '今月の課金',
   'Billed all time': '累計の課金',
   'Upstream balance': '上流の残高',
   'No API key configured': 'API キーが未設定',
-  'Last 30 days, all users': '全体の直近 30 日',
-  'No usage yet': '使用量はまだありません',
-  'Top consumers this month': '今月の消費ランキング',
-  'No data yet': 'データがまだありません',
   'Agent status': 'Agent の状態',
   available: '利用可能',
   unavailable: '利用不可',
@@ -614,4 +609,15 @@ export const ja: Record<string, string> = {
   'tokens': 'トークン',
   'counting from {when} · {spent} spent over the full window': '{when} から計上 · ウィンドウ全体の実支出は {spent}',
   'counting from {when}': '{when} から計上',
+
+  // The admin overview: the live window, and everybody over one period
+  'Usage, all users': '全ユーザーの使用量',
+  'Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.': '最初に拒否されるウィンドウでの全員の消費。プラットフォーム自身のウィンドウなので、開始と終了は全ユーザーで同じ時刻です。',
+  'resets in {d}': '{d} 後にリセット',
+  '{n}% of the window elapsed': 'ウィンドウの {n}% が経過',
+  '{n} hit their quota': '{n} 人がクォータに到達',
+  'gate {active}/{max} in flight': 'ゲート {active}/{max} 実行中',
+  '{n} waiting': '{n} 件待機',
+  '{n} failed upstream': '{n} 件が上流で失敗',
+  'this window has ended': 'このウィンドウは終了しました',
 };

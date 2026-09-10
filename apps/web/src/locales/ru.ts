@@ -241,14 +241,9 @@ export const ru: Record<string, string> = {
   // Admin: overview, providers, audit proxy, gate
   Users: 'Пользователи',
   '{n} active': 'активных: {n}',
-  'Billed this month': 'Начислено за месяц',
   'Billed all time': 'Начислено за всё время',
   'Upstream balance': 'Баланс у провайдера',
   'No API key configured': 'API-ключ не настроен',
-  'Last 30 days, all users': 'Последние 30 дней, все пользователи',
-  'No usage yet': 'Использования пока нет',
-  'Top consumers this month': 'Крупнейшие потребители за месяц',
-  'No data yet': 'Данных пока нет',
   'Agent status': 'Состояние агентов',
   available: 'доступен',
   unavailable: 'недоступен',
@@ -614,4 +609,15 @@ export const ru: Record<string, string> = {
   'tokens': 'токенов',
   'counting from {when} · {spent} spent over the full window': 'счёт идёт с {when} · за всё окно потрачено {spent}',
   'counting from {when}': 'счёт идёт с {when}',
+
+  // The admin overview: the live window, and everybody over one period
+  'Usage, all users': 'Расход, все пользователи',
+  'Everybody, over the window the gate refuses on first. It is the platform’s own window, so it begins and ends at the same instants for every user.': 'Расход всех за окно, которое отказывает первым. Это окно самой платформы, поэтому оно начинается и заканчивается в одни и те же моменты для каждого.',
+  'resets in {d}': 'сброс через {d}',
+  '{n}% of the window elapsed': 'прошло {n}% окна',
+  '{n} hit their quota': '{n} упёрлись в квоту',
+  'gate {active}/{max} in flight': 'шлюз {active}/{max} в работе',
+  '{n} waiting': '{n} в очереди',
+  '{n} failed upstream': '{n} с ошибкой вверх по потоку',
+  'this window has ended': 'это окно закончилось',
 };

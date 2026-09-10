@@ -218,6 +218,32 @@ create index if not exists idx_usage_conv on usage_records(conversation_id);
 -- user_id and so cannot serve a query that spans every user.
 create index if not exists idx_usage_provider_created on usage_records(provider_id, created_at);
 
+/*
+ * Turns the quota gate refused, which never reach an upstream and so have no usage row.
+ *
+ * Its own table rather than a fourth `usage_records.status`: every aggregate over that table
+ * reads a row as a turn that ran, and a refusal is the opposite of one. Sharing it put a
+ * phantom `(agent, null)` line on people's usage pages and counted a refusal as a turn in
+ * every total.
+ *
+ * One row per person per window, not per attempt. A client retrying a refused request in a
+ * loop would otherwise write a row a second, and the figure an operator reads would measure
+ * that client's retry policy. The unique index is what makes that true under two processes
+ * sharing the file — app and gateway are separate containers, and a check-then-insert across
+ * them is a race.
+ */
+create table if not exists quota_refusals (
+  user_id         text not null references users(id) on delete cascade,
+  -- The window's own boundary, not where the user's count starts: a manual reset moves the
+  -- second one forward and would let the same window record the same person twice
+  window_start    text not null,
+  agent           text not null,
+  scope           text not null,          -- window | week | month
+  created_at      text not null,
+  primary key (user_id, window_start)
+);
+create index if not exists idx_refusal_window on quota_refusals(window_start);
+
 /* ---------------- Price table ---------------- */
 
 -- Tokens to money. A price change inserts a row; past bills keep the price of their time.
