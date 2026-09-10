@@ -20,15 +20,27 @@
  *    Delete a screen and its translations stay behind, in eight files, forever.
  *    Nothing breaks — a key nobody looks up costs nothing at runtime — so the
  *    tables just grow, and the next person reading one cannot tell the live
- *    strings from the dead ones. 54 had accumulated before this check existed.
+ *    strings from the dead ones. 38 had accumulated before this check existed —
+ *    36 in the web tables and 2 in the server's.
  *
  * Check 2 only sees literal keys: `t(someVariable)` cannot be resolved
- * statically. Check 3 is the reverse and has the opposite problem, so it asks a
- * weaker question — does this text appear *anywhere* in the app's sources? A key
- * reached through a variable still has to be written down somewhere, and that
- * somewhere is either the web app itself or one of the two server files listed
- * below that compose display text. A key found only inside a comment counts as
- * live, which is the safe way to be wrong: this check deletes translations.
+ * statically, and 22 call sites pass a variable. Check 3 is the reverse and has
+ * the opposite problem — an exact "no `t('…')` names this" would condemn every
+ * key those 22 reach. So it asks a much weaker question: does this text appear
+ * *anywhere* in either app's sources?
+ *
+ * Deliberately no list of "files that supply display text". The first version of
+ * this check had one, with two entries and a comment asking the next person to
+ * extend it. It was already wrong when it was written — provider kind labels
+ * (core/db/providers.ts) and model hints (app/agents/*.ts) are both handed to the
+ * web and translated there — and it deleted eight working translations. A check
+ * whose output is a delete script must not depend on a list somebody remembers to
+ * update. Every source file of both apps is searched instead.
+ *
+ * That makes it lenient: a key found only inside a comment counts as live, and so
+ * does one that happens to be a substring of another string. Both are the safe
+ * way to be wrong. This check deletes translations; it should miss a dead key
+ * rather than invent one.
  *
  * Run: npm run check:i18n
  */
@@ -56,7 +68,7 @@ for (const file of files) {
   src.split('\n').forEach((line, i) => {
     // `(t)` or `(t,` as a parameter, `let/const/var t =` other than the translator
     const shadow =
-      /(?:\(|,\s*)t\s*(?:\)|,|:)\s*=>/.test(line) ||
+      /(?:\(|,\s*)t\s*(?::[^,)]*)?\s*(?:\)|,)\s*=>/.test(line) ||
       /\b(?:const|let|var)\s+t\s*=(?!\s*useT\(\))/.test(line);
     if (shadow) {
       problems.push(
@@ -103,23 +115,28 @@ for (const loc of LOCALES) {
 
 /* ---- 3. keys the app no longer says ---- */
 /*
- * The two server files that compose text the web renders through `t()`: the settings spec's
- * labels and hints, and `resolveRange`'s range labels. Anything else the server sends and the
- * web translates has to be added here, or its keys will read as dead.
+ * A long string is often written across lines with `+`, so the literal never appears whole
+ * anywhere. Splicing the joins back together is what lets those be searched for at all —
+ * `settings.ts` builds one hint out of three pieces.
  */
-const COMPOSED_BY_SERVER = [`${SERVER}/core/db/settings.ts`, `${SERVER}/app/routes/me.ts`];
-const haystack = [...files, ...COMPOSED_BY_SERVER]
-  .map((f) => fs.readFileSync(f, 'utf8'))
-  .join('\n');
+const spliced = (text) => text.replace(/'\s*\+\s*'/g, '').replace(/"\s*\+\s*"/g, '');
+const readAll = (list) => spliced(list.map((f) => fs.readFileSync(f, 'utf8')).join('\n'));
+
+const serverFiles = walk(SERVER).filter((f) => !f.includes(`${path.sep}i18n${path.sep}`));
+// Both apps, whole. See the note on lists at the top of this file.
+const haystack = readAll([...files, ...serverFiles]);
+const serverHaystack = readAll(serverFiles);
 // A key with an apostrophe is written `\'` in a single-quoted literal
-const saidSomewhere = (key) =>
-  haystack.includes(key) || haystack.includes(key.replace(/'/g, "\\'"));
+const saidIn = (hay, key) => hay.includes(key) || hay.includes(key.replace(/'/g, "\\'"));
+
+// Both spellings a table uses — quoted, and the bare identifier a plain word gets
+const KEY_LINE = /^ {2}(?:'((?:[^'\\]|\\.)*)'|([A-Za-z_$][A-Za-z0-9_$]*)): /gm;
 
 for (const loc of LOCALES) {
   const src = fs.readFileSync(`${WEB}/locales/${loc}.ts`, 'utf8');
-  const dead = [...src.matchAll(/^ {2}'((?:[^'\\]|\\.)*)': /gm)]
-    .map((m) => m[1].replace(/\\'/g, "'"))
-    .filter((k) => !saidSomewhere(k));
+  const dead = [...src.matchAll(KEY_LINE)]
+    .map((m) => (m[1] ?? m[2]).replace(/\\'/g, "'"))
+    .filter((k) => !saidIn(haystack, k));
   if (dead.length) {
     problems.push(
       `locales/${loc}.ts keeps ${dead.length} key(s) the app no longer says:\n` +
@@ -139,13 +156,6 @@ for (const file of walk(SERVER).filter((f) => !f.includes(`${path.sep}i18n${path
   for (const m of src.matchAll(/tr\(\s*req,\s*"((?:[^"\\]|\\.)*)"/g)) serverUsed.add(m[1]);
 }
 
-const serverHaystack = walk(SERVER)
-  .filter((f) => !f.includes(`${path.sep}i18n${path.sep}`))
-  .map((f) => fs.readFileSync(f, 'utf8'))
-  .join('\n');
-const serverSaid = (key) =>
-  serverHaystack.includes(key) || serverHaystack.includes(key.replace(/'/g, "\\'"));
-
 for (const loc of LOCALES) {
   const src = fs.readFileSync(`${SERVER}/core/i18n/${loc}.ts`, 'utf8');
   const have = new Set(
@@ -163,7 +173,7 @@ for (const loc of LOCALES) {
    * returns an English source string and its caller does `tr(req, thatString)`, so three
    * live password messages read as dead under an exact check.
    */
-  const dead = [...have].filter((k) => !serverSaid(k));
+  const dead = [...have].filter((k) => !saidIn(serverHaystack, k));
   if (dead.length) {
     problems.push(
       `core/i18n/${loc}.ts keeps ${dead.length} key(s) no \`tr\` asks for:\n` +

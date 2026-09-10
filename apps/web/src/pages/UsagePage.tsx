@@ -36,7 +36,7 @@ function Chart({ data, unit }: { data: SeriesPoint[]; unit: 'day' | 'hour' }) {
   const t = useT();
   if (!data.length) return <Empty text={t('No usage in this period')} />;
   const max = Math.max(...data.map((d) => d.billableTokens), 1);
-  const short = (t: string) => (unit === 'hour' ? t.slice(11, 16) : t.slice(5));
+  const short = (stamp: string) => (unit === 'hour' ? stamp.slice(11, 16) : stamp.slice(5));
 
   return (
     <div>
@@ -144,17 +144,20 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
                 {capped && <span>{pct}%</span>}
                 {capped && <span>{t('{amount} left', { amount: show(w.remaining ?? 0) })}</span>}
                 <span>{t('resets {when}', { when: fmtDate(w.endsAt) })}</span>
-                {/* An administrator cleared this window part-way through and it cost this
-                    row something: the count above is what the gate charges, the figure here
-                    is what the report below and the tiles beside it show. Naming both is what
-                    reconciles them — and when a reset forgave nothing here the two numbers
-                    are already the same, so there is nothing to reconcile and nothing to say. */}
-                {w.spent !== w.used && (
+                {/* An administrator cleared this window part-way through. Say so whenever
+                    it happened — the count above starts later than the row's own boundary and
+                    nothing else on the page admits it — and add the second figure only when
+                    there is one: `spent` is what was really spent over the window, which is
+                    what the calendar ranges and the tiles beside them show. A reset that
+                    forgave this row nothing leaves the two equal and needs no number. */}
+                {w.countsFrom !== w.startsAt && (
                   <span className="text-accent">
-                    {t('counting from {when} · {spent} spent over the full window', {
-                      when: fmtDate(w.countsFrom),
-                      spent: show(w.spent),
-                    })}
+                    {w.spent === w.used
+                      ? t('counting from {when}', { when: fmtDate(w.countsFrom) })
+                      : t('counting from {when} · {spent} spent over the full window', {
+                          when: fmtDate(w.countsFrom),
+                          spent: show(w.spent),
+                        })}
                   </span>
                 )}
               </div>
