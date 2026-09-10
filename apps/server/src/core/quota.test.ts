@@ -196,8 +196,19 @@ console.log('\n=== A manual reset moves the counting start, not the boundary ===
   const s = quota.status(alice, now);
   ok('what came before the reset stops counting', s.windows.window.used === 100, String(s.windows.window.used));
   ok('the window still ends when everybody else’s does', s.windows.window.endsAt === '2026-08-23T19:00:00.000Z');
+  ok('and still starts where everybody else’s does', s.windows.window.startsAt === '2026-08-23T14:00:00.000Z');
+  /*
+   * The usage page draws a range for this window and prints its total next to `used`.
+   * If it drew from `startsAt` it would re-include the 300 the reset just forgave, and the
+   * page would show two different numbers for the same window with no way to tell which is
+   * the quota's.
+   */
+  ok('the count begins at the reset, which is what a report has to draw from',
+    s.windows.window.countsFrom === '2026-08-23T16:00:00.000Z', s.windows.window.countsFrom);
   users.undoResetUsage(alice);
-  ok('undoing brings it back', quota.status(alice, now).windows.window.used === 400);
+  const back = quota.status(alice, now).windows.window;
+  ok('undoing brings it back', back.used === 400);
+  ok('and the count goes back to the boundary', back.countsFrom === back.startsAt, back.countsFrom);
 }
 
 fs.rmSync(box, { recursive: true, force: true });

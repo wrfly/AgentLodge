@@ -205,7 +205,6 @@ export const zhHant: Record<string, string> = {
   'This month': '本月',
   'Last 7 days': '近 7 天',
   'Last 30 days': '近 30 天',
-  'This quota period': '本配額週期',
   'All time': '全部',
   'rolling window': '滾動視窗',
   daily: '每日',
@@ -620,4 +619,9 @@ export const zhHant: Record<string, string> = {
   'catch-all, and the unit quota is counted in': '兜底列，也是計費 token 的單位',
   'Add a price': '新增價格',
   'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '改價是加一列新的，所以過去的帳單保留當時的價格。整張表只能用一種幣別——金額是直接相加的。',
+
+  // Quota card: every window, capped or not
+  'This quota month': '本配額月',
+  'no limit': '無上限',
+  'This account has no ceiling on any window.': '這個帳號在任何視窗上都沒有上限。',
 };

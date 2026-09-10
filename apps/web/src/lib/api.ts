@@ -237,7 +237,7 @@ export type { QuotaScope, QuotaStatus, QuotaWindow, LimitKind } from './protocol
 import type { QuotaScope, QuotaStatus } from './protocol';
 
 export type RangePreset =
-  | 'today' | 'yesterday' | 'week' | 'month'
+  | 'window' | 'today' | 'yesterday' | 'week' | 'month'
   | 'last7' | 'last30' | 'quota' | 'all' | 'custom';
 
 export interface UsageTotals {

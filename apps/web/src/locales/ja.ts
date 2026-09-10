@@ -219,7 +219,6 @@ export const ja: Record<string, string> = {
   'This month': '今月',
   'Last 7 days': '直近 7 日',
   'Last 30 days': '直近 30 日',
-  'This quota period': '今回の利用枠期間',
   'All time': '全期間',
   'rolling window': 'ローリング期間',
   daily: '日次',
@@ -646,4 +645,9 @@ export const ja: Record<string, string> = {
   'catch-all, and the unit quota is counted in': 'フォールバック行。課金トークンの単位でもあります',
   'Add a price': '価格を追加',
   'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '価格変更は新しい行の追加なので、過去の請求は当時の価格のままです。表全体で通貨は一つ — 金額は合算されます。',
+
+  // Quota card: every window, capped or not
+  'This quota month': '今回のクォータ月',
+  'no limit': '上限なし',
+  'This account has no ceiling on any window.': 'このアカウントはどのウィンドウにも上限がありません。',
 };

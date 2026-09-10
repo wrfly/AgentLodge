@@ -219,7 +219,6 @@ export const ru: Record<string, string> = {
   'This month': 'Этот месяц',
   'Last 7 days': 'Последние 7 дней',
   'Last 30 days': 'Последние 30 дней',
-  'This quota period': 'Текущий период квоты',
   'All time': 'За всё время',
   'rolling window': 'скользящее окно',
   daily: 'ежедневно',
@@ -646,4 +645,9 @@ export const ru: Record<string, string> = {
   'catch-all, and the unit quota is counted in': 'запасная строка, и единица тарифицируемых токенов',
   'Add a price': 'Добавить цену',
   'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Изменение цены — это новая строка, поэтому прошлые счета сохраняют цену своего времени. Одна валюта на всю таблицу — суммы складываются.',
+
+  // Quota card: every window, capped or not
+  'This quota month': 'Текущий месяц квоты',
+  'no limit': 'без лимита',
+  'This account has no ceiling on any window.': 'У этой учётной записи нет потолка ни в одном окне.',
 };

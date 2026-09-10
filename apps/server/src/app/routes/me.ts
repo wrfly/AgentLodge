@@ -18,6 +18,7 @@ const guard = { preHandler: requireUser };
 /* ---------------- Parsing a window ---------------- */
 
 export type RangePreset =
+  | 'window'
   | 'today'
   | 'yesterday'
   | 'week'
@@ -40,6 +41,7 @@ function resolveRange(
   fromRaw?: string,
   toRaw?: string,
   quotaStart?: string,
+  fiveHour?: { countsFrom: string; endsAt: string },
 ): { from: string; to: string; label: string } {
   const now = new Date();
   const today = startOfDay(now);
@@ -48,6 +50,18 @@ function resolveRange(
   const endOfToday = iso(new Date(today.getTime() + day));
 
   switch (preset) {
+    /*
+     * The five-hour window: the one that refuses first, and the one somebody asks about
+     * the moment they are told to wait. Its boundaries are the platform's rather than a
+     * rolling five hours from now, and it counts from wherever the quota counts from — a
+     * manual reset moves that forward — so both come from the quota, not from the clock.
+     */
+    case 'window':
+      return {
+        from: fiveHour?.countsFrom ?? iso(new Date(now.getTime() - 5 * 3600_000)),
+        to: fiveHour?.endsAt ?? endOfToday,
+        label: 'This 5-hour window',
+      };
     case 'today':
       return { from: iso(today), to: endOfToday, label: 'Today' };
     case 'yesterday':
@@ -84,7 +98,7 @@ function resolveRange(
       return {
         from: quotaStart ?? usageRepo.periodStart('monthly'),
         to: endOfToday,
-        label: 'This quota period',
+        label: 'This quota month',
       };
   }
 }
@@ -96,7 +110,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
    * Three ways to ask:
    *   ?preset=today|yesterday|week|month|last7|last30|quota|all
    *   ?preset=custom&from=2026-08-01&to=2026-08-15
-   *   no parameters → the current quota period
+   *   no parameters → the current quota month
    */
   app.get('/api/me/usage', guard, async (req) => {
     const userId = req.user!.id;
@@ -107,7 +121,8 @@ export function registerMeRoutes(app: FastifyInstance): void {
       q.preset ?? 'quota',
       q.from,
       q.to,
-      quotaStatus.windows.month.startsAt,
+      quotaStatus.windows.month.countsFrom,
+      quotaStatus.windows.window,
     );
     const window = { from: range.from, to: range.to };
 

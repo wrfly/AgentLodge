@@ -18,13 +18,15 @@ import {
 import { useT } from '../lib/i18n';
 
 const PRESETS: Array<{ id: RangePreset; label: string }> = [
+  // First, because it is the window that refuses first
+  { id: 'window', label: 'This 5-hour window' },
   { id: 'today', label: 'Today' },
   { id: 'yesterday', label: 'Yesterday' },
   { id: 'week', label: 'This week' },
   { id: 'month', label: 'This month' },
   { id: 'last7', label: 'Last 7 days' },
   { id: 'last30', label: 'Last 30 days' },
-  { id: 'quota', label: 'This quota period' },
+  { id: 'quota', label: 'This quota month' },
   { id: 'all', label: 'All time' },
 ];
 
@@ -84,36 +86,44 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
     month: t('This month'),
   };
 
-  const limited = SCOPES.filter((s) => quota.windows[s].limit !== null);
+  /*
+   * Every window, not only the ones with a ceiling.
+   *
+   * It drew the limited ones and nothing else, so somebody with a monthly ceiling and no
+   * five-hour one could not see the five hours at all — and the five hours is what the gate
+   * refuses on first, and the number they want the moment they are told to wait. The figure
+   * was always computed; only the row was missing. With no ceiling there is nothing to draw
+   * a bar against, so the row is the count and when it resets.
+   */
+  const anyLimit = SCOPES.some((s) => quota.windows[s].limit !== null);
 
   return (
     <Card title={t('Quota')}>
-      {limited.length === 0 ? (
-        <div className="text-[13px] text-muted">
-          {t('This account has no limit. Used this month:')}{' '}
-          <span className="font-mono">{quota.windows.month.used.toLocaleString()}</span>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {limited.map((scope) => {
-            const w = quota.windows[scope];
-            const pct = Math.round(w.ratio * 100);
-            return (
-              <div key={scope}>
-                <div className="mb-1 flex items-baseline justify-between">
-                  <span className="text-[12.5px]">
-                    {title[scope]}
-                    {w.boost > 0 && (
-                      <span className="ml-1.5 text-[11px] text-accent">
-                        {t('+{amount} topped up', { amount: show(w.boost) })}
-                      </span>
-                    )}
+      <div className="space-y-3">
+        {SCOPES.map((scope) => {
+          const w = quota.windows[scope];
+          const pct = Math.round(w.ratio * 100);
+          const capped = w.limit !== null;
+          return (
+            <div key={scope}>
+              <div className="mb-1 flex items-baseline justify-between">
+                <span className="text-[12.5px]">
+                  {title[scope]}
+                  {w.boost > 0 && (
+                    <span className="ml-1.5 text-[11px] text-accent">
+                      {t('+{amount} topped up', { amount: show(w.boost) })}
+                    </span>
+                  )}
+                </span>
+                <span className="font-mono text-[12.5px] tabular-nums">
+                  {show(w.used)}
+                  <span className="text-faint">
+                    {' / '}
+                    {capped ? show(w.limit ?? 0) : t('no limit')}
                   </span>
-                  <span className="font-mono text-[12.5px] tabular-nums">
-                    {show(w.used)}
-                    <span className="text-faint">{' / '}{show(w.limit ?? 0)}</span>
-                  </span>
-                </div>
+                </span>
+              </div>
+              {capped && (
                 <div className="h-2 overflow-hidden rounded-full bg-bubble">
                   <div
                     className={clsx(
@@ -123,14 +133,19 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
                     style={{ width: `${Math.max(pct, 1)}%` }}
                   />
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
-                  <span>{pct}%</span>
-                  <span>{t('{amount} left', { amount: show(w.remaining ?? 0) })}</span>
-                  <span>{t('resets {when}', { when: fmtDate(w.endsAt) })}</span>
-                </div>
+              )}
+              <div className="mt-1 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
+                {capped && <span>{pct}%</span>}
+                {capped && <span>{t('{amount} left', { amount: show(w.remaining ?? 0) })}</span>}
+                <span>{t('resets {when}', { when: fmtDate(w.endsAt) })}</span>
               </div>
-            );
-          })}
+            </div>
+          );
+        })}
+      </div>
+      {!anyLimit && (
+        <div className="mt-3 text-[12px] text-muted">
+          {t('This account has no ceiling on any window.')}
         </div>
       )}
       {!quota.hardStop && (

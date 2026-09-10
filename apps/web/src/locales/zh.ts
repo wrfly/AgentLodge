@@ -219,7 +219,6 @@ export const zh: Record<string, string> = {
   'This month': '本月',
   'Last 7 days': '近 7 天',
   'Last 30 days': '近 30 天',
-  'This quota period': '本配额周期',
   'All time': '全部',
   'rolling window': '窗口',
   daily: '每天',
@@ -646,4 +645,9 @@ export const zh: Record<string, string> = {
   'catch-all, and the unit quota is counted in': '兜底行，也是计费 token 的单位',
   'Add a price': '添加价格',
   'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '改价是加一行新的，所以过去的账单保留当时的价格。整张表只能用一种币种——金额是直接相加的。',
+
+  // Quota card: every window, capped or not
+  'This quota month': '本配额月',
+  'no limit': '无上限',
+  'This account has no ceiling on any window.': '这个账号在任何窗口上都没有上限。',
 };

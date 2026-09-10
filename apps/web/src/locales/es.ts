@@ -204,7 +204,6 @@ export const es: Record<string, string> = {
   'This month': 'Este mes',
   'Last 7 days': 'Últimos 7 días',
   'Last 30 days': 'Últimos 30 días',
-  'This quota period': 'Este periodo de cuota',
   'All time': 'Todo el tiempo',
   'rolling window': 'ventana móvil',
   daily: 'diario',
@@ -619,4 +618,9 @@ export const es: Record<string, string> = {
   'catch-all, and the unit quota is counted in': 'fila comodín, y la unidad de los tokens facturables',
   'Add a price': 'Añadir un precio',
   'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Un cambio de precio es una fila nueva, así que las facturas pasadas conservan su precio. Una sola moneda para toda la tabla: los importes se suman.',
+
+  // Quota card: every window, capped or not
+  'This quota month': 'Este mes de cuota',
+  'no limit': 'sin límite',
+  'This account has no ceiling on any window.': 'Esta cuenta no tiene techo en ninguna ventana.',
 };

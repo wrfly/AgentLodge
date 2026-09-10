@@ -93,6 +93,7 @@ function windowStatus(
     ratio: limit === null || limit <= 0 ? 0 : Math.min(used / limit, 1),
     startsAt: start.toISOString(),
     endsAt: end.toISOString(),
+    countsFrom: from,
     exceeded: limit !== null && used >= limit,
   };
 }
