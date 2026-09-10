@@ -216,17 +216,17 @@ export function UsagePage() {
             <Stat
               label={t('Today')}
               value={fmtTokens(data.quick.today.billableTokens)}
-              sub={`${fmtMoney(data.quick.today.costMicro)} · ${t('{n} turns', { n: data.quick.today.turns })}`}
+              sub={`${fmtMoney(data.quick.today.costMicro, data.quota.currency)} · ${t('{n} turns', { n: data.quick.today.turns })}`}
             />
             <Stat
               label={t('This month')}
               value={fmtTokens(data.quick.month.billableTokens)}
-              sub={`${fmtMoney(data.quick.month.costMicro)} · ${t('{n} turns', { n: data.quick.month.turns })}`}
+              sub={`${fmtMoney(data.quick.month.costMicro, data.quota.currency)} · ${t('{n} turns', { n: data.quick.month.turns })}`}
             />
             <Stat
               label={t('All time')}
               value={fmtTokens(data.quick.allTime.billableTokens)}
-              sub={`${fmtMoney(data.quick.allTime.costMicro)} · ${t('{n} turns', { n: data.quick.allTime.turns })}`}
+              sub={`${fmtMoney(data.quick.allTime.costMicro, data.quota.currency)} · ${t('{n} turns', { n: data.quick.allTime.turns })}`}
             />
           </div>
 
@@ -268,7 +268,7 @@ export function UsagePage() {
                 {data.totals.billableTokens.toLocaleString()}
               </span>
               <span className="font-mono text-[13px] text-muted">
-                {fmtMoney(data.totals.costMicro)}
+                {fmtMoney(data.totals.costMicro, data.quota.currency)}
               </span>
               <span className="text-[12px] text-faint">
                 {t('{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output', {

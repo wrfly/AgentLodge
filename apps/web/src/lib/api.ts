@@ -477,6 +477,7 @@ export interface AdminUser extends PublicUser {
     week: number | null;
     month: number | null;
     limitKind: 'tokens' | 'cost';
+    currency: string;
     hardStop: boolean;
   };
   usage: { period: UsageTotals; month: UsageTotals; allTime: UsageTotals };
@@ -1125,7 +1126,14 @@ export async function exportConversation(id: string, title: string): Promise<voi
 
 /** Micro-units to something readable */
 export const MICRO = 1_000_000;
-export function fmtMoney(micro: number | null | undefined, currency = 'CNY'): string {
+/*
+ * The currency is required on purpose. It used to default to CNY, which was right while the
+ * price table was seeded in yuan — and silently wrong everywhere once the seed moved to USD.
+ * The same page then printed ¥8.14 in one card and $8.14 in the table below it, for the same
+ * money. Every caller has the quota's currency in scope; making it an argument is what stops
+ * the two from drifting apart again.
+ */
+export function fmtMoney(micro: number | null | undefined, currency: string): string {
   if (micro === null || micro === undefined) return '—';
   const sym = currency === 'CNY' ? '¥' : '$';
   const v = micro / MICRO;

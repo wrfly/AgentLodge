@@ -21,7 +21,15 @@ export function register(app: FastifyInstance): void {
       const windowStart = quota.boundsOf('window').start.toISOString();
       return {
         ...usersRepo.toPublic(u),
-        quota: { window: q.window, week: q.week, month: q.month, limitKind: q.limitKind, hardStop: q.hardStop },
+        quota: {
+          window: q.window,
+          week: q.week,
+          month: q.month,
+          limitKind: q.limitKind,
+          // So a cost-limited row is labelled in the money it is actually counted in
+          currency: q.currency,
+          hardStop: q.hardStop,
+        },
         usage: {
           period: usageRepo.totalsForUser(u.id, windowStart),
           month: usageRepo.totalsForUser(u.id, monthStart),

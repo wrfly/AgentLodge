@@ -111,7 +111,7 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
   const used = byCost ? user.usage.period.costMicro : user.usage.period.billableTokens;
   const cap = user.quota.window;
   const pct = cap ? Math.min(used / cap, 1) : 0;
-  const show = (v: number) => (byCost ? fmtMoney(v) : fmtTokens(v));
+  const show = (v: number) => (byCost ? fmtMoney(v, user.quota.currency) : fmtTokens(v));
 
   const save = async () => {
     setBusy(true);
