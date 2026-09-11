@@ -185,7 +185,14 @@ function ProviderForm({
       </Field>
       {needsEndpoint && (
         <>
-          <Field label="Base URL" hint={t(draft.kind === 'openai-chat' ? 'Ollama is http://127.0.0.1:11434/v1' : 'Root address of the compatibility layer')}>
+          {/* The endpoint is appended per kind and per wire, so what goes here is the root. A
+              pasted endpoint is taken off when it saves, but the hint should say so first. */}
+          <Field
+            label="Base URL"
+            hint={draft.kind === 'openai-chat'
+              ? t('The root, without /chat/completions — Ollama is http://127.0.0.1:11434/v1')
+              : t('The root, without /v1/messages')}
+          >
             <Input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://api.example.com" />
           </Field>
           <Field

@@ -27,13 +27,23 @@ const EMPTY: Draft = { model: '', priceInput: '', priceCacheRead: '', priceCache
 export function PricingCard() {
   const t = useT();
   const [rows, setRows] = useState<PricingRow[] | null>(null);
+  /*
+   * The platform's currency, not the first row's.
+   *
+   * These labels tell somebody which money the boxes below them are in, and reading it off
+   * `rows[0]` made that a guess: the column is per row, so a table holding both says whatever
+   * the oldest row happens to say — and a new row would then be entered in the wrong one.
+   */
+  const [currency, setCurrency] = useState('');
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     try {
-      setRows(await admin.pricing());
+      const d = await admin.pricing();
+      setRows(d.rows);
+      setCurrency(d.currency);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -42,8 +52,6 @@ export function PricingCard() {
   useEffect(() => {
     void load();
   }, []);
-
-  const currency = rows?.[0]?.currency ?? '';
 
   const add = async () => {
     if (!draft.model.trim()) return;

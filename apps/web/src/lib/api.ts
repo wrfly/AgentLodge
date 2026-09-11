@@ -939,7 +939,8 @@ export const admin = {
       body: JSON.stringify(input),
     }),
 
-  pricing: () => request<PricingRow[]>('/api/admin/pricing'),
+  /** The rows, plus the currency a new one should be entered in */
+  pricing: () => request<{ currency: string; rows: PricingRow[] }>('/api/admin/pricing'),
   addPricing: (input: {
     model: string;
     priceInput: number;

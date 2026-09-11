@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { ApiError, api } from '../lib/api';
 import { openEventStream } from '../lib/stream';
+import { t } from '../lib/i18n';
 import { useQuota } from './quota';
 import type {
   ThreadSummary,

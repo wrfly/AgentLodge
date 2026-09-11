@@ -49,7 +49,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const conv = convRepo.full(id, req.user!.id);
     if (!conv) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    return { ...conv, busy: turns.isBusy(id) };
+    return { ...conv, busy: turns.isBusy(id, req.user!.id) };
   });
 
   app.patch('/api/conversations/:id', guard, async (req, reply) => {
@@ -113,7 +113,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const text = (body.text ?? '').trim();
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     try {
       const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
@@ -354,7 +354,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   app.post('/api/conversations/:id/abort', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (!turns.abortConversation(id))
+    if (!turns.abortConversation(id, req.user!.id))
       return reply.code(404).send({ error: tr(req, 'Nothing is running in this conversation') });
     return { ok: true };
   });

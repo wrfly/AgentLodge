@@ -380,7 +380,7 @@ export async function startTurn(
       console.warn(
         `[turns] ${conv.agent} could not resume ${sessionId}; starting a new session: ${first.error}`,
       );
-      convRepo.update(conversationId, userId, { agentSessionId: '' });
+      convRepo.update(convRepo.rootOf(conversationId, userId), userId, { agentSessionId: '' });
       current = startRun(undefined);
       const second = await current.done;
       if (second.error) return second;
