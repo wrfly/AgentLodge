@@ -555,6 +555,27 @@ const EMPTY_TOTALS: Totals = {
 };
 
 /** Everybody's series over a range, one point per bucket, empty ones included */
+/**
+ * One person's series, with a bucket for every hour or day in the range.
+ *
+ * The everybody version below has been padded since the admin chart was found drawing empty
+ * bars over a headline of half a million. This one was not, so a quota month with usage on
+ * one day drew a single bar filling the card, labelled with the same date at both ends — it
+ * looked like a chart of the whole month and was a chart of one day.
+ */
+export function seriesForUserInRange(
+  userId: string,
+  range: Range,
+  unit: 'hour' | 'day',
+): Array<Totals & { t: string }> {
+  const [from, to] = bounds(range);
+  const rows: Array<Totals & { t: string }> =
+    unit === 'hour'
+      ? hourlyForUserRange(userId, range).map(({ hour, ...rest }) => ({ ...rest, t: hour }))
+      : dailyForUserRange(userId, range).map(({ day, ...rest }) => ({ ...rest, t: day }));
+  return padded(rows, from, to, unit, EMPTY_TOTALS);
+}
+
 export function seriesAllInRange(range: Range, unit: 'hour' | 'day'): Array<Totals & { t: string }> {
   const [from, to] = bounds(range);
   const rows: Array<Totals & { t: string }> =

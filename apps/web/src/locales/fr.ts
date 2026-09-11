@@ -215,6 +215,7 @@ export const fr: Record<string, string> = {
   Custom: 'Personnalisé',
   Query: 'Interroger',
   '{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output': '{turns} tours · {calls} appels au fournisseur · entrée {input} · cache {cache} · sortie',
+  'A turn that used two models is counted once here and in both rows': 'Un tour ayant utilisé deux modèles compte une fois ici et une fois dans chaque ligne',
   'By agent and model': 'Par agent et modèle',
   Turns: 'Tours',
   Calls: 'Appels',

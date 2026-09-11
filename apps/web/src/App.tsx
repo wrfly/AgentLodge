@@ -105,8 +105,24 @@ function Shell({ route }: { route: Route }) {
 
   useEffect(() => {
     void loadAgents();
+  }, [loadAgents]);
+
+  /*
+   * On every route change, not once at startup.
+   *
+   * The bar at the foot of the sidebar is on every page, and the only thing that moved it
+   * was a `quota.updated` event — which is published per conversation, so it arrives only
+   * for the one on screen. A turn in another conversation, a turn from the CLI, a second
+   * tab: none of them reach it, and the bar sat on the figure it was loaded with. Clicking
+   * it opened the usage page, which queries afresh, so the two numbers on screen disagreed —
+   * and the stale one was the one that looked authoritative.
+   *
+   * It is three aggregate queries, on navigation, which is rare and is exactly the moment
+   * somebody is about to read it.
+   */
+  useEffect(() => {
     void refreshQuota();
-  }, [loadAgents, refreshQuota]);
+  }, [route.name, refreshQuota]);
 
   /*
    * The sidebar renders on every route, but the bootstrap that fills the

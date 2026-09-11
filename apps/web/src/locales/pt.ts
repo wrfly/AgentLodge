@@ -215,6 +215,7 @@ export const pt: Record<string, string> = {
   Custom: 'Personalizado',
   Query: 'Consultar',
   '{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output': '{turns} turnos · {calls} chamadas ao fornecedor · entrada {input} · cache {cache} · saída',
+  'A turn that used two models is counted once here and in both rows': 'Um turno que usou dois modelos conta uma vez aqui e uma vez em cada linha',
   'By agent and model': 'Por agente e modelo',
   Turns: 'Turnos',
   Calls: 'Chamadas',

@@ -230,6 +230,7 @@ export const zh: Record<string, string> = {
   Custom: '自定义',
   Query: '查询',
   '{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output': '{turns} 轮 · {calls} 次上游调用 · 输入 {input} · 缓存 {cache} · 输出',
+  'A turn that used two models is counted once here and in both rows': '一次对话若用了两个模型，这里只算一次，而上面两行各算一次',
   'By agent and model': '按 agent 与模型',
   Turns: '轮次',
   Calls: '调用',

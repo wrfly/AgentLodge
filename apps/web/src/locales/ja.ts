@@ -230,6 +230,7 @@ export const ja: Record<string, string> = {
   Custom: 'カスタム',
   Query: '検索',
   '{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output': '{turns} ターン · 上流呼び出し {calls} 回 · 入力 {input} · キャッシュ {cache} · 出力',
+  'A turn that used two models is counted once here and in both rows': '2 つのモデルを使ったターンは、ここでは 1 回、上の各行でも 1 回ずつ数えられます',
   'By agent and model': 'agent とモデル別',
   Turns: 'ターン',
   Calls: '呼び出し',

@@ -138,10 +138,8 @@ export function registerMeRoutes(app: FastifyInstance): void {
       quota: quotaStatus,
       range: { ...range, preset: q.preset ?? 'quota' },
       totals: usageRepo.totalsForUser(userId, window),
-      /** Chart data: hourly over a short span, daily over a long one */
-      series: byHour
-        ? usageRepo.hourlyForUserRange(userId, window).map((p) => ({ t: p.hour, ...p }))
-        : usageRepo.dailyForUserRange(userId, window).map((p) => ({ t: p.day, ...p })),
+      /** Chart data: hourly over a short span, daily over a long one, empty buckets included */
+      series: usageRepo.seriesForUserInRange(userId, window, byHour ? 'hour' : 'day'),
       seriesUnit: byHour ? ('hour' as const) : ('day' as const),
       byAgent: usageRepo.byAgentForUser(userId, window),
       byConversation: usageRepo.byConversationForUser(userId, 10, window),
