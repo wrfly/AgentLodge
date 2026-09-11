@@ -216,6 +216,7 @@ export const zhHant: Record<string, string> = {
   Custom: '自訂',
   Query: '查詢',
   '{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output': '{turns} 輪 · {calls} 次上游呼叫 · 輸入 {input} · 快取 {cache} · 輸出',
+  'The turns column adds up to more than the total: a turn that called two models is one turn, counted under each of them.': '「對話數」這一欄的和會大於合計：一次對話若呼叫了兩個模型，它仍是一次對話，但兩列各記一次。',
   'By agent and model': '按 agent 和模型',
   Turns: '輪次',
   Calls: '呼叫',

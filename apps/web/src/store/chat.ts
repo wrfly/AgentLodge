@@ -790,6 +790,14 @@ export const useChat = create<ChatState>((set, get) => ({
     // A thread belongs to the conversation it was opened in, so it does not follow this one
     closeSubStream();
     forgetPanel();
+    /*
+     * The conversation is not in the URL, so navigating to it is invisible to the route
+     * effect that keeps the sidebar's quota bar current. The bar reads a figure that only a
+     * `quota.updated` event moves, and those are published per conversation — so a turn that
+     * ran in the one being opened, from the CLI or another tab, is spend the bar has never
+     * heard of, next to a header that already shows it.
+     */
+    void useQuota.getState().refresh();
     set({ loading: true, activeId: id, messages: [], sidebarOpen: false, notice: null });
     try {
       const conv = await api.getConversation(id);

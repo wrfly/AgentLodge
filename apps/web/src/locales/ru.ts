@@ -230,6 +230,7 @@ export const ru: Record<string, string> = {
   Custom: 'Свой период',
   Query: 'Показать',
   '{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output': 'ходов: {turns} · вызовов: {calls} · вход {input} · кэш {cache} · выход',
+  'The turns column adds up to more than the total: a turn that called two models is one turn, counted under each of them.': 'Сумма столбца «ходы» больше итога: ход, вызвавший две модели, — это один ход, посчитанный в каждой из строк.',
   'By agent and model': 'По агентам и моделям',
   Turns: 'Ходы',
   Calls: 'Вызовы',

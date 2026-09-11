@@ -230,6 +230,7 @@ export const ja: Record<string, string> = {
   Custom: 'カスタム',
   Query: '検索',
   '{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output': '{turns} ターン · 上流呼び出し {calls} 回 · 入力 {input} · キャッシュ {cache} · 出力',
+  'The turns column adds up to more than the total: a turn that called two models is one turn, counted under each of them.': 'ターン数の列の合計は総数より大きくなります。2 つのモデルを呼んだターンは 1 ターンですが、両方の行に数えられます。',
   'By agent and model': 'agent とモデル別',
   Turns: 'ターン',
   Calls: '呼び出し',

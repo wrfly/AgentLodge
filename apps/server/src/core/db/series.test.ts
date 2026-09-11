@@ -130,6 +130,138 @@ console.log('\n=== Nothing spent at all ===');
   ok('all of it zero', s.every((p) => p.billableTokens === 0 && p.turns === 0));
 }
 
+console.log('\n=== One person\'s chart covers the period, not just the days they used it ===');
+{
+  /*
+   * The everybody chart has been padded since it was found drawing empty bars over a headline
+   * of half a million. The per-person one was not, so a quota month with usage on a single
+   * day came back as one bucket: the browser drew one bar filling the card, with the same
+   * date at both ends. It read as a chart of the month and was a chart of one day.
+   */
+  const carol = users.create({
+    email: 'c@example.com', username: 'carol', passwordHash: 'x', role: 'user',
+  }).id;
+  const at = new Date();
+  at.setHours(12, 0, 0, 0);
+  const before = new Date().toISOString();
+  usage.record({ userId: carol, agent: 'claude', status: 'completed', usage: SPEND });
+  run(`update usage_records set created_at = ?, day = ? where user_id = ? and created_at >= ?`,
+    at.toISOString(), dayKey(at), carol, before);
+
+  const from = new Date(at);
+  from.setDate(from.getDate() - 5);
+  from.setHours(0, 0, 0, 0);
+  const to = new Date(at.getTime() + 3600_000);
+  const range = { from: from.toISOString(), to: to.toISOString() };
+
+  const raw = usage.dailyForUserRange(carol, range);
+  const series = usage.seriesForUserInRange(carol, range, 'day');
+  ok('the query still returns only the day that was used', raw.length === 1, String(raw.length));
+  ok('the chart gets one bucket per day in the range', series.length === 6, String(series.length));
+  ok('the empty ones are empty rather than missing',
+    series.filter((p) => p.billableTokens === 0).length === 5, JSON.stringify(series.map((p) => p.billableTokens)));
+  ok('and the total is unchanged by the padding',
+    series.reduce((n, p) => n + p.billableTokens, 0) === usage.totalsForUser(carol, range).billableTokens);
+  ok('the first bucket is the start of the range', series[0]?.t === dayKey(from), `${series[0]?.t} vs ${dayKey(from)}`);
+}
+
+console.log('\n=== A range nobody could chart is not filled in ===');
+{
+  /*
+   * Filling the gaps turned "All time" — written as `from: 1970-01-01` in the route — into
+   * 20 708 daily buckets and a 3.3 MB response, measured. Two answers to that, and both are
+   * here: the route now starts that range at the account's first record, and the padding
+   * itself refuses a range longer than a chart could draw, handing back the rows as they came.
+   */
+  const dave = users.create({
+    email: 'd@example.com', username: 'dave', passwordHash: 'x', role: 'user',
+  }).id;
+  ok('an account that has spent nothing has no first record',
+    usage.firstRecordFor(dave) === undefined, String(usage.firstRecordFor(dave)));
+
+  const at = new Date();
+  at.setHours(9, 0, 0, 0);
+  const before = new Date().toISOString();
+  usage.record({ userId: dave, agent: 'claude', status: 'completed', usage: SPEND });
+  run(`update usage_records set created_at = ?, day = ? where user_id = ? and created_at >= ?`,
+    at.toISOString(), dayKey(at), dave, before);
+  ok('and one that has, has one', usage.firstRecordFor(dave) === at.toISOString(),
+    String(usage.firstRecordFor(dave)));
+
+  const epoch = { from: '1970-01-01T00:00:00.000Z', to: new Date(at.getTime() + 3600_000).toISOString() };
+  const wild = usage.seriesForUserInRange(dave, epoch, 'day');
+  ok('a range back to the epoch comes back unpadded, not with twenty thousand buckets',
+    wild.length === 1, String(wild.length));
+  ok('and still adds up to the total',
+    wild.reduce((n, p) => n + p.billableTokens, 0) === usage.totalsForUser(dave, epoch).billableTokens);
+
+  // The cap is on the range, not on how much of it was used: a month is still filled in
+  const monthAgo = new Date(at);
+  monthAgo.setDate(monthAgo.getDate() - 29);
+  monthAgo.setHours(0, 0, 0, 0);
+  const month = usage.seriesForUserInRange(
+    dave, { from: monthAgo.toISOString(), to: epoch.to }, 'day');
+  ok('a month still gets one bucket per day', month.length === 30, String(month.length));
+}
+
+console.log('\n=== The breakdown adds up to the total printed above it ===');
+{
+  /*
+   * The usage page shows one headline and two breakdowns of the same range, and somebody
+   * reading them against each other has to arrive at the same numbers. They did not: the
+   * per-model table's "In" column carried the cache as well, so it read seven times what the
+   * headline called input, and the headline quoted cache *reads* only — cache writes appeared
+   * nowhere at all. The table now has its own Cache column and a totals row, which only
+   * means anything if these four are additive.
+   *
+   * Turns is the one that is not, and cannot be: a turn that called two models is one turn
+   * and belongs in both rows. Pinned here so the totals row keeps taking it from the total
+   * rather than from the column.
+   */
+  const bob = users.create({
+    email: 'b@example.com', username: 'bob', passwordHash: 'x', role: 'user',
+  }).id;
+  const at = new Date();
+  const call = (turnId: string, model: string, input: number, read: number, write: number) => {
+    const before = new Date().toISOString();
+    usage.record({
+      userId: bob, agent: 'claude', model, turnId, status: 'completed',
+      usage: { inputTokens: input, cacheReadTokens: read, cacheCreationTokens: write,
+               outputTokens: 10, costUsd: 0, durationMs: 1, numTurns: 1 },
+    });
+    run(`update usage_records set created_at = ?, day = ? where user_id = ? and created_at >= ?`,
+      at.toISOString(), dayKey(at), bob, before);
+  };
+  // One turn on two models — Claude Code reaching for a cheaper one mid-turn is routine
+  call('turn-1', 'opus', 100, 1_000, 50);
+  call('turn-1', 'haiku', 10, 0, 0);
+  call('turn-2', 'opus', 200, 2_000, 0);
+
+  const range = { from: new Date(at.getTime() - 3600_000).toISOString(),
+                  to: new Date(at.getTime() + 3600_000).toISOString() };
+  const totals = usage.totalsForUser(bob, range);
+  const byAgent = usage.byAgentForUser(bob, range);
+  const hourly = usage.hourlyForUserRange(bob, range);
+  const add = (rows: Array<Record<string, number>>, k: string) =>
+    rows.reduce((n, r) => n + (r[k] ?? 0), 0);
+
+  for (const field of ['inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens',
+                       'billableTokens', 'costMicro', 'calls'] as const) {
+    ok(`${field} adds up across models`, add(byAgent as never, field) === totals[field],
+      `${add(byAgent as never, field)} vs ${totals[field]}`);
+    ok(`${field} adds up across buckets`, add(hourly as never, field) === totals[field],
+      `${add(hourly as never, field)} vs ${totals[field]}`);
+  }
+  ok('input is input alone, not input plus cache', totals.inputTokens === 310, String(totals.inputTokens));
+  ok('and the cache is both halves of it',
+    totals.cacheReadTokens + totals.cacheCreationTokens === 3_050,
+    `${totals.cacheReadTokens} + ${totals.cacheCreationTokens}`);
+
+  ok('two turns in the total', totals.turns === 2, String(totals.turns));
+  ok('and three across the rows, because one of them used two models',
+    add(byAgent as never, 'turns') === 3, String(add(byAgent as never, 'turns')));
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

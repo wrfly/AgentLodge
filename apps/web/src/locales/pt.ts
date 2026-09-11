@@ -215,6 +215,7 @@ export const pt: Record<string, string> = {
   Custom: 'Personalizado',
   Query: 'Consultar',
   '{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output': '{turns} turnos · {calls} chamadas ao fornecedor · entrada {input} · cache {cache} · saída',
+  'The turns column adds up to more than the total: a turn that called two models is one turn, counted under each of them.': 'A coluna de turnos soma mais do que o total: um turno que chamou dois modelos é um turno, contado em cada uma das linhas.',
   'By agent and model': 'Por agente e modelo',
   Turns: 'Turnos',
   Calls: 'Chamadas',
