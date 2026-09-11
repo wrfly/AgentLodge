@@ -596,12 +596,9 @@ export const de: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': 'Ersetzt die Antwort darunter',
-  'Branches into a new conversation': 'Verzweigt in ein neues Gespräch',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': 'Der Arbeitsbereich konnte nicht kopiert werden, daher startet dieser neue Chat mit einem leeren Verzeichnis',
   'Branch': 'Verzweigen',
   'Edit and ask again': 'Ändern und neu fragen',
-  'Edit, branching from here': 'Ändern, von hier aus verzweigend',
   'Answer again': 'Neu antworten',
   'Retry': 'Wiederholen',
 

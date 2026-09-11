@@ -119,7 +119,13 @@ export function turnArgs(o: RunOptions): string[] {
     '--permission-mode',
     config.permissionMode,
     '--disallowedTools',
-    'Skill',
+    /*
+     * A thread reads the workspace and does not change it. It shares its parent's directory,
+     * so the two could otherwise edit the same file from two turns at once — and a thread
+     * that quietly rewrote a file would reach the main conversation as a change its agent
+     * has no idea happened.
+     */
+    o.readOnly ? 'Skill,Write,Edit,NotebookEdit,Bash' : 'Skill',
   ];
   if (o.model) args.push('--model', o.model);
   if (o.effort) args.push('--effort', o.effort);

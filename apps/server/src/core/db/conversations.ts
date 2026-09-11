@@ -542,30 +542,6 @@ function textOf(blocks: MessageBlock[]): string {
   return blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('').trim();
 }
 
-
-/**
- * Every conversation sharing this one's CLI session — the family, itself included.
- *
- * One turn at a time per session: the CLI's transcript is a single stream, and two members
- * writing to it concurrently would corrupt it. The busy checks and the abort path both use
- * this, so a turn in the sub-conversation makes the parent busy and vice versa.
- */
-export function familyIds(conversationId: string, userId: string): string[] {
-  const root = rootOf(conversationId, userId);
-  return all<{ id: string }>(
-    `with recursive family as (
-       select id from conversations where id = ? and user_id = ?
-       union all
-       select c.id from conversations c join family f on c.parent_id = f.id
-       where c.user_id = ?
-     )
-     select id from family`,
-    root,
-    userId,
-    userId,
-  ).map((r) => r.id);
-}
-
 export function idsForUser(userId: string): string[] {
   return all<{ id: string }>('select id from conversations where user_id = ?', userId).map((r) => r.id);
 }

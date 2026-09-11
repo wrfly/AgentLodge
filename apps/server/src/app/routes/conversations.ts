@@ -47,7 +47,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const conv = convRepo.full(id, req.user!.id);
     if (!conv) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    return { ...conv, busy: turns.isBusy(id, req.user!.id) };
+    return { ...conv, busy: turns.isBusy(id) };
   });
 
   app.patch('/api/conversations/:id', guard, async (req, reply) => {
@@ -79,7 +79,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const conv = convRepo.meta(id, req.user!.id);
     if (!conv) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    turns.abortConversation(id, req.user!.id);
+    turns.abortConversation(id);
     convRepo.remove(id, req.user!.id);
     dropChannel(id);
     // The working directory goes with it, or disk use only ever grows. A sub-conversation
@@ -100,7 +100,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const text = (body.text ?? '').trim();
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+    if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     try {
       const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
@@ -115,13 +115,15 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   });
 
   /**
-   * Edit something already asked.
+   * Correct the newest question. The answer to it goes, and the corrected question is asked
+   * in its place.
    *
-   * Which of two things that means is decided here rather than offered as a choice, because
-   * the position says the intent. Correcting the newest question means the answer to it was
-   * to the wrong question: it goes, and the corrected one is asked in its place. Editing
-   * something from several turns back is not a correction — the exchanges after it happened,
-   * and somebody may still want them — so it branches instead.
+   * The newest, and nothing earlier. Editing something from several turns back used to branch
+   * the conversation, and the semantics did not survive having a workspace: the agent had
+   * spent those turns reading files, writing code, running commands, and none of that can be
+   * rewound. A branch at turn three carrying turn ten's directory is a conversation whose
+   * agent is looking at code it never wrote. Asking about an older passage is what a thread
+   * is for — it asks from here about back there, which is what actually happened.
    */
   app.post('/api/conversations/:id/messages/:messageId/edit', guard, async (req, reply) => {
     const { id, messageId } = req.params as { id: string; messageId: string };
@@ -129,28 +131,27 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const text = (body.text ?? '').trim();
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+    if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     const at = convRepo.messageAt(id, req.user!.id, messageId);
     if (!at) return reply.code(404).send({ error: tr(req, 'No such message') });
     if (at.role !== 'user') return reply.code(400).send({ error: tr(req, 'Only a question can be edited') });
 
     const last = convRepo.lastUserMessage(id, req.user!.id);
-    const inPlace = last?.id === messageId;
+    if (last?.id !== messageId) {
+      return reply.code(400).send({
+        error: tr(req, 'Only the newest question can be edited. Select the passage and open a thread instead.'),
+      });
+    }
 
     try {
-      if (!inPlace) {
-        const r = await turns.forkAt(id, req.user!.id, messageId, text);
-        reply.code(202);
-        return { forked: true, ...r };
-      }
       // The question and whatever was answered to it
       const cut = convRepo.truncateFrom(id, req.user!.id, at.seq);
       try {
         rememberDiscarded(id, cut);
         const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
         reply.code(202);
-        return { forked: false, turnId, userMessage };
+        return { turnId, userMessage };
       } catch (err) {
         // The turn never started — a quota that ran out, an engine that is down — so the
         // question goes back. It is the only copy, and answering 402 over the space where it
@@ -178,7 +179,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { model?: string; effort?: string };
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+    if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     const last = convRepo.lastUserMessage(id, req.user!.id);
     if (!last) return reply.code(400).send({ error: tr(req, 'There is nothing to retry yet') });
@@ -240,7 +241,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
     const parent = convRepo.meta(id, req.user!.id);
     if (!parent) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id, req.user!.id))
+    if (turns.isBusy(id))
       return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     const child = convRepo.create({
@@ -313,7 +314,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   app.post('/api/conversations/:id/abort', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (!turns.abortConversation(id, req.user!.id))
+    if (!turns.abortConversation(id))
       return reply.code(404).send({ error: tr(req, 'Nothing is running in this conversation') });
     return { ok: true };
   });

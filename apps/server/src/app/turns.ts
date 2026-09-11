@@ -69,18 +69,20 @@ const active = new Map<string, ActiveTurn>();
 const byTurnId = new Map<string, ActiveTurn>();
 
 /**
- * Whether any turn is running in the conversation's family.
+ * Whether a turn is running in this conversation.
  *
- * A sub-conversation shares its parent's CLI session, and a session has one transcript —
- * two members writing to it concurrently would interleave and corrupt it. So "busy" is a
- * family question: a turn in the sub makes the parent busy and vice versa.
+ * This conversation, not its family. It used to be a family question because a thread
+ * resumed its parent's session and a session has one transcript, so two members writing to
+ * it at once would interleave. They have their own sessions now, and the lock outlived its
+ * reason: a side question froze the whole main conversation until it finished, which is the
+ * one thing asking off to the side is meant to avoid. Ask in the panel so you can keep
+ * working, and you could not keep working.
+ *
+ * What the family still shares is the directory, and that is handled where it belongs — a
+ * thread runs read-only (see `RunOptions.readOnly`), so there is no second writer to race.
  */
-export function isBusy(conversationId: string, userId?: string): boolean {
-  if (!userId) return active.has(conversationId);
-  for (const id of convRepo.familyIds(conversationId, userId)) {
-    if (active.has(id)) return true;
-  }
-  return false;
+export function isBusy(conversationId: string): boolean {
+  return active.has(conversationId);
 }
 
 export function activeCountForUser(userId: string): number {
@@ -89,22 +91,18 @@ export function activeCountForUser(userId: string): number {
   return n;
 }
 
-/** Stop whichever member of the family is generating */
-export function abortConversation(conversationId: string, userId?: string): boolean {
-  if (!userId) {
-    const t = active.get(conversationId);
-    if (!t) return false;
-    t.running.abort();
-    return true;
-  }
-  let aborted = false;
-  for (const id of convRepo.familyIds(conversationId, userId)) {
-    const t = active.get(id);
-    if (!t) continue;
-    t.running.abort();
-    aborted = true;
-  }
-  return aborted;
+/**
+ * Stop this conversation's turn.
+ *
+ * This one, not its family. It stopped everything in the family back when one turn at a time
+ * was all a family could have; now a thread runs alongside the conversation it was opened
+ * in, and stopping the side question would have stopped the main work with it.
+ */
+export function abortConversation(conversationId: string): boolean {
+  const t = active.get(conversationId);
+  if (!t) return false;
+  t.running.abort();
+  return true;
 }
 
 export function abortTurn(turnId: string): boolean {
@@ -170,80 +168,8 @@ export class QuotaExceededError extends Error {
   }
 }
 
-/* ---------------- Forking ---------------- */
+/* ---------------- Replaying a conversation as text ---------------- */
 
-/**
- * Regenerable, and usually the bulk of a workspace by an order of magnitude. A fork that
- * copies them turns a cheap branch into a gigabyte.
- */
-const NOT_WORTH_COPYING = new Set(['node_modules', '.venv', 'venv', '__pycache__', '.next', 'dist', 'build', 'target']);
-/** Past this the copy is refused outright and the fork starts on an empty directory */
-const MAX_FORK_BYTES = 200 * 1024 * 1024;
-
-async function dirSize(root: string): Promise<number> {
-  let total = 0;
-  const walk = async (dir: string): Promise<void> => {
-    let entries: Dirent[];
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (NOT_WORTH_COPYING.has(e.name)) continue;
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) await walk(full);
-      else if (e.isFile()) {
-        try {
-          total += (await fs.stat(full)).size;
-        } catch {
-          /* vanished between readdir and stat */
-        }
-      }
-      if (total > MAX_FORK_BYTES) return;
-    }
-  };
-  await walk(root);
-  return total;
-}
-
-/**
- * Copy what the source conversation built into the fork's own directory.
- *
- * Without it the forked agent is told it wrote a file and then cannot see it: the transcript
- * we replay says "created sort.py" while `ls` says otherwise, and every instruction that
- * refers to earlier work fails on a directory that does not contain it.
- *
- * Returns whether the files came across, because a fork that starts empty is a different
- * thing to be told about than one that did not.
- */
-export async function copyWorkspace(from: string, to: string): Promise<boolean> {
-  try {
-    await fs.access(from);
-  } catch {
-    return false;                       // nothing was ever written there
-  }
-  if ((await dirSize(from)) > MAX_FORK_BYTES) return false;
-  await fs.mkdir(to, { recursive: true });
-  await fs.cp(from, to, {
-    recursive: true,
-    // A dangling symlink would abort the whole copy
-    dereference: false,
-    /*
-     * Copy the link's own text, not where it currently points.
-     *
-     * Without this Node resolves each target, so `./real.txt` and `../real.txt` come out as
-     * absolute paths **into the source conversation's directory** — the forked agent writes
-     * through one and edits the conversation it was forked from, which is the one thing the
-     * copy exists to prevent, and it does it silently.
-     */
-    verbatimSymlinks: true,
-    filter: (src) => !NOT_WORTH_COPYING.has(path.basename(src)),
-  });
-  return true;
-}
-
-/** What the forked agent is told happened before it existed */
 /**
  * As much of the tail of a conversation as fits.
  *
@@ -276,95 +202,6 @@ export function transcript(messages: StoredMessage[]): string {
   return lines.filter(Boolean).join('\n\n');
 }
 
-export interface ForkResult {
-  conversationId: string;
-  turnId: string;
-  userMessage: StoredMessage;
-  /** False when the source workspace was too large or never existed */
-  filesCopied: boolean;
-}
-
-/**
- * Branch a conversation at one of its messages, with an edited version of that message.
- *
- * Editing something said several turns ago is not a correction, it is a different path from
- * that point — so it becomes its own conversation rather than rewriting one somebody may
- * still want. The two then diverge properly: separate CLI sessions, separate directories,
- * both still there.
- *
- * The agent's own memory cannot be branched — the CLI's session is an opaque handle and
- * there is no rewinding it — so the fork starts a new one and is handed the kept messages as
- * text. That is the words, not the doing: tool calls are not replayed, which is exactly why
- * the directory is copied instead.
- */
-export async function forkAt(
-  conversationId: string,
-  userId: string,
-  messageId: string,
-  text: string,
-): Promise<ForkResult> {
-  const source = convRepo.meta(conversationId, userId);
-  if (!source) throw new Error('No such conversation');
-  const at = convRepo.messageAt(conversationId, userId, messageId);
-  if (!at) throw new Error('No such message');
-  if (at.role !== 'user') throw new Error('Only a question can be edited');
-
-  const kept = convRepo.messagesBefore(conversationId, userId, at.seq);
-  const fork = convRepo.create({
-    userId,
-    agent: source.agent,
-    // Named after the question that made it. Inheriting the source's title put two
-    // byte-identical rows in the sidebar, the fork directly above its twin on a fresher
-    // `updated_at`, with nothing to tell them apart.
-    title: convRepo.deriveTitle(text),
-    model: source.model,
-    effort: source.effort,
-    thinking: source.thinking,
-  });
-
-  const filesCopied = await copyWorkspace(
-    workspaceDir(userId, conversationId),
-    workspaceDir(userId, fork.id),
-  );
-
-  // Kept messages are copied verbatim so the branch reads as a whole conversation rather
-  // than as an orphaned question
-  for (const m of kept) {
-    convRepo.appendMessage(fork.id, userId, {
-      role: m.role,
-      blocks: m.blocks,
-      usage: m.usage,
-      error: m.error,
-      aborted: m.aborted,
-      createdAt: m.createdAt,
-    });
-  }
-
-  const prior = transcript(kept);
-  const prompt = prior
-    ? `The conversation so far, which you did not take part in:\n\n${prior}\n\n---\n\n${text}`
-    : text;
-
-  let started;
-  try {
-    started = await startTurn(fork.id, userId, prompt);
-  } catch (err) {
-    /*
-     * The branch never got its first turn — a quota that ran out, an engine that is down.
-     * Everything above already happened: a row in the sidebar, a copy of the transcript, and
-     * up to two hundred megabytes of somebody's files. The caller gets a 402 and never learns
-     * this exists, so it has to go.
-     */
-    convRepo.remove(fork.id, userId);
-    await fs.rm(workspaceDir(userId, fork.id), { recursive: true, force: true }).catch(() => {});
-    throw err;
-  }
-  const { turnId, userMessage } = started;
-  // The stored message is what the user actually asked, not the replay wrapped around it
-  convRepo.rewriteMessage(fork.id, userId, userMessage.id, text);
-  return { conversationId: fork.id, turnId, userMessage: { ...userMessage, blocks: [{ kind: 'text', blockId: 0, text }] }, filesCopied };
-}
-
 export interface StartTurnResult {
   turnId: string;
   userMessage: StoredMessage;
@@ -377,7 +214,7 @@ export async function startTurn(
 ): Promise<StartTurnResult> {
   const conv = convRepo.meta(conversationId, userId);
   if (!conv) throw new Error('No such conversation');
-  if (isBusy(conversationId, userId)) throw new Error('This conversation is already generating');
+  if (isBusy(conversationId)) throw new Error('This conversation is already generating');
 
   const verdict = quota.check(userId);
   if (!verdict.allow) {
@@ -478,6 +315,8 @@ export async function startTurn(
       containerName,
       containerCwd,
       memoryDir: containers.enabled() ? memory.containerDir() : memory.dir(userId),
+      // A thread shares its parent's directory, so it reads and does not write
+      readOnly: Boolean(conv.parentId),
       resumeSessionId,
       // No model on the conversation, then the active provider's default, then the
       // environment, then whatever the CLI decides

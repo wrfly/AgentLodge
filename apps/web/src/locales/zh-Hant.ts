@@ -597,12 +597,9 @@ export const zhHant: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': '替換下面那條回覆',
-  'Branches into a new conversation': '分叉出一條新對話',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': '工作區複製失敗，這個新會話從空目錄開始',
   'Branch': '分叉',
   'Edit and ask again': '改一下重新問',
-  'Edit, branching from here': '從這裡分叉著改',
   'Answer again': '重新回答',
   'Retry': '重試',
 

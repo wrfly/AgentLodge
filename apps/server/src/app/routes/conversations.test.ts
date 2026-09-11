@@ -92,9 +92,8 @@ console.log('\n=== Correcting the newest question answers it in place ===');
 {
   const { id, ids } = conversationOf(['sort it', 'wrote sort.py']);
   const res = await post(`/api/conversations/${id}/messages/${ids[0]}/edit`, { text: 'sort it by size' });
-  const body = res.json() as { forked?: boolean; userMessage?: { id: string; blocks: Array<{ text?: string }> } };
+  const body = res.json() as { userMessage?: { id: string; blocks: Array<{ text?: string }> } };
   ok('202', res.statusCode === 202, String(res.statusCode));
-  ok('the answer is replaced in place', body.forked === false);
   ok('the corrected question is stored', body.userMessage?.blocks[0]?.text === 'sort it by size');
   await settle();
   const conv = convRepo.full(id, alice.id)!;
@@ -103,33 +102,21 @@ console.log('\n=== Correcting the newest question answers it in place ===');
     trims.forConversation(id).includes('wrote sort.py'));
 }
 
-console.log('\n=== Editing an older question branches ===');
+console.log('\n=== An older question cannot be edited ===');
 {
+  /*
+   * It used to branch the conversation, and the semantics did not survive having a
+   * workspace: the agent spent those turns writing files, none of it can be rewound, and a
+   * branch at turn three carrying turn ten's directory is a conversation whose agent is
+   * looking at code it never wrote. Asking about an older passage is what a thread does, and
+   * a thread asks from here about back there — which is what actually happened.
+   */
   const { id, ids } = conversationOf(['sort it', 'wrote sort.py', 'make it quicksort', 'now quicksort']);
   const res = await post(`/api/conversations/${id}/messages/${ids[0]}/edit`, { text: 'sort it by hand' });
-  const body = res.json() as { forked?: boolean; conversationId?: string; filesCopied?: boolean; userMessage?: { blocks: Array<{ text?: string }> } };
-  ok('202', res.statusCode === 202, String(res.statusCode));
-  ok('it says it branched', body.forked === true);
-  ok('with the corrected question as its first message', body.userMessage?.blocks[0]?.text === 'sort it by hand');
-  await settle();
-  const fork = convRepo.full(body.conversationId!, alice.id)!;
-  ok('the branch keeps what came before', fork.messages.length === 1, String(fork.messages.length));
-  ok('and the source is untouched', convRepo.full(id, alice.id)!.messages.length === 4);
-  ok('an empty source directory means no files came over', body.filesCopied === false);
-}
-
-console.log('\n=== A branch with a real workspace copies it ===');
-{
-  // Two questions, so editing the first one branches rather than re-answers in place
-  const { id, ids } = conversationOf(['sort it', 'wrote sort.py', 'make it quicksort', 'now quicksort']);
-  const dir = path.join(box, 'workspaces', alice.id, id);
-  await fsp.mkdir(dir, { recursive: true });
-  await fsp.writeFile(path.join(dir, 'sort.py'), 'def sort(): pass\n');
-  const res = await post(`/api/conversations/${id}/messages/${ids[0]}/edit`, { text: 'sort it by hand' });
-  const body = res.json() as { filesCopied?: boolean; conversationId?: string };
-  ok('the workspace came over', body.filesCopied === true, JSON.stringify(body));
-  const forkDir = path.join(box, 'workspaces', alice.id, body.conversationId!);
-  ok('and the file is in the branch', fs.existsSync(path.join(forkDir, 'sort.py')));
+  ok('400', res.statusCode === 400, String(res.statusCode));
+  ok('and it says where to go instead',
+    /thread/i.test((res.json() as { error?: string }).error ?? ''), (res.json() as { error?: string }).error);
+  ok('the conversation is left alone', convRepo.full(id, alice.id)!.messages.length === 4);
 }
 
 console.log('\n=== Retrying re-asks the newest question ===');

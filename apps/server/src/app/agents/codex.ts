@@ -133,7 +133,8 @@ function runTurn(o: RunOptions): RunningTurn {
 
   // The resume subcommand takes neither --sandbox nor -C, but both paths accept -c, so
   // sandbox_mode goes through -c uniformly and the working directory comes from spawn's cwd.
-  args.push('-c', `sandbox_mode="${config.codexSandbox}"`);
+  // A thread reads the workspace and does not change it; see RunOptions.readOnly
+  args.push('-c', `sandbox_mode="${o.readOnly ? 'read-only' : config.codexSandbox}"`);
   args.push(...codexProviderArgs(o.runtimeToken, Boolean(o.containerName)));
 
   if (o.model) args.push('-m', o.model);

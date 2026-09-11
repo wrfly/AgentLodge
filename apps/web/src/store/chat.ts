@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { ApiError, api } from '../lib/api';
 import { openEventStream } from '../lib/stream';
-import { t } from '../lib/i18n';
 import { useQuota } from './quota';
 import type {
   ThreadSummary,
@@ -195,8 +194,8 @@ interface ChatState {
   ensureConversation: () => Promise<string | null>;
   select: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
-  /** Correct a question. Returns the branch's id when editing an older one made one. */
-  editMessage: (messageId: string, text: string) => Promise<string | null>;
+  /** Correct the newest question: its answer goes and the corrected question is re-asked */
+  editMessage: (messageId: string, text: string) => Promise<void>;
   /** Ask the newest question again, optionally somewhere else */
   retry: (opts?: { model?: string; effort?: string }) => Promise<void>;
   /** Open the panel on the list of threads, without opening any of them */
@@ -818,29 +817,16 @@ export const useChat = create<ChatState>((set, get) => ({
    */
   async editMessage(messageId, text) {
     const id = get().activeId;
-    if (!id || get().streaming) return null;
+    if (!id || get().streaming) return;
     try {
       const r = await api.editMessage(id, messageId, text);
-      if (r.forked) {
-        await get().refreshList();
-        await get().select(r.conversationId);
-        set({
-          streaming: true,
-          // A branch that could not take the workspace with it is a different thing to be
-          // told about than one that did — the agent has nothing to look at but the words
-          notice: r.filesCopied ? null : t('The workspace could not be copied, so this conversation starts with an empty directory'),
-        });
-        return r.conversationId;
-      }
       set((s) => ({
         messages: [...cutAt(s.messages, messageId), toChatMessage(r.userMessage)],
         streaming: true,
       }));
-      return null;
     } catch (err) {
       if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
       set({ error: err instanceof Error ? err.message : String(err) });
-      return null;
     }
   },
 

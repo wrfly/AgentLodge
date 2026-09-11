@@ -623,12 +623,9 @@ export const ja: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': '下の回答を置き換えます',
-  'Branches into a new conversation': '新しい会話に分岐します',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': 'ワークスペースをコピーできなかったため、この新しい会話は空のディレクトリから始まります',
   'Branch': '分岐',
   'Edit and ask again': '直して聞き直す',
-  'Edit, branching from here': 'ここから分岐して編集',
   'Answer again': 'もう一度答えさせる',
   'Retry': '再試行',
 

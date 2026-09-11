@@ -596,12 +596,9 @@ export const pt: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': 'Substitui a resposta abaixo',
-  'Branches into a new conversation': 'Ramifica para uma conversa nova',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': 'Não foi possível copiar o espaço de trabalho, então esta nova conversa começa com uma pasta vazia',
   'Branch': 'Ramificar',
   'Edit and ask again': 'Corrigir e perguntar de novo',
-  'Edit, branching from here': 'Editar, ramificando daqui',
   'Answer again': 'Responder de novo',
   'Retry': 'Tentar de novo',
 

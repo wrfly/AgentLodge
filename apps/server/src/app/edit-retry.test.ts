@@ -29,6 +29,7 @@ const convRepo = await import('../core/db/conversations.js');
 const trims = await import('../core/db/trims.js');
 const users = await import('../core/db/users.js');
 const turns = await import('./turns.js');
+const claude = await import('./agents/claude.js');
 
 let pass = 0;
 let fail = 0;
@@ -168,14 +169,6 @@ console.log('\n=== A sub-conversation resolves to its parent for workspace and s
     convRepo.rootOf(grandchild.id, alice));
   ok('and a plain conversation is its own root', convRepo.rootOf(parent.id, alice) === parent.id);
 
-  ok('the family is the root plus every descendant',
-    JSON.stringify(convRepo.familyIds(grandchild.id, alice).sort()) ===
-      JSON.stringify([parent.id, child.id, grandchild.id].sort()),
-    JSON.stringify(convRepo.familyIds(grandchild.id, alice)));
-  ok('and from the root it is the whole family',
-    JSON.stringify(convRepo.familyIds(parent.id, alice).sort()) ===
-      JSON.stringify([parent.id, child.id, grandchild.id].sort()));
-
   /*
    * Sessions are not shared, and that is the point of a thread: a shared one made the two a
    * single transcript in the model's eyes, so everything asked off to one side came back in
@@ -193,24 +186,6 @@ console.log('\n=== A sub-conversation resolves to its parent for workspace and s
     turns.workspaceDir(alice, child.id) === turns.workspaceDir(alice, parent.id));
   ok('and the grandchild\'s too',
     turns.workspaceDir(alice, grandchild.id) === turns.workspaceDir(alice, parent.id));
-}
-
-console.log('\n=== The branch gets the files its transcript talks about ===');
-{
-  const from = path.join(box, 'src-ws');
-  const to = path.join(box, 'fork-ws');
-  await fsp.mkdir(path.join(from, 'node_modules', 'left-pad'), { recursive: true });
-  await fsp.writeFile(path.join(from, 'sort.py'), 'def sort(): pass\n');
-  await fsp.writeFile(path.join(from, 'node_modules', 'left-pad', 'index.js'), 'x'.repeat(1000));
-
-  ok('the copy reports it happened', (await turns.copyWorkspace(from, to)) === true);
-  ok('the work came across', fs.existsSync(path.join(to, 'sort.py')));
-  ok('what can be regenerated did not', !fs.existsSync(path.join(to, 'node_modules')));
-
-  const missing = path.join(box, 'never-written');
-  ok('a directory that was never written is not an error',
-    (await turns.copyWorkspace(missing, path.join(box, 'fork-2'))) === false);
-  ok('and leaves no half-made copy behind', !fs.existsSync(path.join(box, 'fork-2')));
 }
 
 console.log('\n=== What a thread is handed, and how much of it ===');
@@ -270,6 +245,31 @@ console.log('\n=== A thread is labelled by the passage, not by the prompt ===');
   });
   ok('a thread opened without a quotation keeps its whole first message',
     convRepo.listThreads(parent.id, alice).find((x) => x.id === plain.id)?.about === 'just a question, no quotation');
+}
+
+console.log('\n=== A thread runs beside the conversation, not instead of it ===');
+{
+  /*
+   * The lock used to be a family question, because a thread resumed its parent's session and
+   * a session has one transcript. They have their own sessions now, and the lock outlived its
+   * reason: asking anything in the panel froze the main conversation until it answered, which
+   * is the one thing asking off to the side exists to avoid.
+   *
+   * What the family still shares is the directory. That is handled by the thread reading and
+   * not writing, rather than by stopping everything else.
+   */
+  const parent = convRepo.create({ userId: alice, agent: 'claude' });
+  const thread = convRepo.create({ userId: alice, agent: 'claude', parentId: parent.id });
+  ok('neither is busy to begin with', !turns.isBusy(parent.id) && !turns.isBusy(thread.id));
+
+  const base = { prompt: 'x', cwd: '/tmp', onEvent: () => {}, onSessionId: () => {} };
+  const open = claude.turnArgs({ ...base });
+  const shut = claude.turnArgs({ ...base, readOnly: true });
+  const toolsOf = (a: string[]) => a[a.indexOf('--disallowedTools') + 1] ?? '';
+  ok('a conversation may write', !/Write/.test(toolsOf(open)), toolsOf(open));
+  ok('a thread may not', /Write/.test(toolsOf(shut)) && /Edit/.test(toolsOf(shut)), toolsOf(shut));
+  ok('and may not shell out either', /Bash/.test(toolsOf(shut)));
+  ok('reading is still allowed', !/(^|,)Read(,|$)/.test(toolsOf(shut)), toolsOf(shut));
 }
 
 fs.rmSync(box, { recursive: true, force: true });

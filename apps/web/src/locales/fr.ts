@@ -596,12 +596,9 @@ export const fr: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': 'Remplace la réponse ci-dessous',
-  'Branches into a new conversation': 'Bifurque vers une nouvelle conversation',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': "L'espace de travail n'a pas pu être copié, cette nouvelle conversation commence donc avec un dossier vide",
   'Branch': 'Bifurquer',
   'Edit and ask again': 'Corriger et redemander',
-  'Edit, branching from here': 'Modifier, en bifurquant d’ici',
   'Answer again': 'Répondre à nouveau',
   'Retry': 'Réessayer',
 

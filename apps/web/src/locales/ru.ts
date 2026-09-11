@@ -623,12 +623,9 @@ export const ru: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': 'Заменит ответ ниже',
-  'Branches into a new conversation': 'Ветвится в новый разговор',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': 'Не удалось скопировать рабочую область, поэтому новый разговор начинается с пустой папки',
   'Branch': 'Ветвить',
   'Edit and ask again': 'Исправить и спросить снова',
-  'Edit, branching from here': 'Изменить, ответвившись отсюда',
   'Answer again': 'Ответить заново',
   'Retry': 'Заново',
 

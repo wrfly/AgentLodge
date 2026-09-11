@@ -130,12 +130,17 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
     (s) => [...s.messages].reverse().find((m) => m.role === 'user')?.id === message.id,
   );
   /*
-   * A message that has not reached the server yet has no id to edit by — and nothing in the
-   * thread panel is editable at all, because `editMessage` acts on the conversation the page
-   * is on. Offering the button there would let somebody rewrite a question in the
-   * conversation behind the panel while looking at a different one.
+   * The newest question only.
+   *
+   * Editing an older one used to branch the conversation, and the semantics did not survive
+   * having a workspace: the agent had spent those turns writing files, and none of it can be
+   * rewound, so a branch at turn three was a conversation looking at turn ten's directory.
+   * Asking about an older passage is what a thread is for.
+   *
+   * Also not in the thread panel, where `editMessage` would act on the conversation the page
+   * is on rather than the one being read.
    */
-  const savable = !inThread && !message.id.startsWith('local-');
+  const savable = isLastQuestion && !inThread && !message.id.startsWith('local-');
 
   const save = async () => {
     const next = draft.trim();
@@ -163,13 +168,13 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
           />
           <div className="mt-2 flex items-center justify-end gap-2">
             <span className="mr-auto text-[11.5px] text-faint">
-              {isLastQuestion ? t('Replaces the answer below') : t('Branches into a new conversation')}
+              {t('Replaces the answer below')}
             </span>
             <Button variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
               {t('Cancel')}
             </Button>
             <Button onClick={() => void save()} disabled={busy || !draft.trim()}>
-              {isLastQuestion ? t('Send') : t('Branch')}
+              {t('Send')}
             </Button>
           </div>
         </div>
@@ -186,7 +191,7 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
         {savable && !streaming && (
           <button
             onClick={() => { setDraft(text); setEditing(true); }}
-            title={isLastQuestion ? t('Edit and ask again') : t('Edit, branching from here')}
+            title={t('Edit and ask again')}
             className="mt-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100"
           >
             <Pencil size={11} />
