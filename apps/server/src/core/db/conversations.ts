@@ -5,6 +5,7 @@ import type {
   Conversation,
   ConversationSummary,
   MessageBlock,
+  ThreadSummary,
   StoredMessage,
   TurnUsage,
 } from '../protocol.js';
@@ -442,6 +443,46 @@ export function rootOf(conversationId: string, userId: string): string {
     id = r.parent_id;
   }
   return id;
+}
+
+/**
+ * The threads opened inside one conversation, newest first.
+ *
+ * They are kept out of `list()` so the sidebar stays a list of conversations, which left them
+ * reachable only while their panel was open — close it and the thread was still on the
+ * server with its answer in it and no way back. This is the way back.
+ *
+ * The label is the thread's own first message, which is the passage that was selected to
+ * open it. Nothing else has to be stored to say what a thread is about.
+ */
+export function listThreads(parentId: string, userId: string): ThreadSummary[] {
+  if (!exists(parentId, userId)) return [];
+  return all<{ id: string; created_at: string; opener: string | null; n: number }>(
+    `select c.id, c.created_at,
+            (select m.blocks from messages m
+              where m.conversation_id = c.id and m.role = 'user'
+              order by m.seq limit 1) as opener,
+            (select count(*) from messages m where m.conversation_id = c.id) as n
+       from conversations c
+      where c.parent_id = ? and c.user_id = ? and c.status = 'active'
+      order by c.created_at desc`,
+    parentId,
+    userId,
+  ).map((r) => ({
+    id: r.id,
+    createdAt: r.created_at,
+    messageCount: r.n,
+    about: textOf(parseJson<MessageBlock[]>(r.opener, [])),
+  }));
+}
+
+/** The readable part of a stored message, for a one-line label */
+function textOf(blocks: MessageBlock[]): string {
+  return blocks
+    .map((b) => (b.kind === 'text' ? b.text : ''))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** The root's CLI session id — the one every member of the family resumes */

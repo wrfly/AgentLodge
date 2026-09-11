@@ -609,4 +609,16 @@ export const zhHant: Record<string, string> = {
   // The thread opened on a selection
   'Ask about this': '就這段提問',
   'Thread': '支線',
+  'Threads': '支線',
+
+  'All threads': '全部支線',
+
+  'No threads yet. Select a passage in the conversation to start one.': '還沒有支線。在對話裡選中一段話就能開一條。',
+  'Tell me more about this.': '我想了解更多關於它的資訊。',
+
+
+
+  'What do you want to know about it?': '你想知道關於它的什麼？',
+
+  'Ask': '提問',
 };

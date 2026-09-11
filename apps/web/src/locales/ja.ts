@@ -635,4 +635,16 @@ export const ja: Record<string, string> = {
   // The thread opened on a selection
   'Ask about this': 'ここについて聞く',
   'Thread': 'スレッド',
+  'Threads': 'スレッド',
+
+  'All threads': 'すべてのスレッド',
+
+  'No threads yet. Select a passage in the conversation to start one.': 'まだスレッドがありません。会話の一節を選ぶと始められます。',
+  'Tell me more about this.': 'これについてもっと知りたい。',
+
+
+
+  'What do you want to know about it?': 'これの何が知りたいですか？',
+
+  'Ask': '質問する',
 };

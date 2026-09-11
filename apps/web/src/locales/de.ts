@@ -608,4 +608,16 @@ export const de: Record<string, string> = {
   // The thread opened on a selection
   'Ask about this': 'Dazu nachfragen',
   'Thread': 'Thread',
+  'Threads': 'Threads',
+
+  'All threads': 'Alle Threads',
+
+  'No threads yet. Select a passage in the conversation to start one.': 'Noch keine Threads. Markieren Sie eine Stelle im Gespräch, um einen zu beginnen.',
+  'Tell me more about this.': 'Erzähl mir mehr darüber.',
+
+
+
+  'What do you want to know about it?': 'Was möchten Sie darüber wissen?',
+
+  'Ask': 'Fragen',
 };

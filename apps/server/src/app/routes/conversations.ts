@@ -247,6 +247,20 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     }
   });
 
+  /**
+   * The threads opened inside this conversation.
+   *
+   * Threads are deliberately absent from the sidebar — a thread is part of the conversation
+   * it was opened in, not a conversation of its own — which left them with no way back once
+   * their panel was closed. They are listed from here instead.
+   */
+  app.get('/api/conversations/:id/threads', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!convRepo.exists(id, req.user!.id))
+      return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    return convRepo.listThreads(id, req.user!.id);
+  });
+
   app.post('/api/conversations/:id/abort', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });

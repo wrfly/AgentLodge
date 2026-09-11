@@ -635,4 +635,16 @@ export const ru: Record<string, string> = {
   // The thread opened on a selection
   'Ask about this': 'Спросить об этом',
   'Thread': 'Ветка',
+  'Threads': 'Ветки',
+
+  'All threads': 'Все ветки',
+
+  'No threads yet. Select a passage in the conversation to start one.': 'Веток пока нет. Выделите фрагмент разговора, чтобы начать.',
+  'Tell me more about this.': 'Расскажи об этом подробнее.',
+
+
+
+  'What do you want to know about it?': 'Что вы хотите об этом узнать?',
+
+  'Ask': 'Спросить',
 };

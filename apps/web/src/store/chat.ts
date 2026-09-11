@@ -4,6 +4,7 @@ import { openEventStream } from '../lib/stream';
 import { t } from '../lib/i18n';
 import { useQuota } from './quota';
 import type {
+  ThreadSummary,
   AgentId,
   ConversationSummary,
   MessageBlock,
@@ -66,6 +67,18 @@ function toLive(b: MessageBlock): LiveBlock {
     };
   }
   return { kind: b.kind, blockId: b.blockId, text: b.text, streaming: false };
+}
+
+/**
+ * A passage and a question about it, as one prompt.
+ *
+ * Markdown quotation rather than a sentence introducing it: the agent reads the same
+ * convention everybody else does, and the thread's own transcript then shows the passage as
+ * a quote above the question rather than as a wall of somebody else's words.
+ */
+export function quotedPrompt(quote: string, question: string): string {
+  const quoted = quote.split('\n').map((l) => `> ${l}`).join('\n');
+  return `${quoted}\n\n${question.trim()}`;
 }
 
 /** Everything from this message on, gone — the same cut the server just made */
@@ -134,6 +147,16 @@ interface ChatState {
   subConversationId: string | null;
   subMessages: ChatMessage[];
   subStreaming: boolean;
+  /** The threads in this conversation, for the list the panel shows when none is open */
+  threads: ThreadSummary[];
+  /**
+   * A passage waiting for its question.
+   *
+   * Set by "ask my own question", which opens the panel on the quote with the question still
+   * to be written. Asking about a passage with the default question skips this state
+   * entirely — it goes straight to a thread.
+   */
+  subQuote: string | null;
   /** The mobile drawer. Transient: choosing a conversation closes it again */
   sidebarOpen: boolean;
   /**
@@ -165,8 +188,14 @@ interface ChatState {
   editMessage: (messageId: string, text: string) => Promise<string | null>;
   /** Ask the newest question again, optionally somewhere else */
   retry: (opts?: { model?: string; effort?: string }) => Promise<void>;
-  /** Open a sub-conversation on a selection and ask it as its first question */
-  openSub: (text: string) => Promise<void>;
+  /** Open the panel on the list of threads, without opening any of them */
+  showThreads: () => Promise<void>;
+  /** Open a thread that already exists */
+  openThread: (id: string) => Promise<void>;
+  /** Open the panel on a passage, with the question still to be written */
+  quoteForQuestion: (quote: string) => void;
+  /** Open a thread: the passage as context, and a question about it */
+  openSub: (quote: string, question: string) => Promise<void>;
   /** Ask the sub-conversation something else */
   sendSub: (text: string) => Promise<void>;
   closeSub: () => void;
@@ -509,6 +538,8 @@ export const useChat = create<ChatState>((set, get) => ({
   subConversationId: null,
   subMessages: [],
   subStreaming: false,
+  threads: [],
+  subQuote: null,
   sidebarOpen: false,
   sidebarCollapsed: localStorage.getItem(COLLAPSED_KEY) === '1',
 
@@ -874,17 +905,58 @@ export const useChat = create<ChatState>((set, get) => ({
    * and remembers the conversation it was opened from; what it does not do is put its
    * answers in the main transcript, which is the whole point of asking off to one side.
    */
-  async openSub(text) {
+  /*
+   * The panel with nothing open in it is the list, which is also the only way back to a
+   * thread once it has been closed — threads are kept out of the sidebar, so without this
+   * one sits on the server with its answer in it and nothing pointing at it.
+   */
+  async showThreads() {
+    const id = get().activeId;
+    if (!id) return;
+    closeSubStream();
+    set({ subOpen: true, subQuote: null, subConversationId: null, subMessages: [], subStreaming: false });
+    try {
+      set({ threads: await api.threads(id) });
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  async openThread(id) {
+    set({ subOpen: true, subQuote: null, subConversationId: id, subMessages: [], subStreaming: false });
+    try {
+      const conv = await api.getConversation(id);
+      set({ subMessages: conv.messages.map(toChatMessage) });
+      openSubStream(id);
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  quoteForQuestion(quote) {
+    closeSubStream();
+    set({ subOpen: true, subQuote: quote, subConversationId: null, subMessages: [], subStreaming: false });
+  },
+
+  /**
+   * The passage goes as a quotation and the question goes after it.
+   *
+   * Sending the selection on its own was the first shape of this, and it was not a question:
+   * the agent got a paragraph with no idea what was being asked about it, and answered from
+   * a guess that only looked right because the thread inherits the conversation's context.
+   */
+  async openSub(quote, question) {
     const parent = get().activeId;
     if (!parent) return;
-    set({ subOpen: true, subMessages: [], subStreaming: true, notice: null });
+    set({ subOpen: true, subQuote: null, subMessages: [], subStreaming: true, notice: null });
     try {
-      const r = await api.createSubConversation(parent, text);
+      const r = await api.createSubConversation(parent, quotedPrompt(quote, question));
       set({
         subConversationId: r.conversationId,
         subMessages: r.conversation.messages.map(toChatMessage),
       });
       openSubStream(r.conversationId);
+      void api.threads(parent).then((threads) => set({ threads })).catch(() => {});
     } catch (err) {
       if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
       set({ subStreaming: false, error: err instanceof Error ? err.message : String(err) });
@@ -921,13 +993,14 @@ export const useChat = create<ChatState>((set, get) => ({
   /**
    * Shut the panel, keep the thread.
    *
-   * The conversation stays on the server with its messages: it is reachable again by asking
-   * about the same passage, and throwing it away because a panel was closed would lose an
-   * answer somebody may be halfway through reading. Only the stream goes.
+   * The conversation stays on the server with its messages — throwing one away because a
+   * panel was closed would lose an answer somebody may be halfway through reading — and it
+   * is reached again from the list, which is what the panel shows with nothing open in it.
+   * Asking about the same passage would not do: that opens a second thread.
    */
   closeSub() {
     closeSubStream();
-    set({ subOpen: false, subConversationId: null, subMessages: [], subStreaming: false });
+    set({ subOpen: false, subQuote: null, subConversationId: null, subMessages: [], subStreaming: false });
   },
 
   _applyBatch(batch) {

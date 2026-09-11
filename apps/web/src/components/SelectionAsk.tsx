@@ -3,6 +3,15 @@ import { MessageSquareQuote } from 'lucide-react';
 import { useT } from '../lib/i18n';
 import { useChat } from '../store/chat';
 
+/**
+ * What "ask about this" asks, when nobody writes anything else.
+ *
+ * A passage on its own is not a question — the agent gets a paragraph and has to guess what
+ * is wanted of it. This is the guess everybody means, written down, and the other button is
+ * for when they mean something else.
+ */
+export const DEFAULT_QUESTION = 'Tell me more about this.';
+
 /** Long enough to be a passage rather than a stray click */
 const MIN_CHARS = 2;
 /** What the server is handed. A whole essay selected by accident is not a question. */
@@ -26,7 +35,7 @@ interface At {
 export function SelectionAsk() {
   const t = useT();
   const [at, setAt] = useState<At | null>(null);
-  const openSub = useChat((s) => s.openSub);
+  const quoteForQuestion = useChat((s) => s.quoteForQuestion);
   const activeId = useChat((s) => s.activeId);
 
   useEffect(() => {
@@ -63,19 +72,32 @@ export function SelectionAsk() {
 
   if (!at || !activeId) return null;
 
+  const done = () => {
+    window.getSelection()?.removeAllRanges();
+    setAt(null);
+  };
+
   return (
-    <button
-      onMouseDown={(e) => e.preventDefault()} // keep the selection alive through the click
-      onClick={() => {
-        void openSub(at.text);
-        window.getSelection()?.removeAllRanges();
-        setAt(null);
-      }}
+    <div
+      // Keep the selection alive through the click: losing it would take the quote with it
+      onMouseDown={(e) => e.preventDefault()}
       style={{ left: at.x, top: Math.max(at.y - 38, 8) }}
-      className="fixed z-40 -translate-x-1/2 flex items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-[12.5px] shadow-lg transition hover:border-accent"
+      className="fixed z-40 flex -translate-x-1/2 overflow-hidden rounded-lg border border-line-strong bg-surface text-[12.5px] shadow-lg"
     >
-      <MessageSquareQuote size={13} className="text-accent" />
-      {t('Ask about this')}
-    </button>
+      {/*
+        One button, and the question is asked in the panel rather than here.
+        Two — one sending the default straight off, one opening an editor — put the choice
+        before the passage: somebody has to read both labels and work out the difference
+        before they can ask anything. Opening on a pre-filled, focused question is both: press
+        Enter for the default, or type over it.
+      */}
+      <button
+        onClick={() => { quoteForQuestion(at.text); done(); }}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 transition hover:bg-bubble"
+      >
+        <MessageSquareQuote size={13} className="text-accent" />
+        {t('Ask about this')}
+      </button>
+    </div>
   );
 }

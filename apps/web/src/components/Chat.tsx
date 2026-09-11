@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDown, FolderOpen, PanelLeft, PlugZap, Sparkles, WifiOff } from 'lucide-react';
+import { ArrowDown, FolderOpen, MessagesSquare, PanelLeft, PlugZap, Sparkles, WifiOff } from 'lucide-react';
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
 import { useChat } from '../store/chat';
@@ -97,6 +97,8 @@ export function Chat({ agent }: { agent: AgentId }) {
   const [showJump, setShowJump] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const subOpen = useChat((s) => s.subOpen);
+  const showThreads = useChat((s) => s.showThreads);
+  const closeSub = useChat((s) => s.closeSub);
 
   const onScroll = () => {
     const el = scroller.current;
@@ -153,6 +155,23 @@ export function Chat({ agent }: { agent: AgentId }) {
             <WifiOff size={12} />
             {t('Reconnecting')}
           </span>
+        )}
+        {/* The way to a thread that was closed. Threads are not in the sidebar — a thread
+            belongs to the conversation it was opened in — so without this the only way to
+            one is selecting the same passage, and that opens a second thread rather than
+            returning to the first. */}
+        {!unavailable && activeId && (
+          <button
+            onClick={() => (subOpen ? closeSub() : void showThreads())}
+            title={t('Threads')}
+            aria-label={t('Threads')}
+            className={clsx(
+              'flex size-8 shrink-0 items-center justify-center rounded-md transition',
+              subOpen ? 'bg-bubble text-ink' : 'text-muted hover:bg-bubble hover:text-ink',
+            )}
+          >
+            <MessagesSquare size={16} />
+          </button>
         )}
         {!unavailable && activeId && (
           <button

@@ -1,5 +1,6 @@
 import { getLocale, t } from './i18n';
 import type {
+  ThreadSummary,
   AgentId,
   Conversation,
   ConversationSummary,
@@ -268,6 +269,9 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
+  /** The threads opened inside this conversation, newest first */
+  threads: (id: string) => request<ThreadSummary[]>(`/api/conversations/${id}/threads`),
+
   abort: (id: string) =>
     request<{ ok: boolean }>(`/api/conversations/${id}/abort`, { method: 'POST' }).catch(
       () => ({ ok: false }),
@@ -276,7 +280,7 @@ export const api = {
 
 /* ---------------- Usage and memory ---------------- */
 
-export type { QuotaScope, QuotaStatus, QuotaWindow, LimitKind } from './protocol';
+export type { QuotaScope, QuotaStatus, QuotaWindow, LimitKind, ThreadSummary } from './protocol';
 import type { QuotaScope, QuotaStatus } from './protocol';
 
 export type RangePreset =
