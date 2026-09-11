@@ -380,7 +380,10 @@ export async function startTurn(
       console.warn(
         `[turns] ${conv.agent} could not resume ${sessionId}; starting a new session: ${first.error}`,
       );
-      convRepo.update(convRepo.rootOf(conversationId, userId), userId, { agentSessionId: '' });
+      // This conversation's, not the family root's. A thread has a session of its own now,
+      // and clearing the root's would throw away the parent's history over a thread whose
+      // resume failed — the parent would come back next turn with no transcript at all.
+      convRepo.update(conversationId, userId, { agentSessionId: '' });
       current = startRun(undefined);
       const second = await current.done;
       if (second.error) return second;
