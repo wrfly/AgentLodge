@@ -5,6 +5,8 @@ import type { FastifyInstance } from 'fastify';
 import { currentSeq, dropChannel, liveStartSeq, subscribe } from '../../core/events.js';
 import { defaultAgent, isAgentId, isEnabledAgent } from '../agents/registry.js';
 import * as convRepo from '../../core/db/conversations.js';
+import { getString } from '../../core/db/settings.js';
+import * as usageRepo from '../../core/db/usage.js';
 import * as trimsRepo from '../../core/db/trims.js';
 import * as turns from '../turns.js';
 import * as quota from '../../core/quota.js';
@@ -47,7 +49,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const conv = convRepo.full(id, req.user!.id);
     if (!conv) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    return { ...conv, busy: turns.isBusy(id, req.user!.id) };
+    return { ...conv, busy: turns.isBusy(id) };
   });
 
   app.patch('/api/conversations/:id', guard, async (req, reply) => {
@@ -79,7 +81,18 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const conv = convRepo.meta(id, req.user!.id);
     if (!conv) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    turns.abortConversation(id, req.user!.id);
+    /*
+     * The threads go first, and they have to: `abortConversation` stops one conversation now
+     * that a thread runs beside its parent rather than instead of it. Without this the
+     * thread's CLI keeps running, `fs.rm` below pulls the working directory out from under
+     * it mid-turn, and when it finishes `appendMessage` finds no conversation and drops the
+     * answer silently — a process still burning the user's quota for nobody.
+     */
+    for (const child of conv.parentId ? [] : convRepo.listThreads(id, req.user!.id)) {
+      turns.abortConversation(child.id);
+      dropChannel(child.id);
+    }
+    turns.abortConversation(id);
     convRepo.remove(id, req.user!.id);
     dropChannel(id);
     // The working directory goes with it, or disk use only ever grows. A sub-conversation
@@ -100,7 +113,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const text = (body.text ?? '').trim();
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+    if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     try {
       const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
@@ -115,13 +128,15 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   });
 
   /**
-   * Edit something already asked.
+   * Correct the newest question. The answer to it goes, and the corrected question is asked
+   * in its place.
    *
-   * Which of two things that means is decided here rather than offered as a choice, because
-   * the position says the intent. Correcting the newest question means the answer to it was
-   * to the wrong question: it goes, and the corrected one is asked in its place. Editing
-   * something from several turns back is not a correction — the exchanges after it happened,
-   * and somebody may still want them — so it branches instead.
+   * The newest, and nothing earlier. Editing something from several turns back used to branch
+   * the conversation, and the semantics did not survive having a workspace: the agent had
+   * spent those turns reading files, writing code, running commands, and none of that can be
+   * rewound. A branch at turn three carrying turn ten's directory is a conversation whose
+   * agent is looking at code it never wrote. Asking about an older passage is what a thread
+   * is for — it asks from here about back there, which is what actually happened.
    */
   app.post('/api/conversations/:id/messages/:messageId/edit', guard, async (req, reply) => {
     const { id, messageId } = req.params as { id: string; messageId: string };
@@ -129,30 +144,39 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const text = (body.text ?? '').trim();
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+    if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     const at = convRepo.messageAt(id, req.user!.id, messageId);
     if (!at) return reply.code(404).send({ error: tr(req, 'No such message') });
     if (at.role !== 'user') return reply.code(400).send({ error: tr(req, 'Only a question can be edited') });
 
     const last = convRepo.lastUserMessage(id, req.user!.id);
-    const inPlace = last?.id === messageId;
+    if (last?.id !== messageId) {
+      return reply.code(400).send({
+        error: tr(req, 'Only the newest question can be edited. Select the passage and open a thread instead.'),
+      });
+    }
 
     try {
-      if (!inPlace) {
-        const r = await turns.forkAt(id, req.user!.id, messageId, text);
+      // The question and whatever was answered to it
+      const cut = convRepo.truncateFrom(id, req.user!.id, at.seq);
+      let rules: string[] = [];
+      try {
+        rules = rememberDiscarded(id, cut);
+        const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
         reply.code(202);
-        return { forked: true, ...r };
+        return { turnId, userMessage };
+      } catch (err) {
+        // The turn never started — a quota that ran out, an engine that is down — so the
+        // question goes back. It is the only copy, and answering 402 over the space where it
+        // used to be loses what somebody typed for a reason that has nothing to do with it.
+        convRepo.restoreMessages(id, req.user!.id, cut);
+        // And so do the rules. Restoring the answer without them leaves it on screen and in
+        // the database while the gateway cuts it out of every later request — a conversation
+        // the model cannot see, with nothing to undo it.
+        trimsRepo.forget(id, rules);
+        throw err;
       }
-      // The question and whatever was answered to it. The answer's text is kept for the
-      // gateway: the CLI's transcript still holds it, and without the rule the model would
-      // see — and tend to repeat — the very reply the user just discarded.
-      const answer = convRepo.lastAssistantMessage(id, req.user!.id);
-      convRepo.truncateFrom(id, req.user!.id, at.seq);
-      if (answer) trimsRepo.add(id, textOf(answer));
-      const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
-      reply.code(202);
-      return { forked: false, turnId, userMessage };
     } catch (err) {
       if (err instanceof turns.QuotaExceededError) {
         return reply.code(402).send({ error: err.message, quota: err.status });
@@ -173,30 +197,47 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { model?: string; effort?: string };
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+    if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     const last = convRepo.lastUserMessage(id, req.user!.id);
     if (!last) return reply.code(400).send({ error: tr(req, 'There is nothing to retry yet') });
     const text = last.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('').trim();
     if (!text) return reply.code(400).send({ error: tr(req, 'There is nothing to retry yet') });
 
-    if (body.model !== undefined || body.effort !== undefined) {
-      convRepo.update(id, req.user!.id, {
-        ...(body.model !== undefined ? { model: body.model } : {}),
-        ...(body.effort !== undefined ? { effort: body.effort } : {}),
-      });
-    }
+    const settings = {
+      ...(body.model !== undefined ? { model: body.model } : {}),
+      ...(body.effort !== undefined ? { effort: body.effort } : {}),
+    };
 
     try {
       // The question goes too, and is asked again — `startTurn` is the only thing that stores
-      // one, and a retry that left the old row behind would show it twice. The discarded
-      // answer is captured first, so the gateway can drop it from the CLI's later requests.
-      const answer = convRepo.lastAssistantMessage(id, req.user!.id);
-      convRepo.truncateFrom(id, req.user!.id, last.seq);
-      if (answer) trimsRepo.add(id, textOf(answer));
-      const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
-      reply.code(202);
-      return { turnId, userMessage };
+      // one, and a retry that left the old row behind would show it twice
+      const cut = convRepo.truncateFrom(id, req.user!.id, last.seq);
+      const before = convRepo.meta(id, req.user!.id);
+      let rules: string[] = [];
+      try {
+        rules = rememberDiscarded(id, cut);
+        // The retry has to run on the model it was retried *with*, so this lands before the
+        // turn — and comes back off below if the turn never started. It used to be written
+        // outside the try, where a refusal left the conversation on a model the interface
+        // never showed, and the next question went to it silently.
+        if (Object.keys(settings).length) convRepo.update(id, req.user!.id, settings);
+        const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
+        reply.code(202);
+        return { turnId, userMessage };
+      } catch (err) {
+        convRepo.restoreMessages(id, req.user!.id, cut);
+        trimsRepo.forget(id, rules);
+        // Only the keys the retry set, and an empty string where there was nothing before —
+        // `update` ignores undefined, so passing it through would leave the new value standing
+        if (before && Object.keys(settings).length) {
+          convRepo.update(id, req.user!.id, {
+            ...(settings.model !== undefined ? { model: before.model ?? '' } : {}),
+            ...(settings.effort !== undefined ? { effort: before.effort ?? '' } : {}),
+          });
+        }
+        throw err;
+      }
     } catch (err) {
       if (err instanceof turns.QuotaExceededError) {
         return reply.code(402).send({ error: err.message, quota: err.status });
@@ -213,9 +254,20 @@ export function registerConversationRoutes(app: FastifyInstance): void {
    * selection becomes its first question. It is not a branch; nothing is copied, and the
    * two conversations see each other's turns through the shared transcript.
    *
-   * One turn at a time per family, like one turn at a time per conversation: the shared
-   * session cannot take two writes.
+   * A thread runs beside the conversation, not instead of it. It has its own session, so
+   * there is nothing shared to wedge and no reason to ask whether the parent is busy —
+   * asking a side question while the main answer is still coming is the case the feature
+   * exists for. `startTurn` still refuses a second turn in the thread itself.
    */
+  /** The quoted part of a thread's opening prompt, without the `>` markers */
+  const quotedPassage = (text: string): string =>
+    text
+      .split('\n')
+      .filter((l) => l.startsWith('>'))
+      .map((l) => l.replace(/^>\s?/, ''))
+      .join(' ')
+      .trim();
+
   app.post('/api/conversations/:id/sub', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { text?: string };
@@ -223,8 +275,6 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
     const parent = convRepo.meta(id, req.user!.id);
     if (!parent) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id, req.user!.id))
-      return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     const child = convRepo.create({
       userId: req.user!.id,
@@ -235,11 +285,51 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       parentId: id,
     });
 
+    /*
+     * The conversation so far, as text, because the thread does not resume its session.
+     *
+     * Sharing the session made the two one transcript in the model's eyes: a few side
+     * questions were enough to fill the parent's context with a discussion nobody meant to
+     * have there, and it only got heavier with use. A separate session cannot be polluted,
+     * and this is what it costs — the words, re-sent once, without the tool calls.
+     */
+    const prior = turns.recentTranscript(convRepo.full(id, req.user!.id)?.messages ?? []);
+    const prompt = prior
+      ? `The conversation this question comes from, which you did not take part in:\n\n${prior}\n\n---\n\n${text}`
+      : text;
+
     try {
-      const { turnId, userMessage } = await turns.startTurn(child.id, req.user!.id, text);
+      const { turnId, userMessage } = await turns.startTurn(child.id, req.user!.id, prompt);
+      /*
+       * What went to the model is the question with the conversation wrapped around it; what
+       * belongs in the record is the question. Returned as rewritten too — the caller renders
+       * this straight into the panel, and handing back the pre-rewrite object would put the
+       * whole replay in the reader's first bubble.
+       */
+      convRepo.rewriteMessage(child.id, req.user!.id, userMessage.id, text);
+      /*
+       * Named after the passage, not the prompt. The stored question is a markdown quotation
+       * followed by a question, so a title taken from it whole reads "> directories Tell me
+       * more about this." — the quote markers and, on every thread nobody retyped the
+       * default, the same boilerplate sentence.
+       */
+      convRepo.retitle(child.id, convRepo.deriveTitle(quotedPassage(text) || text));
       reply.code(202);
-      return { conversationId: child.id, turnId, userMessage, conversation: convRepo.full(child.id, req.user!.id) };
+      return {
+        conversationId: child.id,
+        turnId,
+        userMessage: { ...userMessage, blocks: [{ kind: 'text' as const, blockId: 0, text }] },
+        conversation: convRepo.full(child.id, req.user!.id),
+      };
     } catch (err) {
+      /*
+       * The row was created before the turn, because the turn needs somewhere to put its
+       * messages. A turn that never starts leaves it empty, and an empty thread is not
+       * something anybody can act on: no question to read, no answer to wait for, and the
+       * panel that lists threads has no way to delete one. Three refused clicks used to mean
+       * three of them in the list for good.
+       */
+      convRepo.remove(child.id, req.user!.id);
       if (err instanceof turns.QuotaExceededError) {
         return reply.code(402).send({ error: err.message, quota: err.status });
       }
@@ -264,7 +354,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   app.post('/api/conversations/:id/abort', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (!turns.abortConversation(id, req.user!.id))
+    if (!turns.abortConversation(id))
       return reply.code(404).send({ error: tr(req, 'Nothing is running in this conversation') });
     return { ok: true };
   });
@@ -322,6 +412,24 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   });
 
   /** Checked before sending, so the composer can be disabled when the quota is short */
+  /**
+   * What this conversation has cost, split by the model that answered.
+   *
+   * From `usage_records` and the price table, which is where the usage page and the quota
+   * read from too. The header used to add up what the CLI reported spending, so the same
+   * conversation carried two different figures in two different currencies depending on
+   * which page you were looking at.
+   */
+  app.get('/api/conversations/:id/usage', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!convRepo.exists(id, req.user!.id))
+      return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    return {
+      currency: getString('billing.currency', 'USD'),
+      byModel: usageRepo.byModelForConversation(id),
+    };
+  });
+
   app.get('/api/conversations/:id/quota', guard, async (req) => quota.status(req.user!.id));
 
   /** Export as Markdown */
@@ -440,9 +548,48 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   });
 }
 
-/** What a message says, as the gateway will see it on the wire: its text blocks, joined */
-function textOf(m: { blocks: Array<{ kind?: string; text?: string }> }): string {
-  return m.blocks.map((b) => (b.kind === 'text' ? b.text ?? '' : '')).join('');
+/**
+ * The pieces of an answer the gateway can recognise on the wire, one rule each.
+ *
+ * A stored assistant row is one *turn*; a turn is several wire messages, split wherever the
+ * model stopped to call a tool. Joining every text block gave a string no single wire message
+ * ever equals — "I'll read it.The answer is 42." — so the rule matched nothing and the
+ * discarded answer went upstream intact on every turn that used a tool, which for a coding
+ * agent is most of them.
+ *
+ * Each text block is its own rule instead, because each is what one wire message says.
+ */
+/**
+ * Tell the gateway to stop sending the answers we just deleted.
+ *
+ * Only what was actually cut. It used to ask for the newest assistant row in the whole
+ * conversation, with no check that the row was inside the cut — so after a turn that died
+ * without storing an answer (a server restart mid-stream, an error path) the newest answer
+ * was an *earlier* one, still on screen and legitimately in the CLI's transcript, and it got
+ * a rule that removed it from every later request for good.
+ */
+function rememberDiscarded(
+  conversationId: string,
+  cut: Array<{ role: string; blocks: Array<{ kind?: string; text?: string }> }>,
+): string[] {
+  const written: string[] = [];
+  for (const m of cut) {
+    if (m.role !== 'assistant') continue;
+    for (const rule of trimRulesFor(m)) {
+      if (trimsRepo.add(conversationId, rule)) written.push(rule);
+    }
+  }
+  return written;
+}
+
+function trimRulesFor(m: { blocks: Array<{ kind?: string; text?: string }> }): string[] {
+  const seen = new Set<string>();
+  for (const b of m.blocks) {
+    if (b.kind !== 'text') continue;
+    const text = (b.text ?? '').trim();
+    if (text) seen.add(text);
+  }
+  return [...seen];
 }
 
 /** Render a conversation as Markdown, for keeping or sharing */

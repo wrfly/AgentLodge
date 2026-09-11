@@ -69,7 +69,6 @@ export const de: Record<string, string> = {
   'Every conversation has its own working directory. {label} can read and write files and run commands in it.': 'Jede Unterhaltung hat ihr eigenes Arbeitsverzeichnis. {label} kann darin Dateien lesen und schreiben und Befehle ausführen.',
   '{label} is not connected': '{label} ist nicht verbunden',
   'The command-line tool was not found on this machine.': 'Das Kommandozeilenwerkzeug wurde auf diesem Rechner nicht gefunden.',
-  'Total usage for this conversation': 'Gesamtnutzung dieser Unterhaltung',
   'Open sidebar': 'Seitenleiste öffnen',
   'Event stream dropped — reconnecting': 'Ereignisstrom abgerissen — Verbindung wird wiederhergestellt',
   Reconnecting: 'Verbindung wird wiederhergestellt',
@@ -597,12 +596,9 @@ export const de: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': 'Ersetzt die Antwort darunter',
-  'Branches into a new conversation': 'Verzweigt in ein neues Gespräch',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': 'Der Arbeitsbereich konnte nicht kopiert werden, daher startet dieser neue Chat mit einem leeren Verzeichnis',
   'Branch': 'Verzweigen',
   'Edit and ask again': 'Ändern und neu fragen',
-  'Edit, branching from here': 'Ändern, von hier aus verzweigend',
   'Answer again': 'Neu antworten',
   'Retry': 'Wiederholen',
 
@@ -621,4 +617,14 @@ export const de: Record<string, string> = {
   'What do you want to know about it?': 'Was möchten Sie darüber wissen?',
 
   'Ask': 'Fragen',
+  'Asking…': 'Wird gefragt …',
+  'Take back': 'Ins Gespräch übernehmen',
+
+  'Put this in the message box, to send on to the conversation': 'In das Eingabefeld legen, um es ans Gespräch zu schicken',
+  'Stop': 'Stopp',
+  'What this conversation has cost': 'Was dieses Gespräch gekostet hat',
+
+  'Cache': 'Cache',
+
+  'Priced from the model price table.': 'Berechnet nach der Modellpreistabelle.',
 };

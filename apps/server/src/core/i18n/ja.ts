@@ -90,4 +90,5 @@ export const ja: Record<string, string> = {
   'Only a question can be edited': '編集できるのは自分の質問だけです',
 
   'There is nothing to retry yet': 'まだ再試行できるものがありません',
+  'Only the newest question can be edited. Select the passage and open a thread instead.': '編集できるのは最新の質問だけです。それより前の内容は、その一節を選んでスレッドを開いてください。',
 };

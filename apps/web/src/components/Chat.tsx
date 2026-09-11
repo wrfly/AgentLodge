@@ -6,10 +6,12 @@ import { useChat } from '../store/chat';
 import { useAgents } from '../store/agents';
 import { AGENTS } from '../lib/route';
 import type { AgentId } from '../lib/protocol';
+import { api, fmtMoney, type UsageTotals } from '../lib/api';
 import { Message } from './Message';
 import { Composer } from './Composer';
 import { FilesPanel } from './FilesPanel';
 import { SubChatPanel } from './SubChatPanel';
+import { fmtTokens } from './ui';
 import { SelectionAsk } from './SelectionAsk';
 
 const NEAR_BOTTOM_PX = 120;
@@ -47,29 +49,113 @@ function Unavailable({ agent, reason }: { agent: AgentId; reason?: string }) {
   );
 }
 
+/**
+ * What this conversation has cost, and on which models.
+ *
+ * From the server rather than from the messages on screen. It used to add up
+ * `message.usage.costUsd` — what the CLI reported spending — so the same conversation showed
+ * one number here and a different one, in a different currency, on the usage page. This
+ * reads `usage_records` through the price table, which is what the usage page and the quota
+ * both read.
+ *
+ * Cache is its own figure. Folding it into "input" hid the thing most worth seeing: a long
+ * conversation is mostly cache reads, at a tenth of the input price or, on Fable, a fortieth.
+ */
 function SessionTotals() {
   const t = useT();
-  const messages = useChat((s) => s.messages);
-  const totals = messages.reduce(
-    (acc, m) => {
-      if (!m.usage) return acc;
-      acc.in += m.usage.inputTokens + m.usage.cacheReadTokens + m.usage.cacheCreationTokens;
-      acc.out += m.usage.outputTokens;
-      acc.cost += m.usage.costUsd;
-      return acc;
-    },
-    { in: 0, out: 0, cost: 0 },
-  );
-  if (!totals.in && !totals.out) return null;
+  const activeId = useChat((s) => s.activeId);
+  const streaming = useChat((s) => s.streaming);
+  /*
+   * The figures carry the conversation they were counted for.
+   *
+   * Without it they outlive it: `New chat` has no id to fetch for, so the effect returned
+   * early and the previous conversation's tokens and money stayed in the corner of an empty
+   * screen. Switching between two conversations had the smaller version of the same problem —
+   * the old numbers showed until the new ones arrived.
+   */
+  const [data, setData] = useState<
+    { id: string; currency: string; byModel: Array<UsageTotals & { model: string }> } | null
+  >(null);
+  const [open, setOpen] = useState(false);
+
+  // An open table belongs to the conversation it was opened in. Keyed on the id alone, so
+  // sending a message does not close it.
+  useEffect(() => setOpen(false), [activeId]);
+
+  // Refetched when a turn finishes, which is when the figures change
+  useEffect(() => {
+    if (!activeId) {
+      setData(null);
+      return;
+    }
+    if (streaming) return;
+    let live = true;
+    void api
+      .conversationUsage(activeId)
+      .then((d) => { if (live) setData({ id: activeId, ...d }); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [activeId, streaming]);
+
+  const rows = data?.id === activeId ? data.byModel : [];
+  if (rows.length === 0) return null;
+
+  const sum = (pick: (r: UsageTotals) => number) => rows.reduce((n, r) => n + pick(r), 0);
+  const input = sum((r) => r.inputTokens);
+  const cache = sum((r) => r.cacheReadTokens + r.cacheCreationTokens);
+  const output = sum((r) => r.outputTokens);
+  const cost = sum((r) => r.costMicro);
+  const currency = data?.currency ?? 'USD';
 
   return (
-    <div
-      className="hidden shrink-0 items-center gap-2 rounded-full border border-line px-2.5 py-1 font-mono text-[11px] text-faint sm:flex"
-      title={t('Total usage for this conversation')}
-    >
-      <span>↑{(totals.in / 1000).toFixed(1)}k</span>
-      <span>↓{(totals.out / 1000).toFixed(1)}k</span>
-      {totals.cost > 0 && <span>${totals.cost.toFixed(3)}</span>}
+    <div className="relative hidden shrink-0 sm:block">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={t('What this conversation has cost')}
+        className={clsx(
+          'flex items-center gap-2 rounded-full border px-2.5 py-1 font-mono text-[11px] transition',
+          open ? 'border-line-strong text-ink' : 'border-line text-faint hover:text-muted',
+        )}
+      >
+        <span>↑{fmtTokens(input)}</span>
+        <span>⛁{fmtTokens(cache)}</span>
+        <span>↓{fmtTokens(output)}</span>
+        <span>{fmtMoney(cost, currency)}</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 z-30 mt-1.5 w-[340px] rounded-xl border border-line bg-surface p-3 shadow-lg">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="border-b border-line text-left text-faint">
+                <th className="pb-1.5 font-medium">{t('Model')}</th>
+                <th className="pb-1.5 text-right font-medium">{t('In')}</th>
+                <th className="pb-1.5 text-right font-medium">{t('Cache')}</th>
+                <th className="pb-1.5 text-right font-medium">{t('Out')}</th>
+                <th className="pb-1.5 text-right font-medium">{t('Cost')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.model} className="border-b border-line last:border-0">
+                  <td className="py-1.5 pr-2 font-mono text-[11px] text-muted">
+                    {r.model || t('(default)')}
+                  </td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{fmtTokens(r.inputTokens)}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums text-muted">
+                    {fmtTokens(r.cacheReadTokens + r.cacheCreationTokens)}
+                  </td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{fmtTokens(r.outputTokens)}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{fmtMoney(r.costMicro, currency)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/* Published list prices, seeded into the price table an administrator can edit —
+              see the Pricing card in the console */}
+          <p className="mt-2 text-[11px] text-faint">{t('Priced from the model price table.')}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -156,6 +242,7 @@ export function Chat({ agent }: { agent: AgentId }) {
             {t('Reconnecting')}
           </span>
         )}
+        <SessionTotals />
         {/* The way to a thread that was closed. Threads are not in the sidebar — a thread
             belongs to the conversation it was opened in — so without this the only way to
             one is selecting the same passage, and that opens a second thread rather than
@@ -186,7 +273,6 @@ export function Chat({ agent }: { agent: AgentId }) {
             <FolderOpen size={16} />
           </button>
         )}
-        <SessionTotals />
       </header>
 
       {error && (

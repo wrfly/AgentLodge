@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { paths } from '../core/config.js';
@@ -387,7 +388,46 @@ async function loadSidecar(userId: string): Promise<Sidecar> {
 
 async function saveSidecar(userId: string, s: Sidecar): Promise<void> {
   await fs.mkdir(paths.memory, { recursive: true });
-  await fs.writeFile(sidecarPath(userId), JSON.stringify(s), 'utf8');
+  /*
+   * Written beside and renamed over, because a reader must never see half of it.
+   *
+   * This file holds up to 20 revisions of every memory file, so it is large enough to be
+   * written in more than one go. `loadSidecar` swallows a parse error and answers
+   * `{ history: [] }` — the right answer for "there is no file yet" and a disastrous one for
+   * "the file is being written": the next save would persist that empty history over the
+   * whole undo record. `rename` within a directory is atomic, so a reader gets the old file
+   * or the new one.
+   */
+  // A name of its own per write. Keyed on the process it collided with itself the moment two
+  // saves overlapped: one rename took the file, the other found nothing there and threw.
+  const tmp = `${sidecarPath(userId)}.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(s), 'utf8');
+  await fs.rename(tmp, sidecarPath(userId));
+}
+
+/**
+ * One sidecar write at a time per user.
+ *
+ * `snapshot` is load, compare, push, save with awaits in between, and it runs at the start of
+ * every turn. Two turns of one user starting together — which is now routine rather than a
+ * coincidence, since a thread runs beside the conversation it was opened in — both read the
+ * same history and both write it, and whichever lands second silently drops the other's
+ * revision.
+ *
+ * In-process only, which matches where the race is: turns for one user run in one app
+ * process. Two app processes sharing a data directory would need a lock in the filesystem,
+ * and nothing else in this codebase assumes that arrangement.
+ */
+const sidecarQueue = new Map<string, Promise<unknown>>();
+
+function inTurn<T>(userId: string, work: () => Promise<T>): Promise<T> {
+  const next = (sidecarQueue.get(userId) ?? Promise.resolve()).then(work, work);
+  // Kept only while something is waiting on it, so the map does not grow one entry per user
+  sidecarQueue.set(userId, next);
+  void next.catch(() => {}).finally(() => {
+    if (sidecarQueue.get(userId) === next) sidecarQueue.delete(userId);
+  });
+  return next;
 }
 
 /** Every file in the memory directory, keyed by name */
@@ -420,16 +460,18 @@ const same = (a: Record<string, string>, b: Record<string, string>): boolean =>
  * the agent, which writes these files directly and never goes through this module.
  */
 export async function snapshot(userId: string, by: Author): Promise<boolean> {
-  const files = await readAll(userId);
-  const s = await loadSidecar(userId);
-  const last = s.history[s.history.length - 1];
-  if (last && same(last.files, files)) return false;
-  // An empty directory is recorded too: it is the state the first undo has to return to
+  return inTurn(userId, async () => {
+    const files = await readAll(userId);
+    const s = await loadSidecar(userId);
+    const last = s.history[s.history.length - 1];
+    if (last && same(last.files, files)) return false;
+    // An empty directory is recorded too: it is the state the first undo has to return to
 
-  s.history.push({ at: new Date().toISOString(), by, files });
-  if (s.history.length > MAX_HISTORY) s.history = s.history.slice(-MAX_HISTORY);
-  await saveSidecar(userId, s);
-  return true;
+    s.history.push({ at: new Date().toISOString(), by, files });
+    if (s.history.length > MAX_HISTORY) s.history = s.history.slice(-MAX_HISTORY);
+    await saveSidecar(userId, s);
+    return true;
+  });
 }
 
 export async function history(userId: string): Promise<Revision[]> {

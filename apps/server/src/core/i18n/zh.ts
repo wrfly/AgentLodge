@@ -90,4 +90,5 @@ export const zh: Record<string, string> = {
   'Only a question can be edited': '只能编辑自己的提问',
 
   'There is nothing to retry yet': '还没有可以重试的内容',
+  'Only the newest question can be edited. Select the passage and open a thread instead.': '只有最新的提问可以编辑。想问更早的内容，选中那段话开一条支线。',
 };

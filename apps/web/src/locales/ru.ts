@@ -76,7 +76,6 @@ export const ru: Record<string, string> = {
   'Every conversation has its own working directory. {label} can read and write files and run commands in it.': 'У каждой беседы своя рабочая директория: {label} может читать и изменять файлы и выполнять в ней команды.',
   '{label} is not connected': '{label} не подключён',
   'The command-line tool was not found on this machine.': 'Соответствующая утилита командной строки на этой машине не найдена.',
-  'Total usage for this conversation': 'Суммарное использование в этой беседе',
   'Open sidebar': 'Открыть панель',
   'Event stream dropped — reconnecting': 'Поток событий прерван — переподключение',
   Reconnecting: 'Переподключение',
@@ -624,12 +623,9 @@ export const ru: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': 'Заменит ответ ниже',
-  'Branches into a new conversation': 'Ветвится в новый разговор',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': 'Не удалось скопировать рабочую область, поэтому новый разговор начинается с пустой папки',
   'Branch': 'Ветвить',
   'Edit and ask again': 'Исправить и спросить снова',
-  'Edit, branching from here': 'Изменить, ответвившись отсюда',
   'Answer again': 'Ответить заново',
   'Retry': 'Заново',
 
@@ -648,4 +644,14 @@ export const ru: Record<string, string> = {
   'What do you want to know about it?': 'Что вы хотите об этом узнать?',
 
   'Ask': 'Спросить',
+  'Asking…': 'Спрашиваю…',
+  'Take back': 'Вернуть в разговор',
+
+  'Put this in the message box, to send on to the conversation': 'Поместить в поле ввода, чтобы отправить в разговор',
+  'Stop': 'Стоп',
+  'What this conversation has cost': 'Во что обошёлся этот разговор',
+
+  'Cache': 'Кэш',
+
+  'Priced from the model price table.': 'Рассчитано по таблице цен на модели.',
 };

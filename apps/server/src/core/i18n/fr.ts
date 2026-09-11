@@ -90,4 +90,5 @@ export const fr: Record<string, string> = {
   'Only a question can be edited': 'Seule une question peut être modifiée',
 
   'There is nothing to retry yet': 'Il n’y a encore rien à réessayer',
+  'Only the newest question can be edited. Select the passage and open a thread instead.': 'Seule la question la plus récente est modifiable. Pour une plus ancienne, sélectionnez le passage et ouvrez un fil.',
 };

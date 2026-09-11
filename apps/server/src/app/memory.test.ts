@@ -190,6 +190,36 @@ console.log('\n=== Nothing shadows the memory from above ===');
   ok('the memory directory is untouched', memory.dir(u).endsWith(path.join(u, 'memory')));
 }
 
+console.log('\n=== Two turns snapshotting at once do not overwrite each other ===');
+{
+  /*
+   * `snapshot` is load, compare, push, save with awaits between each, and it runs at the
+   * start of every turn. Two turns of one user starting together used to read the same
+   * history and write it back, and whichever landed second dropped the other's revision.
+   * That was a coincidence when one turn at a time was all a family could have; it is
+   * routine now that a thread runs beside the conversation it was opened in.
+   *
+   * Read through the return values rather than through a stopwatch: serialised, the second
+   * call sees what the first one stored and answers "nothing changed". Unserialised, both
+   * read the history from before either of them and both claim to have written it.
+   */
+  const u = 'racer';
+  await fsp.mkdir(memory.dir(u), { recursive: true });
+  await fsp.writeFile(path.join(memory.dir(u), 'one.md'), 'first');
+  await memory.snapshot(u, 'user');
+  const before = (await memory.history(u)).length;
+
+  await fsp.writeFile(path.join(memory.dir(u), 'two.md'), 'second');
+  const [a, b] = await Promise.all([memory.snapshot(u, 'agent'), memory.snapshot(u, 'user')]);
+
+  ok('the first one records the change', a === true, String(a));
+  ok('the second sees it has been recorded', b === false, String(b));
+  const after = await memory.history(u);
+  ok('one revision, written once', after.length === before + 1, `${before} -> ${after.length}`);
+  ok('and it has both files', Object.keys(after[after.length - 1]?.files ?? {}).sort().join('+') === 'one.md+two.md',
+    JSON.stringify(Object.keys(after[after.length - 1]?.files ?? {})));
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

@@ -385,14 +385,57 @@ export function rewriteMessage(
   );
 }
 
-/** Everything from this position on, gone. Returns how many rows that was. */
-export function truncateFrom(conversationId: string, userId: string, seq: number): number {
-  if (!exists(conversationId, userId)) return 0;
-  return run(
-    'delete from messages where conversation_id = ? and seq >= ?',
-    conversationId,
-    seq,
-  ).changes;
+/**
+ * Everything from this position on, gone — and handed back, so it can be put back.
+ *
+ * A `delete` is the whole of it: the rows carry the only copy of what somebody typed. The
+ * cut has to happen before the turn that replaces it, because `startTurn` appends and the
+ * new question has to land where the old one was, and that turn can still fail — a quota
+ * that ran out, an engine that is down. Returning the rows is what lets the caller undo it
+ * rather than answer 402 over an empty space where the question used to be.
+ */
+export function truncateFrom(
+  conversationId: string,
+  userId: string,
+  seq: number,
+): Array<StoredMessage & { seq: number }> {
+  if (!exists(conversationId, userId)) return [];
+  return tx(() => {
+    const cut = all<MsgRow>(
+      'select * from messages where conversation_id = ? and seq >= ? order by seq',
+      conversationId,
+      seq,
+    ).map((r) => ({ ...toMessage(r), seq: r.seq }));
+    run('delete from messages where conversation_id = ? and seq >= ?', conversationId, seq);
+    return cut;
+  });
+}
+
+/** Put back what `truncateFrom` cut, at the positions it held */
+export function restoreMessages(
+  conversationId: string,
+  userId: string,
+  cut: Array<StoredMessage & { seq: number }>,
+): void {
+  if (!cut.length || !exists(conversationId, userId)) return;
+  tx(() => {
+    for (const m of cut) {
+      run(
+        `insert or ignore into messages
+           (id, conversation_id, seq, role, blocks, usage, error, aborted, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        m.id,
+        conversationId,
+        m.seq,
+        m.role,
+        JSON.stringify(m.blocks),
+        m.usage ? JSON.stringify(m.usage) : null,
+        m.error ?? null,
+        flag(Boolean(m.aborted)),
+        m.createdAt,
+      );
+    }
+  });
 }
 
 /** Everything up to but not including this position, oldest first */
@@ -452,8 +495,10 @@ export function rootOf(conversationId: string, userId: string): string {
  * reachable only while their panel was open — close it and the thread was still on the
  * server with its answer in it and no way back. This is the way back.
  *
- * The label is the thread's own first message, which is the passage that was selected to
- * open it. Nothing else has to be stored to say what a thread is about.
+ * The label is the passage the thread was opened on, read back out of its own first message:
+ * that message is a markdown quotation followed by a question, so the quoted lines are the
+ * passage and nothing else has to be stored to say what a thread is about. Falls back to the
+ * whole message for a thread whose opener was not a quotation.
  */
 export function listThreads(parentId: string, userId: string): ThreadSummary[] {
   if (!exists(parentId, userId)) return [];
@@ -472,50 +517,29 @@ export function listThreads(parentId: string, userId: string): ThreadSummary[] {
     id: r.id,
     createdAt: r.created_at,
     messageCount: r.n,
-    about: textOf(parseJson<MessageBlock[]>(r.opener, [])),
+    about: passageOf(textOf(parseJson<MessageBlock[]>(r.opener, []))),
   }));
 }
 
-/** The readable part of a stored message, for a one-line label */
-function textOf(blocks: MessageBlock[]): string {
-  return blocks
-    .map((b) => (b.kind === 'text' ? b.text : ''))
-    .join('')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** The root's CLI session id — the one every member of the family resumes */
-export function rootSessionId(conversationId: string, userId: string): string | undefined {
-  const r = get<{ agent_session_id: string | null }>(
-    'select agent_session_id from conversations where id = ? and user_id = ?',
-    rootOf(conversationId, userId),
-    userId,
-  );
-  return r?.agent_session_id ?? undefined;
-}
-
 /**
- * Every conversation sharing this one's CLI session — the family, itself included.
+ * The passage a thread was opened on, as one line.
  *
- * One turn at a time per session: the CLI's transcript is a single stream, and two members
- * writing to it concurrently would corrupt it. The busy checks and the abort path both use
- * this, so a turn in the sub-conversation makes the parent busy and vice versa.
+ * Its opening prompt is a markdown quotation followed by a question, so the quoted lines are
+ * the passage. Read before the whitespace is flattened — afterwards there are no lines left
+ * to tell apart, and the label ends up carrying the boilerplate question every thread shares.
  */
-export function familyIds(conversationId: string, userId: string): string[] {
-  const root = rootOf(conversationId, userId);
-  return all<{ id: string }>(
-    `with recursive family as (
-       select id from conversations where id = ? and user_id = ?
-       union all
-       select c.id from conversations c join family f on c.parent_id = f.id
-       where c.user_id = ?
-     )
-     select id from family`,
-    root,
-    userId,
-    userId,
-  ).map((r) => r.id);
+function passageOf(text: string): string {
+  const quoted = text
+    .split('\n')
+    .filter((l) => l.startsWith('>'))
+    .map((l) => l.replace(/^>\s?/, ''))
+    .join(' ');
+  return (quoted || text).replace(/\s+/g, ' ').trim();
+}
+
+/** Everything a message says, newlines intact */
+function textOf(blocks: MessageBlock[]): string {
+  return blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('').trim();
 }
 
 export function idsForUser(userId: string): string[] {

@@ -369,6 +369,42 @@ export function hourlyForUserRange(userId: string, range: Range): HourlyPoint[] 
   ).map((r) => ({ hour: r.hour, ...toTotals(r) }));
 }
 
+/**
+ * What one conversation cost, split by the model that answered.
+ *
+ * From `usage_records`, which is what the usage page and the quota both read, so the figure
+ * in the chat header is the same figure they are. The header used to add up
+ * `message.usage.costUsd` — the CLI's own report of what it spent — which is a different
+ * number in a different currency from the one this deployment bills in.
+ *
+ * A turn with no model recorded groups under an empty name; the interface reads that as
+ * "whatever the CLI picked".
+ */
+/**
+ * What one conversation cost, per model — threads included.
+ *
+ * A thread is its own conversation row, so counting `conversation_id` alone left its spend
+ * out of the only place a conversation's cost is shown. Threads are kept out of the sidebar
+ * on purpose, which means that spend appeared nowhere but the global usage page, even though
+ * it came off the same quota and was started from this conversation.
+ *
+ * The subquery is one level deep because the tree is: a thread cannot have threads of its
+ * own, `parent_id` is only ever set to a conversation the user owns, and nothing creates a
+ * child of a child.
+ */
+export function byModelForConversation(conversationId: string): Array<Totals & { model: string }> {
+  return all<TotalsRow & { model: string | null }>(
+    `select coalesce(model, '') as model, ${SUM()}
+       from usage_records
+      where conversation_id = ?
+         or conversation_id in (select id from conversations where parent_id = ?)
+      group by coalesce(model, '')
+      order by cost_micro desc`,
+    conversationId,
+    conversationId,
+  ).map((r) => ({ model: r.model ?? '', ...toTotals(r) }));
+}
+
 export interface AgentBreakdown extends Totals {
   agent: string;
   model: string | null;

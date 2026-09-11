@@ -90,4 +90,5 @@ export const de: Record<string, string> = {
   'Only a question can be edited': 'Nur eine eigene Frage lässt sich bearbeiten',
 
   'There is nothing to retry yet': 'Es gibt noch nichts zu wiederholen',
+  'Only the newest question can be edited. Select the passage and open a thread instead.': 'Nur die neueste Frage lässt sich bearbeiten. Für Früheres markieren Sie die Stelle und öffnen einen Thread.',
 };

@@ -90,4 +90,5 @@ export const ru: Record<string, string> = {
   'Only a question can be edited': 'Редактировать можно только свой вопрос',
 
   'There is nothing to retry yet': 'Пока нечего повторять',
+  'Only the newest question can be edited. Select the passage and open a thread instead.': 'Редактировать можно только последний вопрос. Чтобы спросить о более раннем, выделите фрагмент и откройте ветку.',
 };

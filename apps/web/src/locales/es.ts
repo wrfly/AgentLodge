@@ -69,7 +69,6 @@ export const es: Record<string, string> = {
   'Every conversation has its own working directory. {label} can read and write files and run commands in it.': 'Cada conversación tiene su propio directorio de trabajo. {label} puede leer y escribir archivos y ejecutar comandos dentro de él.',
   '{label} is not connected': '{label} no está conectado',
   'The command-line tool was not found on this machine.': 'No se ha encontrado la herramienta de línea de comandos en esta máquina.',
-  'Total usage for this conversation': 'Uso total de esta conversación',
   'Open sidebar': 'Abrir barra lateral',
   'Event stream dropped — reconnecting': 'Se ha cortado el flujo de eventos — reconectando',
   Reconnecting: 'Reconectando',
@@ -597,12 +596,9 @@ export const es: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': 'Sustituye la respuesta de abajo',
-  'Branches into a new conversation': 'Se bifurca en una conversación nueva',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': 'No se pudo copiar el espacio de trabajo, así que esta nueva conversación comienza con una carpeta vacía',
   'Branch': 'Bifurcar',
   'Edit and ask again': 'Corregir y volver a preguntar',
-  'Edit, branching from here': 'Editar, bifurcando desde aquí',
   'Answer again': 'Responder de nuevo',
   'Retry': 'Reintentar',
 
@@ -621,4 +617,14 @@ export const es: Record<string, string> = {
   'What do you want to know about it?': '¿Qué quieres saber sobre esto?',
 
   'Ask': 'Preguntar',
+  'Asking…': 'Preguntando…',
+  'Take back': 'Llevar a la conversación',
+
+  'Put this in the message box, to send on to the conversation': 'Ponerlo en el cuadro de mensaje, para enviarlo a la conversación',
+  'Stop': 'Detener',
+  'What this conversation has cost': 'Lo que ha costado esta conversación',
+
+  'Cache': 'Caché',
+
+  'Priced from the model price table.': 'Calculado con la tabla de precios de los modelos.',
 };

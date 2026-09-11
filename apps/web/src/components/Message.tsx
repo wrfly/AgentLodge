@@ -1,5 +1,5 @@
 import { memo, useState } from 'react';
-import { Brain, ChevronRight, CircleAlert, OctagonX, Pencil, RotateCcw } from 'lucide-react';
+import { Brain, ChevronRight, CircleAlert, CornerUpLeft, OctagonX, Pencil, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import { useChat, type ChatMessage, type LiveBlock } from '../store/chat';
 import { Markdown } from './Markdown';
@@ -75,7 +75,9 @@ function UsageFooter({ usage }: { usage: NonNullable<ChatMessage['usage']> }) {
 
   return (
     <div
-      className="mt-2 flex gap-3 font-mono text-[11px] text-faint opacity-0 transition-opacity group-hover/msg:opacity-100"
+      // No margin of its own: the row it sits in owns the spacing, and a `mt-2` here pushed
+      // the figures half a line below the buttons beside them
+      className="flex gap-3 font-mono text-[11.5px] text-faint opacity-0 transition-opacity group-hover/msg:opacity-100"
       title={t('in {in} · cache read {read} · cache write {write} · out {out}', {
         in: usage.inputTokens,
         read: usage.cacheReadTokens,
@@ -126,24 +128,40 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
   const [busy, setBusy] = useState(false);
   const editMessage = useChat((s) => s.editMessage);
   const streaming = useChat((s) => s.streaming);
-  const isLastQuestion = useChat(
-    (s) => [...s.messages].reverse().find((m) => m.role === 'user')?.id === message.id,
-  );
   /*
-   * A message that has not reached the server yet has no id to edit by — and nothing in the
-   * thread panel is editable at all, because `editMessage` acts on the conversation the page
-   * is on. Offering the button there would let somebody rewrite a question in the
-   * conversation behind the panel while looking at a different one.
+   * A backwards scan rather than a copy-and-reverse. The selector runs on every store change
+   * for every user message on screen, and `[...messages].reverse()` allocated a copy of the
+   * whole transcript each time — quadratic in the length of a conversation, during streaming.
    */
-  const savable = !inThread && !message.id.startsWith('local-');
+  const isLastQuestion = useChat((s) => {
+    for (let i = s.messages.length - 1; i >= 0; i--) {
+      if (s.messages[i]?.role === 'user') return s.messages[i]?.id === message.id;
+    }
+    return false;
+  });
+  /*
+   * The newest question only.
+   *
+   * Editing an older one used to branch the conversation, and the semantics did not survive
+   * having a workspace: the agent had spent those turns writing files, and none of it can be
+   * rewound, so a branch at turn three was a conversation looking at turn ten's directory.
+   * Asking about an older passage is what a thread is for.
+   *
+   * Also not in the thread panel, where `editMessage` would act on the conversation the page
+   * is on rather than the one being read.
+   */
+  const savable = isLastQuestion && !inThread && !message.id.startsWith('local-');
 
   const save = async () => {
     const next = draft.trim();
     if (!next || next === text) return setEditing(false);
     setBusy(true);
-    await editMessage(message.id, next);
+    const landed = await editMessage(message.id, next);
     setBusy(false);
-    setEditing(false);
+    // Only on success. Closing either way threw away a rewritten question whenever the send
+    // was refused — out of quota, conversation busy — and re-opening resets the field to the
+    // original text, so there was nothing left to try again with.
+    if (landed) setEditing(false);
   };
 
   if (editing) {
@@ -163,13 +181,13 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
           />
           <div className="mt-2 flex items-center justify-end gap-2">
             <span className="mr-auto text-[11.5px] text-faint">
-              {isLastQuestion ? t('Replaces the answer below') : t('Branches into a new conversation')}
+              {t('Replaces the answer below')}
             </span>
             <Button variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
               {t('Cancel')}
             </Button>
             <Button onClick={() => void save()} disabled={busy || !draft.trim()}>
-              {isLastQuestion ? t('Send') : t('Branch')}
+              {t('Send')}
             </Button>
           </div>
         </div>
@@ -186,7 +204,7 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
         {savable && !streaming && (
           <button
             onClick={() => { setDraft(text); setEditing(true); }}
-            title={isLastQuestion ? t('Edit and ask again') : t('Edit, branching from here')}
+            title={t('Edit and ask again')}
             className="mt-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100"
           >
             <Pencil size={11} />
@@ -195,6 +213,39 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Take a thread's answer back to the conversation it came from.
+ *
+ * A thread is isolated: nothing asked in one reaches the main transcript or the model's
+ * context there. Most of them are a passing question and that is exactly right. The ones
+ * that turn out to matter need a way across, and the person who has just read the answer is
+ * the one who knows which — so it lands in the composer, to be cut down and sent with
+ * whatever they want done about it, rather than being posted over their head.
+ */
+function CarryButton({ message }: { message: ChatMessage }) {
+  const t = useT();
+  const carryIntoChat = useChat((s) => s.carryIntoChat);
+  const closeSub = useChat((s) => s.closeSub);
+  const text = message.blocks
+    .map((b) => (b.kind === 'text' ? b.text : ''))
+    .join('')
+    .trim();
+  if (!text) return null;
+  return (
+    <button
+      onClick={() => {
+        carryIntoChat(`${text.split('\n').map((l) => `> ${l}`).join('\n')}\n\n`);
+        closeSub();
+      }}
+      title={t('Put this in the message box, to send on to the conversation')}
+      className="flex items-center gap-1 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100"
+    >
+      <CornerUpLeft size={11} />
+      {t('Take back')}
+    </button>
   );
 }
 
@@ -213,7 +264,7 @@ function RetryButton() {
       onClick={() => { setBusy(true); void retry().finally(() => setBusy(false)); }}
       disabled={busy}
       title={t('Answer again')}
-      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100 disabled:opacity-40"
+      className="flex items-center gap-1 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100 disabled:opacity-40"
     >
       <RotateCcw size={11} />
       {t('Retry')}
@@ -272,9 +323,10 @@ export const Message = memo(function Message({
         </div>
       )}
 
-      <div className="mt-1 flex items-center gap-2">
+      <div className="mt-2 flex items-center gap-3">
         {message.usage && !message.pending && <UsageFooter usage={message.usage} />}
-        {isLatest && !message.pending && <RetryButton />}
+        {isLatest && !message.pending && !inThread && <RetryButton />}
+        {inThread && !message.pending && <CarryButton message={message} />}
       </div>
     </div>
   );

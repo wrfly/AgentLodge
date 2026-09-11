@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { ApiError, api } from '../lib/api';
 import { openEventStream } from '../lib/stream';
-import { t } from '../lib/i18n';
 import { useQuota } from './quota';
 import type {
   ThreadSummary,
@@ -82,9 +81,17 @@ export function quotedPrompt(quote: string, question: string): string {
 }
 
 /** Everything from this message on, gone — the same cut the server just made */
+/**
+ * Everything from this message on, gone — the same cut the server just made.
+ *
+ * A miss means the message being cut at is not on screen, which is a disagreement with the
+ * server, not an instruction to keep everything: returning the list whole would then append
+ * the re-asked question below the one it replaces and show it twice. Dropping the tail is
+ * the safe reading of "I do not know where this is".
+ */
 function cutAt(messages: ChatMessage[], messageId: string): ChatMessage[] {
   const i = messages.findIndex((m) => m.id === messageId);
-  return i === -1 ? messages : messages.slice(0, i);
+  return i === -1 ? [] : messages.slice(0, i);
 }
 
 function toChatMessage(m: StoredMessage): ChatMessage {
@@ -157,6 +164,27 @@ interface ChatState {
    * entirely — it goes straight to a thread.
    */
   subQuote: string | null;
+  /**
+   * Half-typed text in the panel: the question for a passage, and one draft per thread.
+   *
+   * In the store rather than in the panel because the panel unmounts — opening the files
+   * panel takes the same column, and leaving the chat for another page takes the whole pane.
+   * A follow-up typed into a thread and not yet sent used to be gone when you came back, and
+   * so did a question rewritten over the default.
+   */
+  subQuestion: string;
+  subDrafts: Record<string, string>;
+  /**
+   * Text on its way into the main composer, and the tick that says it is a fresh one.
+   *
+   * A thread is isolated on purpose, so anything worth keeping has to be carried over
+   * deliberately. It lands in the composer rather than being posted: the person who just
+   * read the answer is the one who knows which part of it matters, and they get to cut it
+   * down and say what they want done with it before it becomes a turn.
+   *
+   * The counter is what makes carrying the same passage twice a second event.
+   */
+  carried: { text: string; nonce: number } | null;
   /** The mobile drawer. Transient: choosing a conversation closes it again */
   sidebarOpen: boolean;
   /**
@@ -184,20 +212,29 @@ interface ChatState {
   ensureConversation: () => Promise<string | null>;
   select: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
-  /** Correct a question. Returns the branch's id when editing an older one made one. */
-  editMessage: (messageId: string, text: string) => Promise<string | null>;
+  /** Correct the newest question: its answer goes and the corrected question is re-asked */
+  /** Resolves true when the edit landed. False means the text is still the caller's to keep. */
+  editMessage: (messageId: string, text: string) => Promise<boolean>;
+  setSubQuestion: (text: string) => void;
+  setSubDraft: (conversationId: string, text: string) => void;
   /** Ask the newest question again, optionally somewhere else */
   retry: (opts?: { model?: string; effort?: string }) => Promise<void>;
   /** Open the panel on the list of threads, without opening any of them */
   showThreads: () => Promise<void>;
   /** Open a thread that already exists */
   openThread: (id: string) => Promise<void>;
+  /** Put a thread's answer into the main composer, for the reader to trim and send */
+  carryIntoChat: (text: string) => void;
+  /** The composer has taken it */
+  clearCarried: () => void;
   /** Open the panel on a passage, with the question still to be written */
   quoteForQuestion: (quote: string) => void;
   /** Open a thread: the passage as context, and a question about it */
   openSub: (quote: string, question: string) => Promise<void>;
   /** Ask the sub-conversation something else */
   sendSub: (text: string) => Promise<void>;
+  /** Stop a thread's turn */
+  abortSub: () => Promise<void>;
   closeSub: () => void;
   abort: () => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
@@ -256,6 +293,28 @@ let creating: Promise<string | null> | null = null;
  */
 let draftEpoch = 0;
 
+/**
+ * The same idea for the side panel, which has four ways to change what it is showing —
+ * the thread list, a thread from it, a passage picked in the transcript, a new thread being
+ * opened — and every one of them awaits the network first.
+ *
+ * Without it each await wrote into whatever the panel had become. Click thread A then
+ * thread B and, if A's fetch was the slower, A's messages rendered under B's stream while
+ * the composer posted to B. Pick a second passage while the first is still opening and the
+ * question you were typing was erased by the thread for the first one.
+ */
+let panelEpoch = 0;
+
+/**
+ * The thread currently being opened, if any — one passage means one thread.
+ *
+ * Nothing read `subStreaming` to disable the Ask button, and the question form stays up
+ * until the call succeeds, so pressing Enter twice opened two threads, started two turns and
+ * charged for both. The second stream closed the first, which then generated to completion
+ * with nobody watching.
+ */
+let openingSub: Promise<unknown> | null = null;
+
 function flushMain() {
   rafMain = null;
   const batch = queueMain;
@@ -280,7 +339,32 @@ function enqueueSub(e: ServerEvent) {
   if (rafSub === null) rafSub = requestAnimationFrame(flushSub);
 }
 
+/**
+ * Everything the panel is showing, dropped along with its stream.
+ *
+ * `closeStreams` is what every reset path calls, and it used to leave the panel's state
+ * standing: switching conversation, signing out or pressing "New chat" left a thread on
+ * screen with a dead stream behind it, and anything typed into it went to a conversation
+ * nobody was listening to. `subStreaming` latches on send and is cleared by an event that
+ * would never arrive, so the composer stayed disabled and the answer never appeared.
+ */
+function forgetPanel() {
+  panelEpoch++;
+  useChat.setState({
+    subOpen: false,
+    subQuote: null,
+    subConversationId: null,
+    subMessages: [],
+    subStreaming: false,
+    threads: [],
+    // Drafts belong to threads, and the threads belong to the conversation being left
+    subQuestion: '',
+    subDrafts: {},
+  });
+}
+
 function closeStreams() {
+  forgetPanel();
   closeMain?.();
   closeMain = null;
   queueMain = [];
@@ -540,6 +624,9 @@ export const useChat = create<ChatState>((set, get) => ({
   subStreaming: false,
   threads: [],
   subQuote: null,
+  subQuestion: '',
+  subDrafts: {},
+  carried: null,
   sidebarOpen: false,
   sidebarCollapsed: localStorage.getItem(COLLAPSED_KEY) === '1',
 
@@ -700,6 +787,9 @@ export const useChat = create<ChatState>((set, get) => ({
     if (get().activeId === id && get().messages.length) return;
     // Whatever draft was being created is no longer the one on screen
     draftEpoch++;
+    // A thread belongs to the conversation it was opened in, so it does not follow this one
+    closeSubStream();
+    forgetPanel();
     set({ loading: true, activeId: id, messages: [], sidebarOpen: false, notice: null });
     try {
       const conv = await api.getConversation(id);
@@ -751,9 +841,18 @@ export const useChat = create<ChatState>((set, get) => ({
     } catch (err) {
       // 402 = out of allowance. Refresh the quota while we are here, and the composer disables itself immediately.
       if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
+      /*
+       * The optimistic message goes, but what it said comes back to the composer.
+       *
+       * The server treats "busy" as a question about the whole family, so sending here while
+       * a thread is generating is a 409 — and dropping the row on a 409 took the typed text
+       * off the screen and out of the box, which had already cleared on submit. It was gone
+       * for a reason that had nothing to do with it.
+       */
       set((s) => ({
         streaming: false,
         error: err instanceof Error ? err.message : String(err),
+        carried: { text, nonce: (s.carried?.nonce ?? 0) + 1 },
         messages: s.messages.filter((m) => m.id !== optimistic.id),
       }));
     }
@@ -765,31 +864,35 @@ export const useChat = create<ChatState>((set, get) => ({
    * here: what an edit does depends on where the message was, and the server is the one that
    * knows — guessing and then correcting would flicker between two different conversations.
    */
+  /**
+   * Answers "did this land", so the editor can stay open over text somebody rewrote.
+   *
+   * Closing it either way threw the rewrite away on any failure — a refused quota, a
+   * conversation that got busy — and re-opening resets the field to the original. Same
+   * reasoning as `send`, which hands typed text back through `carried`.
+   */
   async editMessage(messageId, text) {
     const id = get().activeId;
-    if (!id || get().streaming) return null;
+    if (!id || get().streaming) return false;
     try {
       const r = await api.editMessage(id, messageId, text);
-      if (r.forked) {
-        await get().refreshList();
-        await get().select(r.conversationId);
-        set({
-          streaming: true,
-          // A branch that could not take the workspace with it is a different thing to be
-          // told about than one that did — the agent has nothing to look at but the words
-          notice: r.filesCopied ? null : t('The workspace could not be copied, so this conversation starts with an empty directory'),
-        });
-        return r.conversationId;
-      }
+      /*
+       * Still the conversation this was typed in. Another one clicked while the POST was in
+       * the air used to have its whole transcript replaced by this single question — `cutAt`
+       * finds no such message there and returns nothing — and left it streaming against an
+       * idle stream, so the composer stayed on "Generating…" with a Stop button that aborted
+       * a conversation nobody was watching.
+       */
+      if (get().activeId !== id) return true;
       set((s) => ({
         messages: [...cutAt(s.messages, messageId), toChatMessage(r.userMessage)],
         streaming: true,
       }));
-      return null;
+      return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
       set({ error: err instanceof Error ? err.message : String(err) });
-      return null;
+      return false;
     }
   },
 
@@ -799,6 +902,7 @@ export const useChat = create<ChatState>((set, get) => ({
     const asked = [...get().messages].reverse().find((m) => m.role === 'user');
     try {
       const r = await api.retry(id, opts);
+      if (get().activeId !== id) return;
       set((s) => ({
         messages: [...(asked ? cutAt(s.messages, asked.id) : s.messages), toChatMessage(r.userMessage)],
         streaming: true,
@@ -914,28 +1018,63 @@ export const useChat = create<ChatState>((set, get) => ({
     const id = get().activeId;
     if (!id) return;
     closeSubStream();
+    const mine = ++panelEpoch;
     set({ subOpen: true, subQuote: null, subConversationId: null, subMessages: [], subStreaming: false });
     try {
-      set({ threads: await api.threads(id) });
+      const threads = await api.threads(id);
+      if (panelEpoch !== mine) return;
+      set({ threads });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
     }
   },
 
   async openThread(id) {
+    // Before anything else. It is the only thing that closes the stream the panel is on, and
+    // leaving it open means its deltas land in the panel under the new thread's name while
+    // the composer posts to the new one
+    closeSubStream();
+    const mine = ++panelEpoch;
     set({ subOpen: true, subQuote: null, subConversationId: id, subMessages: [], subStreaming: false });
     try {
       const conv = await api.getConversation(id);
+      if (panelEpoch !== mine) return;
       set({ subMessages: conv.messages.map(toChatMessage) });
       openSubStream(id);
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
+      if (panelEpoch !== mine) return;
+      /*
+       * Back to the list. Leaving the id set left the panel showing an empty thread with a
+       * live composer: a question typed into it posted fine, latched `subStreaming`, and
+       * with no stream subscribed nothing ever cleared it. The answer was generated and
+       * stored, the composer stayed disabled, and nothing on screen said either.
+       */
+      set({ subConversationId: null, error: err instanceof Error ? err.message : String(err) });
     }
+  },
+
+  carryIntoChat(text) {
+    set((s) => ({ carried: { text, nonce: (s.carried?.nonce ?? 0) + 1 } }));
+  },
+
+  clearCarried() {
+    set({ carried: null });
+  },
+
+  setSubQuestion(text) {
+    set({ subQuestion: text });
+  },
+
+  setSubDraft(conversationId, text) {
+    set((s) => ({ subDrafts: { ...s.subDrafts, [conversationId]: text } }));
   },
 
   quoteForQuestion(quote) {
     closeSubStream();
-    set({ subOpen: true, subQuote: quote, subConversationId: null, subMessages: [], subStreaming: false });
+    panelEpoch++;
+    // Cleared, so the panel fills in the default for this passage rather than showing the
+    // question written for the last one
+    set({ subOpen: true, subQuote: quote, subConversationId: null, subMessages: [], subStreaming: false, subQuestion: '' });
   },
 
   /**
@@ -948,19 +1087,42 @@ export const useChat = create<ChatState>((set, get) => ({
   async openSub(quote, question) {
     const parent = get().activeId;
     if (!parent) return;
-    set({ subOpen: true, subQuote: null, subMessages: [], subStreaming: true, notice: null });
-    try {
-      const r = await api.createSubConversation(parent, quotedPrompt(quote, question));
-      set({
-        subConversationId: r.conversationId,
-        subMessages: r.conversation.messages.map(toChatMessage),
-      });
-      openSubStream(r.conversationId);
-      void api.threads(parent).then((threads) => set({ threads })).catch(() => {});
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
-      set({ subStreaming: false, error: err instanceof Error ? err.message : String(err) });
-    }
+    // One passage, one thread. Two calls would be two threads, two turns and two bills.
+    if (openingSub) return openingSub.then(() => undefined);
+    const mine = ++panelEpoch;
+    set({ subOpen: true, subMessages: [], subStreaming: true, notice: null });
+    openingSub = (async () => {
+      try {
+        const r = await api.createSubConversation(parent, quotedPrompt(quote, question));
+        /*
+         * The panel moved while this was in the air — another passage was picked, a thread
+         * was opened from the list, the conversation was switched. The thread exists and is
+         * answering; it belongs in the list, not on top of whatever is there now.
+         */
+        if (panelEpoch !== mine) {
+          if (get().activeId === parent) void api.threads(parent).then((threads) => set({ threads })).catch(() => {});
+          return;
+        }
+        // Only now: a thread that failed to open should leave the passage and the question
+        // where they were, not send somebody back to the transcript to find the paragraph again
+        set({
+          subQuote: null,
+          subConversationId: r.conversationId,
+          subMessages: r.conversation.messages.map(toChatMessage),
+        });
+        openSubStream(r.conversationId);
+        void api.threads(parent).then((threads) => {
+          if (get().activeId === parent) set({ threads });
+        }).catch(() => {});
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
+        if (panelEpoch !== mine) return;
+        set({ subStreaming: false, error: err instanceof Error ? err.message : String(err) });
+      } finally {
+        openingSub = null;
+      }
+    })();
+    return openingSub.then(() => undefined);
   },
 
   async sendSub(text) {
@@ -998,8 +1160,23 @@ export const useChat = create<ChatState>((set, get) => ({
    * is reached again from the list, which is what the panel shows with nothing open in it.
    * Asking about the same passage would not do: that opens a second thread.
    */
+  /**
+   * Stop a thread's turn.
+   *
+   * The main Stop button reads the main `streaming` and aborts `activeId`, so a thread that
+   * hung left the panel disabled with nothing to press. The server's abort walks the family,
+   * so it is the same call with the thread's id.
+   */
+  async abortSub() {
+    const id = get().subConversationId;
+    if (!id) return;
+    await api.abort(id);
+    set({ subStreaming: false });
+  },
+
   closeSub() {
     closeSubStream();
+    panelEpoch++;
     set({ subOpen: false, subQuote: null, subConversationId: null, subMessages: [], subStreaming: false });
   },
 

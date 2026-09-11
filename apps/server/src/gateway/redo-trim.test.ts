@@ -128,5 +128,152 @@ console.log('\n=== A body with no user after the assistant is left alone ===');
   ok('a tool continuation is not mistaken for an answer', out === body);
 }
 
+console.log('\n=== A tool call travels with its result, which is in a user message ===');
+{
+  /*
+   * The failure this is written against, and the reason it is the worst one here.
+   *
+   * On the Anthropic wire a `tool_result` rides in a message with `role: 'user'`. A scan for
+   * "the next thing the user said" stopped on one, so the cut removed the `tool_use` and left
+   * its result behind. The API rejects the orphan with a 400 — and a trim rule never expires,
+   * so every later request in that conversation is rejected too. The conversation is wedged
+   * for good, and the only way out is deleting it.
+   */
+  const body = {
+    messages: [
+      { role: 'user', content: 'fix it' },
+      { role: 'assistant', content: [
+        { type: 'text', text: 'Let me check.' },
+        { type: 'tool_use', id: 't9', name: 'Read', input: {} },
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't9', content: 'ok' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
+      { role: 'user', content: 'next question' },
+    ],
+  };
+  const out = trimRedoAnswers(body, ['Let me check.']) as typeof body;
+  const kinds = out.messages.map((m) =>
+    typeof m.content === 'string' ? m.role : `${m.role}:${m.content.map((c) => c.type).join('+')}`);
+  ok('the tool call is gone', !JSON.stringify(out).includes('tool_use'), JSON.stringify(kinds));
+  ok('and so is its result — an orphan is a 400', !JSON.stringify(out).includes('tool_result'),
+    JSON.stringify(kinds));
+  /*
+   * The second assistant message goes too, and should: a turn is one question and everything
+   * the model said answering it, however many times it stopped to call a tool. The segment is
+   * the turn, not the message.
+   */
+  ok('the rest of the same turn goes with it', !JSON.stringify(out).includes('Done.'));
+  ok('the question that follows survives', JSON.stringify(out).includes('next question'));
+  ok('and the one before it', JSON.stringify(out).includes('fix it'));
+  ok('leaving the two questions', out.messages.length === 2, String(out.messages.length));
+}
+
+console.log('\n=== A reasoning item travels with the message it reasoned into ===');
+{
+  /*
+   * The Responses wire's version of the orphan above, and it points the other way.
+   *
+   * A `reasoning` item is not inside the assistant message — it is its own item, immediately
+   * in front of it, and the API requires the pair to stay adjacent: cut the message and the
+   * reasoning is left pointing at nothing. The error is
+   * `Item 'rs_…' of type 'reasoning' was provided without its required following item`, and
+   * as with the `tool_use` orphan, a rule that never expires means every later request in the
+   * conversation is refused too.
+   */
+  const body = {
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'sort it' }] },
+      { type: 'reasoning', id: 'rs_1', summary: [] },
+      { type: 'function_call', call_id: 'c1', name: 'shell', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'c1', output: 'sorted' },
+      { type: 'reasoning', id: 'rs_2', summary: [] },
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'old answer' }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'sort it again' }] },
+    ],
+  };
+  const out = trimRedoAnswers(body, ['old answer']) as typeof body;
+  const ids = out.input.map((i) => i.id ?? i.type);
+  ok('the answer is gone', !JSON.stringify(out).includes('old answer'), JSON.stringify(ids));
+  ok('and the reasoning that fed it goes too', !JSON.stringify(out).includes('rs_2'),
+    JSON.stringify(ids));
+  /*
+   * The tool call is a complete pair and stays, and so does the reasoning in front of it,
+   * which is still followed by the item it belongs to. It is also true: the shell command
+   * ran, and the model should go on knowing that, whatever we do to the answer about it.
+   */
+  ok('the tool call before it survives whole',
+    out.input.some((i) => i.type === 'function_call')
+      && out.input.some((i) => i.type === 'function_call_output'), JSON.stringify(ids));
+  ok('with its own reasoning still attached', JSON.stringify(out).includes('rs_1'),
+    JSON.stringify(ids));
+  ok('the two questions are what else remains', out.input.length === 5, JSON.stringify(ids));
+}
+
+console.log('\n=== A rule is spent on the answer it was written for ===');
+{
+  /*
+   * A rule is exact text and never expires. A coding agent says "Done." at the end of a
+   * step often enough that a later turn matching the rule written for an earlier one is not
+   * a hypothetical — and the cut takes the whole segment, so that turn's tool calls go with
+   * it. The user sees the turn on screen; the model never sees it again.
+   *
+   * The discarded answer is always earlier in the transcript than any later twin, so the
+   * first match is the right one.
+   */
+  const body = {
+    messages: [
+      { role: 'user', content: 'step one' },
+      { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
+      { role: 'user', content: 'step one, differently' },
+      { role: 'assistant', content: [
+        { type: 'text', text: 'Done.' },
+        { type: 'tool_use', id: 't4', name: 'Write', input: {} },
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't4', content: 'written' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'And the file is written.' }] },
+      { role: 'user', content: 'step two' },
+    ],
+  };
+  const out = trimRedoAnswers(body, ['Done.']) as typeof body;
+  ok('the discarded answer is gone', out.messages[0]?.content === 'step one'
+    && out.messages[1]?.content === 'step one, differently', JSON.stringify(out.messages.map((m) => m.role)));
+  ok('the later turn that said the same thing is not', JSON.stringify(out).includes('And the file is written.'));
+  ok('nor is the work it did', JSON.stringify(out).includes('tool_use'));
+  ok('one message gone, not four', out.messages.length === 6, String(out.messages.length));
+
+  // Retried twice to the same words means two rules, and both are spent
+  const twice = trimRedoAnswers(body, ['Done.', 'Done.']) as typeof body;
+  ok('two rules take both', !JSON.stringify(twice).includes('Done.'), String(twice.messages.length));
+}
+
+console.log('\n=== Each piece of an answer is its own rule ===');
+{
+  /*
+   * A stored assistant row is one turn; a turn is several wire messages, split wherever the
+   * model stopped to call a tool. A rule made by joining every text block matched no wire
+   * message at all, so on any turn that used a tool — most of them, for a coding agent — the
+   * discarded answer went upstream untouched.
+   */
+  const body = {
+    messages: [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: [
+        { type: 'text', text: "I'll read it." },
+        { type: 'tool_use', id: 't1', name: 'Read', input: {} },
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'file' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'The answer is 42.' }] },
+      { role: 'user', content: 'q again' },
+    ],
+  };
+  const joined = trimRedoAnswers(body, ["I'll read it.The answer is 42."]);
+  ok('the joined form matches nothing', joined === body);
+  const split = trimRedoAnswers(body, ["I'll read it.", 'The answer is 42.']) as typeof body;
+  ok('the pieces match both wire messages', split.messages.length === 2,
+    JSON.stringify(split.messages.map((m) => m.role)));
+  ok('leaving the question and the retry', JSON.stringify(split).includes('q again')
+    && !JSON.stringify(split).includes('42'));
+}
+
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

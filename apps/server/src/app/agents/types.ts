@@ -17,6 +17,15 @@ export interface RunOptions {
   containerCwd?: string;
   /** The user's memory directory, as the CLI will see it (container path in container mode) */
   memoryDir?: string;
+  /**
+   * Let it read the workspace but not change it.
+   *
+   * For a thread, which shares its parent's directory. A thread is for asking about
+   * something already said, so reading files to answer is the job and writing them is not —
+   * and since the two conversations no longer share a session, refusing the writes is what
+   * makes running both at once safe rather than merely tolerated.
+   */
+  readOnly?: boolean;
   onEvent: (e: ServerEvent) => void;
   onSessionId: (sessionId: string) => void;
 }

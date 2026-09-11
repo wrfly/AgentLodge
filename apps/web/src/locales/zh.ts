@@ -76,7 +76,6 @@ export const zh: Record<string, string> = {
   'Every conversation has its own working directory. {label} can read and write files and run commands in it.': '每个会话都有自己独立的工作目录，{label} 可以在里面读写文件、执行命令。',
   '{label} is not connected': '{label} 未接入',
   'The command-line tool was not found on this machine.': '本机没有找到对应的命令行工具。',
-  'Total usage for this conversation': '本会话累计用量',
   'Open sidebar': '打开侧栏',
   'Event stream dropped — reconnecting': '事件流已断开，正在自动重连',
   Reconnecting: '重连中',
@@ -624,12 +623,9 @@ export const zh: Record<string, string> = {
 
   // Editing a question already asked, and asking one again
   'Replaces the answer below': '替换下面那条回复',
-  'Branches into a new conversation': '分叉出一条新对话',
 
-  'The workspace could not be copied, so this conversation starts with an empty directory': '工作区复制失败，这个新会话从空目录开始',
   'Branch': '分叉',
   'Edit and ask again': '改一下重新问',
-  'Edit, branching from here': '从这里分叉着改',
   'Answer again': '重新回答',
   'Retry': '重试',
 
@@ -648,4 +644,14 @@ export const zh: Record<string, string> = {
   'What do you want to know about it?': '你想知道关于它的什么？',
 
   'Ask': '提问',
+  'Asking…': '提问中…',
+  'Take back': '带回主对话',
+
+  'Put this in the message box, to send on to the conversation': '放进下面的输入框，由你确认后发给主对话',
+  'Stop': '停止',
+  'What this conversation has cost': '这条对话花了多少',
+
+  'Cache': '缓存',
+
+  'Priced from the model price table.': '按模型价格表计算。',
 };

@@ -90,4 +90,5 @@ export const pt: Record<string, string> = {
   'Only a question can be edited': 'Só uma pergunta pode ser editada',
 
   'There is nothing to retry yet': 'Ainda não há nada para tentar de novo',
+  'Only the newest question can be edited. Select the passage and open a thread instead.': 'Só a pergunta mais recente pode ser editada. Para algo anterior, selecione o trecho e abra um tópico.',
 };
