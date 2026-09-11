@@ -144,15 +144,20 @@ export function registerConversationRoutes(app: FastifyInstance): void {
         reply.code(202);
         return { forked: true, ...r };
       }
-      // The question and whatever was answered to it. The answer's text is kept for the
-      // gateway: the CLI's transcript still holds it, and without the rule the model would
-      // see — and tend to repeat — the very reply the user just discarded.
-      const answer = convRepo.lastAssistantMessage(id, req.user!.id);
-      convRepo.truncateFrom(id, req.user!.id, at.seq);
-      if (answer) trimsRepo.add(id, textOf(answer));
-      const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
-      reply.code(202);
-      return { forked: false, turnId, userMessage };
+      // The question and whatever was answered to it
+      const cut = convRepo.truncateFrom(id, req.user!.id, at.seq);
+      try {
+        rememberDiscarded(id, cut);
+        const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
+        reply.code(202);
+        return { forked: false, turnId, userMessage };
+      } catch (err) {
+        // The turn never started — a quota that ran out, an engine that is down — so the
+        // question goes back. It is the only copy, and answering 402 over the space where it
+        // used to be loses what somebody typed for a reason that has nothing to do with it.
+        convRepo.restoreMessages(id, req.user!.id, cut);
+        throw err;
+      }
     } catch (err) {
       if (err instanceof turns.QuotaExceededError) {
         return reply.code(402).send({ error: err.message, quota: err.status });
@@ -189,14 +194,17 @@ export function registerConversationRoutes(app: FastifyInstance): void {
 
     try {
       // The question goes too, and is asked again — `startTurn` is the only thing that stores
-      // one, and a retry that left the old row behind would show it twice. The discarded
-      // answer is captured first, so the gateway can drop it from the CLI's later requests.
-      const answer = convRepo.lastAssistantMessage(id, req.user!.id);
-      convRepo.truncateFrom(id, req.user!.id, last.seq);
-      if (answer) trimsRepo.add(id, textOf(answer));
-      const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
-      reply.code(202);
-      return { turnId, userMessage };
+      // one, and a retry that left the old row behind would show it twice
+      const cut = convRepo.truncateFrom(id, req.user!.id, last.seq);
+      try {
+        rememberDiscarded(id, cut);
+        const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
+        reply.code(202);
+        return { turnId, userMessage };
+      } catch (err) {
+        convRepo.restoreMessages(id, req.user!.id, cut);
+        throw err;
+      }
     } catch (err) {
       if (err instanceof turns.QuotaExceededError) {
         return reply.code(402).send({ error: err.message, quota: err.status });
@@ -481,9 +489,44 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   });
 }
 
-/** What a message says, as the gateway will see it on the wire: its text blocks, joined */
-function textOf(m: { blocks: Array<{ kind?: string; text?: string }> }): string {
-  return m.blocks.map((b) => (b.kind === 'text' ? b.text ?? '' : '')).join('');
+/**
+ * The pieces of an answer the gateway can recognise on the wire, one rule each.
+ *
+ * A stored assistant row is one *turn*; a turn is several wire messages, split wherever the
+ * model stopped to call a tool. Joining every text block gave a string no single wire message
+ * ever equals — "I'll read it.The answer is 42." — so the rule matched nothing and the
+ * discarded answer went upstream intact on every turn that used a tool, which for a coding
+ * agent is most of them.
+ *
+ * Each text block is its own rule instead, because each is what one wire message says.
+ */
+/**
+ * Tell the gateway to stop sending the answers we just deleted.
+ *
+ * Only what was actually cut. It used to ask for the newest assistant row in the whole
+ * conversation, with no check that the row was inside the cut — so after a turn that died
+ * without storing an answer (a server restart mid-stream, an error path) the newest answer
+ * was an *earlier* one, still on screen and legitimately in the CLI's transcript, and it got
+ * a rule that removed it from every later request for good.
+ */
+function rememberDiscarded(
+  conversationId: string,
+  cut: Array<{ role: string; blocks: Array<{ kind?: string; text?: string }> }>,
+): void {
+  for (const m of cut) {
+    if (m.role !== 'assistant') continue;
+    for (const rule of trimRulesFor(m)) trimsRepo.add(conversationId, rule);
+  }
+}
+
+function trimRulesFor(m: { blocks: Array<{ kind?: string; text?: string }> }): string[] {
+  const seen = new Set<string>();
+  for (const b of m.blocks) {
+    if (b.kind !== 'text') continue;
+    const text = (b.text ?? '').trim();
+    if (text) seen.add(text);
+  }
+  return [...seen];
 }
 
 /** Render a conversation as Markdown, for keeping or sharing */

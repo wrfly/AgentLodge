@@ -623,4 +623,5 @@ export const de: Record<string, string> = {
   'Take back': 'Ins Gespräch übernehmen',
 
   'Put this in the message box, to send on to the conversation': 'In das Eingabefeld legen, um es ans Gespräch zu schicken',
+  'Stop': 'Stopp',
 };

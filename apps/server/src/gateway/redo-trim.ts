@@ -73,8 +73,20 @@ function dropSegment<T>(
 
 type WireMessage = { role?: string; content?: unknown };
 
+/**
+ * A user message that is somebody speaking, rather than a tool handing back a result.
+ *
+ * On the Anthropic wire a `tool_result` is carried in a message with `role: 'user'`, so a
+ * scan looking for "the next thing the user said" stops on one — and a cut that ends there
+ * removes the `tool_use` while leaving its result behind. The API rejects the orphan with a
+ * 400, and since a trim rule never expires, every later request in that conversation is
+ * rejected too: the conversation is wedged for good with nothing to undo it.
+ */
 function isUserMessage(m: unknown): boolean {
-  return (m as WireMessage)?.role === 'user';
+  if ((m as WireMessage)?.role !== 'user') return false;
+  const c = (m as WireMessage).content;
+  if (!Array.isArray(c)) return true;                  // a plain string is somebody talking
+  return !c.every((p) => (p as { type?: string })?.type === 'tool_result');
 }
 function isAssistantMessage(m: unknown): boolean {
   return (m as WireMessage)?.role === 'assistant';
@@ -96,6 +108,11 @@ function messageText(m: unknown): string {
 
 type WireItem = { type?: string; role?: string; content?: Array<{ type?: string; text?: string }> };
 
+/**
+ * The Responses wire keeps tool output in its own item type rather than inside a user
+ * message, so the `type === 'message'` test already walks past it. Spelled out because the
+ * Anthropic side needs a deliberate exclusion and the two should read as the same rule.
+ */
 function isUserItem(m: unknown): boolean {
   const i = m as WireItem;
   return i?.type === 'message' && i.role === 'user';

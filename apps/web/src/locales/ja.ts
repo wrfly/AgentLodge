@@ -650,4 +650,5 @@ export const ja: Record<string, string> = {
   'Take back': '本編に持ち帰る',
 
   'Put this in the message box, to send on to the conversation': '入力欄に入れます。確認してから会話に送れます',
+  'Stop': '停止',
 };

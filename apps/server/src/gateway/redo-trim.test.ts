@@ -128,5 +128,74 @@ console.log('\n=== A body with no user after the assistant is left alone ===');
   ok('a tool continuation is not mistaken for an answer', out === body);
 }
 
+console.log('\n=== A tool call travels with its result, which is in a user message ===');
+{
+  /*
+   * The failure this is written against, and the reason it is the worst one here.
+   *
+   * On the Anthropic wire a `tool_result` rides in a message with `role: 'user'`. A scan for
+   * "the next thing the user said" stopped on one, so the cut removed the `tool_use` and left
+   * its result behind. The API rejects the orphan with a 400 — and a trim rule never expires,
+   * so every later request in that conversation is rejected too. The conversation is wedged
+   * for good, and the only way out is deleting it.
+   */
+  const body = {
+    messages: [
+      { role: 'user', content: 'fix it' },
+      { role: 'assistant', content: [
+        { type: 'text', text: 'Let me check.' },
+        { type: 'tool_use', id: 't9', name: 'Read', input: {} },
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't9', content: 'ok' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
+      { role: 'user', content: 'next question' },
+    ],
+  };
+  const out = trimRedoAnswers(body, ['Let me check.']) as typeof body;
+  const kinds = out.messages.map((m) =>
+    typeof m.content === 'string' ? m.role : `${m.role}:${m.content.map((c) => c.type).join('+')}`);
+  ok('the tool call is gone', !JSON.stringify(out).includes('tool_use'), JSON.stringify(kinds));
+  ok('and so is its result — an orphan is a 400', !JSON.stringify(out).includes('tool_result'),
+    JSON.stringify(kinds));
+  /*
+   * The second assistant message goes too, and should: a turn is one question and everything
+   * the model said answering it, however many times it stopped to call a tool. The segment is
+   * the turn, not the message.
+   */
+  ok('the rest of the same turn goes with it', !JSON.stringify(out).includes('Done.'));
+  ok('the question that follows survives', JSON.stringify(out).includes('next question'));
+  ok('and the one before it', JSON.stringify(out).includes('fix it'));
+  ok('leaving the two questions', out.messages.length === 2, String(out.messages.length));
+}
+
+console.log('\n=== Each piece of an answer is its own rule ===');
+{
+  /*
+   * A stored assistant row is one turn; a turn is several wire messages, split wherever the
+   * model stopped to call a tool. A rule made by joining every text block matched no wire
+   * message at all, so on any turn that used a tool — most of them, for a coding agent — the
+   * discarded answer went upstream untouched.
+   */
+  const body = {
+    messages: [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: [
+        { type: 'text', text: "I'll read it." },
+        { type: 'tool_use', id: 't1', name: 'Read', input: {} },
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'file' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'The answer is 42.' }] },
+      { role: 'user', content: 'q again' },
+    ],
+  };
+  const joined = trimRedoAnswers(body, ["I'll read it.The answer is 42."]);
+  ok('the joined form matches nothing', joined === body);
+  const split = trimRedoAnswers(body, ["I'll read it.", 'The answer is 42.']) as typeof body;
+  ok('the pieces match both wire messages', split.messages.length === 2,
+    JSON.stringify(split.messages.map((m) => m.role)));
+  ok('leaving the question and the retry', JSON.stringify(split).includes('q again')
+    && !JSON.stringify(split).includes('42'));
+}
+
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

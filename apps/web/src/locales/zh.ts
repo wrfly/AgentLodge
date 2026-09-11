@@ -650,4 +650,5 @@ export const zh: Record<string, string> = {
   'Take back': '带回主对话',
 
   'Put this in the message box, to send on to the conversation': '放进下面的输入框，由你确认后发给主对话',
+  'Stop': '停止',
 };

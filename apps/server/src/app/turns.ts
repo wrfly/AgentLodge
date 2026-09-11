@@ -229,6 +229,15 @@ export async function copyWorkspace(from: string, to: string): Promise<boolean> 
     recursive: true,
     // A dangling symlink would abort the whole copy
     dereference: false,
+    /*
+     * Copy the link's own text, not where it currently points.
+     *
+     * Without this Node resolves each target, so `./real.txt` and `../real.txt` come out as
+     * absolute paths **into the source conversation's directory** — the forked agent writes
+     * through one and edits the conversation it was forked from, which is the one thing the
+     * copy exists to prevent, and it does it silently.
+     */
+    verbatimSymlinks: true,
     filter: (src) => !NOT_WORTH_COPYING.has(path.basename(src)),
   });
   return true;
@@ -304,7 +313,10 @@ export async function forkAt(
   const fork = convRepo.create({
     userId,
     agent: source.agent,
-    title: source.title,
+    // Named after the question that made it. Inheriting the source's title put two
+    // byte-identical rows in the sidebar, the fork directly above its twin on a fresher
+    // `updated_at`, with nothing to tell them apart.
+    title: convRepo.deriveTitle(text),
     model: source.model,
     effort: source.effort,
     thinking: source.thinking,
@@ -333,7 +345,21 @@ export async function forkAt(
     ? `The conversation so far, which you did not take part in:\n\n${prior}\n\n---\n\n${text}`
     : text;
 
-  const { turnId, userMessage } = await startTurn(fork.id, userId, prompt);
+  let started;
+  try {
+    started = await startTurn(fork.id, userId, prompt);
+  } catch (err) {
+    /*
+     * The branch never got its first turn — a quota that ran out, an engine that is down.
+     * Everything above already happened: a row in the sidebar, a copy of the transcript, and
+     * up to two hundred megabytes of somebody's files. The caller gets a 402 and never learns
+     * this exists, so it has to go.
+     */
+    convRepo.remove(fork.id, userId);
+    await fs.rm(workspaceDir(userId, fork.id), { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+  const { turnId, userMessage } = started;
   // The stored message is what the user actually asked, not the replay wrapped around it
   convRepo.rewriteMessage(fork.id, userId, userMessage.id, text);
   return { conversationId: fork.id, turnId, userMessage: { ...userMessage, blocks: [{ kind: 'text', blockId: 0, text }] }, filesCopied };

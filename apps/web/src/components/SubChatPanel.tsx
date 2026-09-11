@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, CornerDownLeft, X } from 'lucide-react';
+import { ArrowLeft, CornerDownLeft, Square, X } from 'lucide-react';
 import { useT } from '../lib/i18n';
 import { useChat } from '../store/chat';
 import { DEFAULT_QUESTION } from './SelectionAsk';
@@ -28,9 +28,14 @@ export function SubChatPanel() {
   const threads = useChat((s) => s.threads);
   const quote = useChat((s) => s.subQuote);
   const openSub = useChat((s) => s.openSub);
+  const abortSub = useChat((s) => s.abortSub);
   const showThreads = useChat((s) => s.showThreads);
   const openThread = useChat((s) => s.openThread);
-  const [draft, setDraft] = useState('');
+  // Keyed on the thread, or a question half-typed in one appears in the next one opened
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draft = conversationId ? (drafts[conversationId] ?? '') : '';
+  const setDraft = (v: string) =>
+    setDrafts((d) => (conversationId ? { ...d, [conversationId]: v } : d));
   const [question, setQuestion] = useState('');
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -148,9 +153,17 @@ export function SubChatPanel() {
             disabled={!conversationId}
             className="max-h-32 min-h-[22px] flex-1 resize-none bg-transparent text-[14px] leading-[1.6] outline-none disabled:opacity-50"
           />
-          <Button variant="ghost" onClick={send} disabled={!draft.trim() || streaming || !conversationId}>
-            <CornerDownLeft size={14} />
-          </Button>
+          {/* A hung turn used to leave the panel disabled with nothing to press: the main
+              Stop reads the main conversation's `streaming` and aborts the wrong id */}
+          {streaming ? (
+            <Button variant="ghost" onClick={() => void abortSub()} title={t('Stop')}>
+              <Square size={13} />
+            </Button>
+          ) : (
+            <Button variant="ghost" onClick={send} disabled={!draft.trim() || !conversationId}>
+              <CornerDownLeft size={14} />
+            </Button>
+          )}
         </div>
       </div>
       )}

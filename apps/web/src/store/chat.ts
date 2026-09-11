@@ -213,6 +213,8 @@ interface ChatState {
   openSub: (quote: string, question: string) => Promise<void>;
   /** Ask the sub-conversation something else */
   sendSub: (text: string) => Promise<void>;
+  /** Stop a thread's turn */
+  abortSub: () => Promise<void>;
   closeSub: () => void;
   abort: () => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
@@ -295,7 +297,28 @@ function enqueueSub(e: ServerEvent) {
   if (rafSub === null) rafSub = requestAnimationFrame(flushSub);
 }
 
+/**
+ * Everything the panel is showing, dropped along with its stream.
+ *
+ * `closeStreams` is what every reset path calls, and it used to leave the panel's state
+ * standing: switching conversation, signing out or pressing "New chat" left a thread on
+ * screen with a dead stream behind it, and anything typed into it went to a conversation
+ * nobody was listening to. `subStreaming` latches on send and is cleared by an event that
+ * would never arrive, so the composer stayed disabled and the answer never appeared.
+ */
+function forgetPanel() {
+  useChat.setState({
+    subOpen: false,
+    subQuote: null,
+    subConversationId: null,
+    subMessages: [],
+    subStreaming: false,
+    threads: [],
+  });
+}
+
 function closeStreams() {
+  forgetPanel();
   closeMain?.();
   closeMain = null;
   queueMain = [];
@@ -716,6 +739,9 @@ export const useChat = create<ChatState>((set, get) => ({
     if (get().activeId === id && get().messages.length) return;
     // Whatever draft was being created is no longer the one on screen
     draftEpoch++;
+    // A thread belongs to the conversation it was opened in, so it does not follow this one
+    closeSubStream();
+    forgetPanel();
     set({ loading: true, activeId: id, messages: [], sidebarOpen: false, notice: null });
     try {
       const conv = await api.getConversation(id);
@@ -767,9 +793,18 @@ export const useChat = create<ChatState>((set, get) => ({
     } catch (err) {
       // 402 = out of allowance. Refresh the quota while we are here, and the composer disables itself immediately.
       if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
+      /*
+       * The optimistic message goes, but what it said comes back to the composer.
+       *
+       * The server treats "busy" as a question about the whole family, so sending here while
+       * a thread is generating is a 409 — and dropping the row on a 409 took the typed text
+       * off the screen and out of the box, which had already cleared on submit. It was gone
+       * for a reason that had nothing to do with it.
+       */
       set((s) => ({
         streaming: false,
         error: err instanceof Error ? err.message : String(err),
+        carried: { text, nonce: (s.carried?.nonce ?? 0) + 1 },
         messages: s.messages.filter((m) => m.id !== optimistic.id),
       }));
     }
@@ -939,6 +974,10 @@ export const useChat = create<ChatState>((set, get) => ({
   },
 
   async openThread(id) {
+    // Before anything else. It is the only thing that closes the stream the panel is on, and
+    // leaving it open means its deltas land in the panel under the new thread's name while
+    // the composer posts to the new one
+    closeSubStream();
     set({ subOpen: true, subQuote: null, subConversationId: id, subMessages: [], subStreaming: false });
     try {
       const conv = await api.getConversation(id);
@@ -972,9 +1011,12 @@ export const useChat = create<ChatState>((set, get) => ({
   async openSub(quote, question) {
     const parent = get().activeId;
     if (!parent) return;
-    set({ subOpen: true, subQuote: null, subMessages: [], subStreaming: true, notice: null });
+    set({ subOpen: true, subMessages: [], subStreaming: true, notice: null });
     try {
       const r = await api.createSubConversation(parent, quotedPrompt(quote, question));
+      // Only now: a thread that failed to open should leave the passage and the question
+      // where they were, not send somebody back to the transcript to find the paragraph again
+      set({ subQuote: null });
       set({
         subConversationId: r.conversationId,
         subMessages: r.conversation.messages.map(toChatMessage),
@@ -1022,6 +1064,20 @@ export const useChat = create<ChatState>((set, get) => ({
    * is reached again from the list, which is what the panel shows with nothing open in it.
    * Asking about the same passage would not do: that opens a second thread.
    */
+  /**
+   * Stop a thread's turn.
+   *
+   * The main Stop button reads the main `streaming` and aborts `activeId`, so a thread that
+   * hung left the panel disabled with nothing to press. The server's abort walks the family,
+   * so it is the same call with the thread's id.
+   */
+  async abortSub() {
+    const id = get().subConversationId;
+    if (!id) return;
+    await api.abort(id);
+    set({ subStreaming: false });
+  },
+
   closeSub() {
     closeSubStream();
     set({ subOpen: false, subQuote: null, subConversationId: null, subMessages: [], subStreaming: false });

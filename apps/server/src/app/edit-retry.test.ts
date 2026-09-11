@@ -79,7 +79,22 @@ console.log('\n=== Correcting the newest question cuts the answer to it ===');
   const { id, ids } = conversationOf(['sort it', 'wrote sort.py', 'make it quicksort', 'now quicksort']);
   const at = convRepo.messageAt(id, alice, ids[2]!)!;
   const gone = convRepo.truncateFrom(id, alice, at.seq);
-  ok('the question and its answer both go', gone === 2, String(gone));
+  ok('the question and its answer both go', gone.length === 2, String(gone.length));
+  /*
+   * Handed back, not just counted. The rows are the only copy of what somebody typed, and the
+   * turn meant to replace them can still fail — a quota that ran out, an engine that is down.
+   * Without this the route answers 402 over the space where the question used to be.
+   */
+  ok('and come back with what they said', gone[0]!.blocks[0]!.kind === 'text'
+    && (gone[0]!.blocks[0] as { text: string }).text === 'make it quicksort',
+    JSON.stringify(gone[0]!.blocks[0]));
+  convRepo.restoreMessages(id, alice, gone);
+  ok('putting them back restores the conversation', convRepo.full(id, alice)!.messages.length === 4);
+  ok('at the positions they held',
+    convRepo.messageAt(id, alice, ids[2]!)?.seq === 2 && convRepo.messageAt(id, alice, ids[3]!)?.seq === 3);
+  ok('and doing it twice changes nothing',
+    (convRepo.restoreMessages(id, alice, gone), convRepo.full(id, alice)!.messages.length === 4));
+  convRepo.truncateFrom(id, alice, at.seq);
   const left = convRepo.full(id, alice)!.messages;
   ok('what came before is untouched', left.length === 2, String(left.length));
   ok('and is still in order', left[0]!.blocks[0]!.kind === 'text' && left[1]!.role === 'assistant');
@@ -120,12 +135,19 @@ console.log('\n=== A stored question is what was asked, not the replay around it
 console.log('\n=== The discarded answer is captured for the gateway to drop ===');
 {
   const { id, ids } = conversationOf(['sort it', 'wrote sort.py', 'make it quicksort', 'now quicksort']);
-  const answer = convRepo.lastAssistantMessage(id, alice);
-  ok('the newest assistant message is the answer to the last question', answer?.id === ids[3], String(answer?.seq));
-  ok('an empty conversation has no answer to capture',
-    convRepo.lastAssistantMessage(convRepo.create({ userId: alice, agent: 'claude' }).id, alice) === undefined);
+  /*
+   * Rules come from the rows that were actually cut, not from "the newest answer in the
+   * conversation". After a turn that died without storing an answer — a restart mid-stream,
+   * an error path — the newest answer is an *earlier* one, still on screen and legitimately
+   * in the CLI's transcript, and a rule for it would remove it from every later request.
+   */
+  const cut = convRepo.truncateFrom(id, alice, convRepo.messageAt(id, alice, ids[2]!)!.seq);
+  const answers = cut.filter((m) => m.role === 'assistant');
+  ok('only the answer inside the cut is captured', answers.length === 1 && answers[0]!.id === ids[3],
+    JSON.stringify(answers.map((a) => a.id)));
+  convRepo.restoreMessages(id, alice, cut);
 
-  const text = answer!.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('');
+  const text = answers[0]!.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('');
   ok('a rule is stored for it', trims.add(id, text) === true);
   ok('and read back for the gateway', trims.forConversation(id).includes('now quicksort'));
   ok('an empty text stores nothing', trims.add(id, '   ') === false);

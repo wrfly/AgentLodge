@@ -624,4 +624,5 @@ export const zhHant: Record<string, string> = {
   'Take back': '帶回主對話',
 
   'Put this in the message box, to send on to the conversation': '放進下面的輸入框，由你確認後發給主對話',
+  'Stop': '停止',
 };

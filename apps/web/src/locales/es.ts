@@ -623,4 +623,5 @@ export const es: Record<string, string> = {
   'Take back': 'Llevar a la conversación',
 
   'Put this in the message box, to send on to the conversation': 'Ponerlo en el cuadro de mensaje, para enviarlo a la conversación',
+  'Stop': 'Detener',
 };
