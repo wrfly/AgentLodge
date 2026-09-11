@@ -90,10 +90,31 @@ export function initDb(): DatabaseSync {
    * user_version, or a migrations table. Inferring "has this run" from what the data looks
    * like cannot work once new data can look like old data.
    */
+  /*
+   * An existing file is repaired *before* schema.sql runs over it.
+   *
+   * schema.sql indexes columns that a migration step adds — idx_conv_parent on
+   * conversations(parent_id), idx_usage_provider_created on usage_records(provider_id).
+   * `create index` on a column the old table has not got yet is an error, and an error
+   * anywhere in schema.sql abandons the rest of the file, migrate() included. The column
+   * then never gets added, so the next start fails in exactly the same place: a database
+   * one version behind can never reach the current one.
+   *
+   * A file with no tables in it has nothing to repair. schema.sql builds it complete and
+   * the call below only stamps the version, which is why that call stays where it is.
+   */
+  if (hasTables(db)) migrate(db);
   db.exec(fs.readFileSync(schemaPath, 'utf8'));
   migrate(db);
   console.log(`[db] ${file}`);
   return db;
+}
+
+function hasTables(d: DatabaseSync): boolean {
+  const [row] = d
+    .prepare("select count(*) as n from sqlite_master where type = 'table' and name not like 'sqlite_%'")
+    .all() as Array<{ n: number }>;
+  return (row?.n ?? 0) > 0;
 }
 
 /**
@@ -196,6 +217,21 @@ function migrate(d: DatabaseSync): void {
      */
     const cols = columns(d, 'upstream_providers');
     if (cols.has('models')) {
+      // The rows below are the first thing ever written to this table, and a file this old
+      // predates it. schema.sql creates it too, but that runs after the repair on an
+      // existing file — see initDb.
+      d.exec(`create table if not exists models (
+        id            text primary key,
+        name          text not null,
+        provider_id   text not null references upstream_providers(id) on delete cascade,
+        upstream_name text not null default '',
+        enabled       integer not null default 1,
+        priority      integer not null default 0,
+        note          text,
+        created_at    text not null,
+        updated_at    text not null,
+        unique(name, provider_id)
+      )`);
       const rows = d
         .prepare('select id, models, default_model, active from upstream_providers')
         .all() as Array<{ id: string; models: string | null; default_model: string | null; active: number }>;
