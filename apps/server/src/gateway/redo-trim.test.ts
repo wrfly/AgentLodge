@@ -168,6 +168,47 @@ console.log('\n=== A tool call travels with its result, which is in a user messa
   ok('leaving the two questions', out.messages.length === 2, String(out.messages.length));
 }
 
+console.log('\n=== A reasoning item travels with the message it reasoned into ===');
+{
+  /*
+   * The Responses wire's version of the orphan above, and it points the other way.
+   *
+   * A `reasoning` item is not inside the assistant message — it is its own item, immediately
+   * in front of it, and the API requires the pair to stay adjacent: cut the message and the
+   * reasoning is left pointing at nothing. The error is
+   * `Item 'rs_…' of type 'reasoning' was provided without its required following item`, and
+   * as with the `tool_use` orphan, a rule that never expires means every later request in the
+   * conversation is refused too.
+   */
+  const body = {
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'sort it' }] },
+      { type: 'reasoning', id: 'rs_1', summary: [] },
+      { type: 'function_call', call_id: 'c1', name: 'shell', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'c1', output: 'sorted' },
+      { type: 'reasoning', id: 'rs_2', summary: [] },
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'old answer' }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'sort it again' }] },
+    ],
+  };
+  const out = trimRedoAnswers(body, ['old answer']) as typeof body;
+  const ids = out.input.map((i) => i.id ?? i.type);
+  ok('the answer is gone', !JSON.stringify(out).includes('old answer'), JSON.stringify(ids));
+  ok('and the reasoning that fed it goes too', !JSON.stringify(out).includes('rs_2'),
+    JSON.stringify(ids));
+  /*
+   * The tool call is a complete pair and stays, and so does the reasoning in front of it,
+   * which is still followed by the item it belongs to. It is also true: the shell command
+   * ran, and the model should go on knowing that, whatever we do to the answer about it.
+   */
+  ok('the tool call before it survives whole',
+    out.input.some((i) => i.type === 'function_call')
+      && out.input.some((i) => i.type === 'function_call_output'), JSON.stringify(ids));
+  ok('with its own reasoning still attached', JSON.stringify(out).includes('rs_1'),
+    JSON.stringify(ids));
+  ok('the two questions are what else remains', out.input.length === 5, JSON.stringify(ids));
+}
+
 console.log('\n=== Each piece of an answer is its own rule ===');
 {
   /*

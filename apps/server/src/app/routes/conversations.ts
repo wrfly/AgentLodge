@@ -188,24 +188,36 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const text = last.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('').trim();
     if (!text) return reply.code(400).send({ error: tr(req, 'There is nothing to retry yet') });
 
-    if (body.model !== undefined || body.effort !== undefined) {
-      convRepo.update(id, req.user!.id, {
-        ...(body.model !== undefined ? { model: body.model } : {}),
-        ...(body.effort !== undefined ? { effort: body.effort } : {}),
-      });
-    }
+    const settings = {
+      ...(body.model !== undefined ? { model: body.model } : {}),
+      ...(body.effort !== undefined ? { effort: body.effort } : {}),
+    };
 
     try {
       // The question goes too, and is asked again — `startTurn` is the only thing that stores
       // one, and a retry that left the old row behind would show it twice
       const cut = convRepo.truncateFrom(id, req.user!.id, last.seq);
+      const before = convRepo.meta(id, req.user!.id);
       try {
         rememberDiscarded(id, cut);
+        // The retry has to run on the model it was retried *with*, so this lands before the
+        // turn — and comes back off below if the turn never started. It used to be written
+        // outside the try, where a refusal left the conversation on a model the interface
+        // never showed, and the next question went to it silently.
+        if (Object.keys(settings).length) convRepo.update(id, req.user!.id, settings);
         const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
         reply.code(202);
         return { turnId, userMessage };
       } catch (err) {
         convRepo.restoreMessages(id, req.user!.id, cut);
+        // Only the keys the retry set, and an empty string where there was nothing before —
+        // `update` ignores undefined, so passing it through would leave the new value standing
+        if (before && Object.keys(settings).length) {
+          convRepo.update(id, req.user!.id, {
+            ...(settings.model !== undefined ? { model: before.model ?? '' } : {}),
+            ...(settings.effort !== undefined ? { effort: before.effort ?? '' } : {}),
+          });
+        }
         throw err;
       }
     } catch (err) {

@@ -10,11 +10,16 @@
  * This is the other half of that fix: the routes keep the discarded answer's text
  * (core/db/trims.ts), and the gateway matches it in each request body and cuts the message.
  *
- * The cut is the whole segment from the discarded assistant message up to — but not
- * including — the next user message, never a single block out of the middle. A tool-using
- * answer can carry `tool_use` blocks whose results arrive in the following user message;
- * removing only the assistant message would orphan the results and the API would refuse the
- * request. Cutting the segment keeps the pairing whole.
+ * The cut runs from the discarded assistant message up to — but not including — the next user
+ * message, and backwards over anything the wire requires to stay attached to it. Never a
+ * single block out of the middle: a tool-using answer carries `tool_use` blocks whose results
+ * arrive in the following message, and the Responses wire puts the `reasoning` item in front
+ * of the message it reasoned into. Either orphan is a 400, and a trim rule never expires, so
+ * one would wedge the conversation for good.
+ *
+ * It goes no wider than that. Tool calls from earlier in the same turn are left standing —
+ * they are a complete pair, and they record work that actually happened: files the model
+ * edited are still edited, whatever we do to the answer describing them.
  *
  * Everything here degrades to "forward unchanged":
  *   - a rule that no longer matches — compaction rewrote the text, say — changes nothing
@@ -30,14 +35,15 @@ export function trimRedoAnswers(body: unknown, matches: string[]): unknown {
     return next === b.messages ? body : { ...b, messages: next };
   }
   if (Array.isArray(b.input)) {
-    const next = dropSegment(b.input, isUserItem, isAssistantItem, itemText, matches);
+    const next = dropSegment(b.input, isUserItem, isAssistantItem, itemText, matches, isReasoningItem);
     return next === b.input ? body : { ...b, input: next };
   }
   return body;
 }
 
 /**
- * Remove every segment [assistant, next-user) whose assistant message matches a rule.
+ * Remove every segment [assistant, next-user) whose assistant message matches a rule, plus
+ * whatever `isBoundToNext` says cannot be separated from its start.
  *
  * Returns the original array when nothing matched, so the caller can tell "rewritten" from
  * "untouched" by identity — a body that changed nothing is forwarded as it stood.
@@ -48,6 +54,7 @@ function dropSegment<T>(
   isAssistant: (m: unknown) => boolean,
   textOf: (m: unknown) => string,
   matches: string[],
+  isBoundToNext: (m: unknown) => boolean = () => false,
 ): T[] {
   let out: T[] = arr;
   for (let i = 0; i < out.length; i++) {
@@ -62,9 +69,13 @@ function dropSegment<T>(
     // A request always ends in a user message, so this is a guard rather than a case.
     if (j >= out.length) continue;
 
+    // And backwards over whatever has to stay attached to it
+    let start = i;
+    while (start > 0 && isBoundToNext(out[start - 1])) start--;
+
     if (out === arr) out = arr.slice();
-    out.splice(i, j - i);
-    i--; // the element that slid into i is the next one to inspect
+    out.splice(start, j - start);
+    i = start - 1; // the element that slid into `start` is the next one to inspect
   }
   return out;
 }
@@ -120,6 +131,17 @@ function isUserItem(m: unknown): boolean {
 function isAssistantItem(m: unknown): boolean {
   const i = m as WireItem;
   return i?.type === 'message' && i.role === 'assistant';
+}
+
+/**
+ * A `reasoning` item, which the API requires to be immediately followed by the item it
+ * reasoned into — the assistant message here, a `function_call` elsewhere. Cutting the message
+ * and leaving this behind is rejected with "type 'reasoning' was provided without its required
+ * following item", and since the rule that made the cut never expires, so is every request
+ * after it. The Anthropic wire has no equivalent: thinking rides inside the message.
+ */
+function isReasoningItem(m: unknown): boolean {
+  return (m as WireItem)?.type === 'reasoning';
 }
 
 /** What a message says on the Responses wire: its input/output text parts */

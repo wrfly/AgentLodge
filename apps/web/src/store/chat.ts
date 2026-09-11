@@ -81,9 +81,17 @@ export function quotedPrompt(quote: string, question: string): string {
 }
 
 /** Everything from this message on, gone — the same cut the server just made */
+/**
+ * Everything from this message on, gone — the same cut the server just made.
+ *
+ * A miss means the message being cut at is not on screen, which is a disagreement with the
+ * server, not an instruction to keep everything: returning the list whole would then append
+ * the re-asked question below the one it replaces and show it twice. Dropping the tail is
+ * the safe reading of "I do not know where this is".
+ */
 function cutAt(messages: ChatMessage[], messageId: string): ChatMessage[] {
   const i = messages.findIndex((m) => m.id === messageId);
-  return i === -1 ? messages : messages.slice(0, i);
+  return i === -1 ? [] : messages.slice(0, i);
 }
 
 function toChatMessage(m: StoredMessage): ChatMessage {

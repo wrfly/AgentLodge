@@ -128,9 +128,17 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
   const [busy, setBusy] = useState(false);
   const editMessage = useChat((s) => s.editMessage);
   const streaming = useChat((s) => s.streaming);
-  const isLastQuestion = useChat(
-    (s) => [...s.messages].reverse().find((m) => m.role === 'user')?.id === message.id,
-  );
+  /*
+   * A backwards scan rather than a copy-and-reverse. The selector runs on every store change
+   * for every user message on screen, and `[...messages].reverse()` allocated a copy of the
+   * whole transcript each time — quadratic in the length of a conversation, during streaming.
+   */
+  const isLastQuestion = useChat((s) => {
+    for (let i = s.messages.length - 1; i >= 0; i--) {
+      if (s.messages[i]?.role === 'user') return s.messages[i]?.id === message.id;
+    }
+    return false;
+  });
   /*
    * The newest question only.
    *

@@ -27,6 +27,7 @@ process.env.CLAUDE_BIN = stubBin;
 const { initDb } = await import('../../core/db/index.js');
 initDb();
 const convRepo = await import('../../core/db/conversations.js');
+const db = await import('../../core/db/index.js');
 const trims = await import('../../core/db/trims.js');
 const turns = await import('../turns.js');
 const users = await import('../../core/db/users.js');
@@ -171,6 +172,48 @@ console.log('\n=== Deleting a sub-conversation leaves the parent\'s workspace al
   });
   ok('the child is deleted', del.statusCode === 204, String(del.statusCode));
   ok('the shared workspace survives', fs.existsSync(path.join(dir, 'sort.py')));
+}
+
+console.log('\n=== A retry that never starts leaves nothing behind ===');
+{
+  /*
+   * The model and effort used to be written before the turn, outside the try. A retry refused
+   * for quota then left the conversation on the bigger model somebody picked to retry *with*,
+   * while the interface — which updates on success — still showed the old one. Two answers to
+   * "which model is this on", and the hidden one is the one the next question goes to.
+   *
+   * An unknown agent is the cheapest way to make `startTurn` throw after the truncation: it
+   * fails looking for an adapter, past every check the route makes for itself.
+   */
+  const broken = (model?: string) => {
+    const c = convRepo.create({ userId: alice.id, agent: 'claude', ...(model ? { model } : {}) });
+    db.run("update conversations set agent = 'no-such-agent' where id = ?", c.id);
+    convRepo.appendMessage(c.id, alice.id, {
+      role: 'user', blocks: [{ kind: 'text', blockId: 0, text: 'sort it' }],
+      createdAt: new Date().toISOString(),
+    });
+    convRepo.appendMessage(c.id, alice.id, {
+      role: 'assistant', blocks: [{ kind: 'text', blockId: 0, text: 'wrote sort.py' }],
+      createdAt: new Date(Date.now() + 1000).toISOString(),
+    });
+    return c.id;
+  };
+
+  const had = broken('sonnet');
+  const res = await post(`/api/conversations/${had}/retry`, { model: 'opus' });
+  ok('the failure is reported', res.statusCode >= 400, String(res.statusCode));
+  ok('the model it was on is the model it is still on',
+    convRepo.meta(had, alice.id)?.model === 'sonnet', String(convRepo.meta(had, alice.id)?.model));
+  ok('and the question and answer came back',
+    convRepo.full(had, alice.id)!.messages.length === 2,
+    String(convRepo.full(had, alice.id)!.messages.length));
+
+  // The case a naive rollback gets wrong: `update` ignores an undefined field, so restoring
+  // "what it was" from a conversation that had no model at all would leave the new one standing
+  const hadNone = broken();
+  await post(`/api/conversations/${hadNone}/retry`, { model: 'opus' });
+  ok('a conversation with no model of its own still has none',
+    !convRepo.meta(hadNone, alice.id)?.model, String(convRepo.meta(hadNone, alice.id)?.model));
 }
 
 console.log('\n=== The guards around editing ===');

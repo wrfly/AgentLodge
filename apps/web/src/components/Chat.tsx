@@ -65,21 +65,39 @@ function SessionTotals() {
   const t = useT();
   const activeId = useChat((s) => s.activeId);
   const streaming = useChat((s) => s.streaming);
-  const [data, setData] = useState<{ currency: string; byModel: Array<UsageTotals & { model: string }> } | null>(null);
+  /*
+   * The figures carry the conversation they were counted for.
+   *
+   * Without it they outlive it: `New chat` has no id to fetch for, so the effect returned
+   * early and the previous conversation's tokens and money stayed in the corner of an empty
+   * screen. Switching between two conversations had the smaller version of the same problem —
+   * the old numbers showed until the new ones arrived.
+   */
+  const [data, setData] = useState<
+    { id: string; currency: string; byModel: Array<UsageTotals & { model: string }> } | null
+  >(null);
   const [open, setOpen] = useState(false);
+
+  // An open table belongs to the conversation it was opened in. Keyed on the id alone, so
+  // sending a message does not close it.
+  useEffect(() => setOpen(false), [activeId]);
 
   // Refetched when a turn finishes, which is when the figures change
   useEffect(() => {
-    if (!activeId || streaming) return;
+    if (!activeId) {
+      setData(null);
+      return;
+    }
+    if (streaming) return;
     let live = true;
     void api
       .conversationUsage(activeId)
-      .then((d) => { if (live) setData(d); })
+      .then((d) => { if (live) setData({ id: activeId, ...d }); })
       .catch(() => {});
     return () => { live = false; };
   }, [activeId, streaming]);
 
-  const rows = data?.byModel ?? [];
+  const rows = data?.id === activeId ? data.byModel : [];
   if (rows.length === 0) return null;
 
   const sum = (pick: (r: UsageTotals) => number) => rows.reduce((n, r) => n + pick(r), 0);
