@@ -235,6 +235,26 @@ export async function copyWorkspace(from: string, to: string): Promise<boolean> 
 }
 
 /** What the forked agent is told happened before it existed */
+/**
+ * As much of the tail of a conversation as fits.
+ *
+ * A thread is handed the conversation as text because it does not resume its session, and
+ * "the conversation" can be a thousand turns. The newest are the ones a passage is likely to
+ * be about, so the budget is spent from the end backwards.
+ */
+export function recentTranscript(messages: StoredMessage[], budget = 24_000): string {
+  const kept: StoredMessage[] = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const one = transcript([messages[i]!]);
+    if (!one) continue;
+    if (used + one.length > budget) break;
+    used += one.length;
+    kept.unshift(messages[i]!);
+  }
+  return transcript(kept);
+}
+
 export function transcript(messages: StoredMessage[]): string {
   const lines = messages.map((m) => {
     const text = m.blocks
@@ -442,20 +462,29 @@ export async function startTurn(
       runtimeToken,
       onEvent: (e) => publish(conversationId, e),
       onSessionId: (sid) => {
-        // Refreshed every turn: in some versions resume forks a new session id. Written to
-        // the family root — the sub-conversation and its parent resume one session, so the
-        // id has to live in the one place both read from.
-        const root = convRepo.rootOf(conversationId, userId);
-        if (convRepo.meta(root, userId)?.agentSessionId !== sid) {
-          convRepo.update(root, userId, { agentSessionId: sid });
+        // Refreshed every turn: in some versions resume forks a new session id. Kept on this
+        // conversation, because this conversation is the only thing resuming it.
+        if (convRepo.meta(conversationId, userId)?.agentSessionId !== sid) {
+          convRepo.update(conversationId, userId, { agentSessionId: sid });
         }
       },
     });
 
-  // An abort has to reach whichever process is actually running — there may be a second
-  // attempt below. The session id is the root's: the sub-conversation resumes the same
-  // session as its parent.
-  const sessionId = convRepo.rootSessionId(conversationId, userId);
+  /*
+   * An abort has to reach whichever process is actually running — there may be a second
+   * attempt below.
+   *
+   * The session is this conversation's own, including a thread's. A thread used to resume
+   * its parent's, which made the two one transcript in the model's eyes: everything asked
+   * off to one side came back in the parent's context on the next turn, and a few
+   * clarifications were enough to fill it with a discussion nobody meant to have there. It
+   * is handed the conversation so far as text instead — see the /sub route.
+   *
+   * The directory stays shared (`workspaceDir` still resolves through the root): what is
+   * separated is the conversation, and a file is a fact about the work, not about who was
+   * told what.
+   */
+  const sessionId = conv.agentSessionId;
   let current = startRun(sessionId);
   const running: RunningTurn = {
     abort: () => current.abort(),
@@ -469,7 +498,7 @@ export async function startTurn(
       console.warn(
         `[turns] ${conv.agent} could not resume ${sessionId}; starting a new session: ${first.error}`,
       );
-      convRepo.update(convRepo.rootOf(conversationId, userId), userId, { agentSessionId: '' });
+      convRepo.update(conversationId, userId, { agentSessionId: '' });
       current = startRun(undefined);
       const second = await current.done;
       if (second.error) return second;

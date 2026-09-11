@@ -67,6 +67,26 @@ export function Composer({ agent }: { agent: AgentId }) {
   const [dragging, setDragging] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
 
+  /*
+   * Something carried over from a thread.
+   *
+   * Appended rather than replacing, and focused at the end, because the point of landing it
+   * here instead of posting it is that the person gets to say what they want done with it.
+   */
+  const carried = useChat((s) => s.carried);
+  const clearCarried = useChat((s) => s.clearCarried);
+  useEffect(() => {
+    if (!carried) return;
+    setValue((v) => (v.trim() ? `${v.replace(/\s+$/, '')}\n\n${carried.text}` : carried.text));
+    clearCarried();
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, [carried, clearCarried]);
+
   const agentLabel = AGENTS.find((a) => a.id === agent)?.label ?? agent;
 
   const streaming = useChat((s) => s.streaming);

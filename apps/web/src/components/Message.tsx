@@ -1,5 +1,5 @@
 import { memo, useState } from 'react';
-import { Brain, ChevronRight, CircleAlert, OctagonX, Pencil, RotateCcw } from 'lucide-react';
+import { Brain, ChevronRight, CircleAlert, CornerUpLeft, OctagonX, Pencil, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import { useChat, type ChatMessage, type LiveBlock } from '../store/chat';
 import { Markdown } from './Markdown';
@@ -199,6 +199,39 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
 }
 
 /**
+ * Take a thread's answer back to the conversation it came from.
+ *
+ * A thread is isolated: nothing asked in one reaches the main transcript or the model's
+ * context there. Most of them are a passing question and that is exactly right. The ones
+ * that turn out to matter need a way across, and the person who has just read the answer is
+ * the one who knows which — so it lands in the composer, to be cut down and sent with
+ * whatever they want done about it, rather than being posted over their head.
+ */
+function CarryButton({ message }: { message: ChatMessage }) {
+  const t = useT();
+  const carryIntoChat = useChat((s) => s.carryIntoChat);
+  const closeSub = useChat((s) => s.closeSub);
+  const text = message.blocks
+    .map((b) => (b.kind === 'text' ? b.text : ''))
+    .join('')
+    .trim();
+  if (!text) return null;
+  return (
+    <button
+      onClick={() => {
+        carryIntoChat(`${text.split('\n').map((l) => `> ${l}`).join('\n')}\n\n`);
+        closeSub();
+      }}
+      title={t('Put this in the message box, to send on to the conversation')}
+      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100"
+    >
+      <CornerUpLeft size={11} />
+      {t('Take back')}
+    </button>
+  );
+}
+
+/**
  * Ask the last question again.
  *
  * Offered on the newest answer only: everything after an older one is downstream of it, and
@@ -274,7 +307,8 @@ export const Message = memo(function Message({
 
       <div className="mt-1 flex items-center gap-2">
         {message.usage && !message.pending && <UsageFooter usage={message.usage} />}
-        {isLatest && !message.pending && <RetryButton />}
+        {isLatest && !message.pending && !inThread && <RetryButton />}
+        {inThread && !message.pending && <CarryButton message={message} />}
       </div>
     </div>
   );

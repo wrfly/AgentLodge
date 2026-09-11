@@ -216,6 +216,15 @@ export function registerConversationRoutes(app: FastifyInstance): void {
    * One turn at a time per family, like one turn at a time per conversation: the shared
    * session cannot take two writes.
    */
+  /** The quoted part of a thread's opening prompt, without the `>` markers */
+  const quotedPassage = (text: string): string =>
+    text
+      .split('\n')
+      .filter((l) => l.startsWith('>'))
+      .map((l) => l.replace(/^>\s?/, ''))
+      .join(' ')
+      .trim();
+
   app.post('/api/conversations/:id/sub', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { text?: string };
@@ -235,10 +244,42 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       parentId: id,
     });
 
+    /*
+     * The conversation so far, as text, because the thread does not resume its session.
+     *
+     * Sharing the session made the two one transcript in the model's eyes: a few side
+     * questions were enough to fill the parent's context with a discussion nobody meant to
+     * have there, and it only got heavier with use. A separate session cannot be polluted,
+     * and this is what it costs — the words, re-sent once, without the tool calls.
+     */
+    const prior = turns.recentTranscript(convRepo.full(id, req.user!.id)?.messages ?? []);
+    const prompt = prior
+      ? `The conversation this question comes from, which you did not take part in:\n\n${prior}\n\n---\n\n${text}`
+      : text;
+
     try {
-      const { turnId, userMessage } = await turns.startTurn(child.id, req.user!.id, text);
+      const { turnId, userMessage } = await turns.startTurn(child.id, req.user!.id, prompt);
+      /*
+       * What went to the model is the question with the conversation wrapped around it; what
+       * belongs in the record is the question. Returned as rewritten too — the caller renders
+       * this straight into the panel, and handing back the pre-rewrite object would put the
+       * whole replay in the reader's first bubble.
+       */
+      convRepo.rewriteMessage(child.id, req.user!.id, userMessage.id, text);
+      /*
+       * Named after the passage, not the prompt. The stored question is a markdown quotation
+       * followed by a question, so a title taken from it whole reads "> directories Tell me
+       * more about this." — the quote markers and, on every thread nobody retyped the
+       * default, the same boilerplate sentence.
+       */
+      convRepo.retitle(child.id, convRepo.deriveTitle(quotedPassage(text) || text));
       reply.code(202);
-      return { conversationId: child.id, turnId, userMessage, conversation: convRepo.full(child.id, req.user!.id) };
+      return {
+        conversationId: child.id,
+        turnId,
+        userMessage: { ...userMessage, blocks: [{ kind: 'text' as const, blockId: 0, text }] },
+        conversation: convRepo.full(child.id, req.user!.id),
+      };
     } catch (err) {
       if (err instanceof turns.QuotaExceededError) {
         return reply.code(402).send({ error: err.message, quota: err.status });

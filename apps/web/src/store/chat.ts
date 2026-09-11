@@ -157,6 +157,17 @@ interface ChatState {
    * entirely — it goes straight to a thread.
    */
   subQuote: string | null;
+  /**
+   * Text on its way into the main composer, and the tick that says it is a fresh one.
+   *
+   * A thread is isolated on purpose, so anything worth keeping has to be carried over
+   * deliberately. It lands in the composer rather than being posted: the person who just
+   * read the answer is the one who knows which part of it matters, and they get to cut it
+   * down and say what they want done with it before it becomes a turn.
+   *
+   * The counter is what makes carrying the same passage twice a second event.
+   */
+  carried: { text: string; nonce: number } | null;
   /** The mobile drawer. Transient: choosing a conversation closes it again */
   sidebarOpen: boolean;
   /**
@@ -192,6 +203,10 @@ interface ChatState {
   showThreads: () => Promise<void>;
   /** Open a thread that already exists */
   openThread: (id: string) => Promise<void>;
+  /** Put a thread's answer into the main composer, for the reader to trim and send */
+  carryIntoChat: (text: string) => void;
+  /** The composer has taken it */
+  clearCarried: () => void;
   /** Open the panel on a passage, with the question still to be written */
   quoteForQuestion: (quote: string) => void;
   /** Open a thread: the passage as context, and a question about it */
@@ -540,6 +555,7 @@ export const useChat = create<ChatState>((set, get) => ({
   subStreaming: false,
   threads: [],
   subQuote: null,
+  carried: null,
   sidebarOpen: false,
   sidebarCollapsed: localStorage.getItem(COLLAPSED_KEY) === '1',
 
@@ -931,6 +947,14 @@ export const useChat = create<ChatState>((set, get) => ({
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
     }
+  },
+
+  carryIntoChat(text) {
+    set((s) => ({ carried: { text, nonce: (s.carried?.nonce ?? 0) + 1 } }));
+  },
+
+  clearCarried() {
+    set({ carried: null });
   },
 
   quoteForQuestion(quote) {

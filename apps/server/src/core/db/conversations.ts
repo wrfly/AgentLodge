@@ -452,8 +452,10 @@ export function rootOf(conversationId: string, userId: string): string {
  * reachable only while their panel was open — close it and the thread was still on the
  * server with its answer in it and no way back. This is the way back.
  *
- * The label is the thread's own first message, which is the passage that was selected to
- * open it. Nothing else has to be stored to say what a thread is about.
+ * The label is the passage the thread was opened on, read back out of its own first message:
+ * that message is a markdown quotation followed by a question, so the quoted lines are the
+ * passage and nothing else has to be stored to say what a thread is about. Falls back to the
+ * whole message for a thread whose opener was not a quotation.
  */
 export function listThreads(parentId: string, userId: string): ThreadSummary[] {
   if (!exists(parentId, userId)) return [];
@@ -472,28 +474,31 @@ export function listThreads(parentId: string, userId: string): ThreadSummary[] {
     id: r.id,
     createdAt: r.created_at,
     messageCount: r.n,
-    about: textOf(parseJson<MessageBlock[]>(r.opener, [])),
+    about: passageOf(textOf(parseJson<MessageBlock[]>(r.opener, []))),
   }));
 }
 
-/** The readable part of a stored message, for a one-line label */
-function textOf(blocks: MessageBlock[]): string {
-  return blocks
-    .map((b) => (b.kind === 'text' ? b.text : ''))
-    .join('')
-    .replace(/\s+/g, ' ')
-    .trim();
+/**
+ * The passage a thread was opened on, as one line.
+ *
+ * Its opening prompt is a markdown quotation followed by a question, so the quoted lines are
+ * the passage. Read before the whitespace is flattened — afterwards there are no lines left
+ * to tell apart, and the label ends up carrying the boilerplate question every thread shares.
+ */
+function passageOf(text: string): string {
+  const quoted = text
+    .split('\n')
+    .filter((l) => l.startsWith('>'))
+    .map((l) => l.replace(/^>\s?/, ''))
+    .join(' ');
+  return (quoted || text).replace(/\s+/g, ' ').trim();
 }
 
-/** The root's CLI session id — the one every member of the family resumes */
-export function rootSessionId(conversationId: string, userId: string): string | undefined {
-  const r = get<{ agent_session_id: string | null }>(
-    'select agent_session_id from conversations where id = ? and user_id = ?',
-    rootOf(conversationId, userId),
-    userId,
-  );
-  return r?.agent_session_id ?? undefined;
+/** Everything a message says, newlines intact */
+function textOf(blocks: MessageBlock[]): string {
+  return blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('').trim();
 }
+
 
 /**
  * Every conversation sharing this one's CLI session — the family, itself included.

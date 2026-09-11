@@ -621,4 +621,7 @@ export const zhHant: Record<string, string> = {
   'What do you want to know about it?': '你想知道關於它的什麼？',
 
   'Ask': '提問',
+  'Take back': '帶回主對話',
+
+  'Put this in the message box, to send on to the conversation': '放進下面的輸入框，由你確認後發給主對話',
 };
