@@ -22,6 +22,7 @@ interface ConvRow {
   updated_at: string;
   last_message_at: string | null;
   thinking: number;
+  parent_id: string | null;
 }
 
 interface MsgRow {
@@ -65,17 +66,25 @@ function summary(r: ConvRow, messageCount: number): ConversationSummary {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     messageCount,
+    parentId: r.parent_id ?? undefined,
   };
 }
 
 /* ---------------- Reads ---------------- */
 
+/**
+ * The conversations the sidebar shows: top-level ones only.
+ *
+ * A sub-conversation is a thread on a selection inside another one. It has its own row so it
+ * can have its own messages, but it is reached from the message it was opened on, not from
+ * the list — putting it there would make one chat look like several.
+ */
 export function list(userId: string, agent?: AgentId): ConversationSummary[] {
   const rows = agent
     ? all<ConvRow & { n: number }>(
         `select c.*, (select count(*) from messages m where m.conversation_id = c.id) as n
          from conversations c
-         where c.user_id = ? and c.agent = ? and c.status = 'active'
+         where c.user_id = ? and c.agent = ? and c.status = 'active' and c.parent_id is null
          order by c.updated_at desc`,
         userId,
         agent,
@@ -83,7 +92,7 @@ export function list(userId: string, agent?: AgentId): ConversationSummary[] {
     : all<ConvRow & { n: number }>(
         `select c.*, (select count(*) from messages m where m.conversation_id = c.id) as n
          from conversations c
-         where c.user_id = ? and c.status = 'active'
+         where c.user_id = ? and c.status = 'active' and c.parent_id is null
          order by c.updated_at desc`,
         userId,
       );
@@ -118,6 +127,7 @@ export function meta(
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     messageCount: n,
+    parentId: r.parent_id ?? undefined,
   };
 }
 
@@ -152,6 +162,7 @@ export function full(id: string, userId: string): Conversation | undefined {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     messageCount: messages.length,
+    parentId: r.parent_id ?? undefined,
     messages,
     totals: {
       inputTokens: t?.input_tokens ?? 0,
@@ -194,14 +205,16 @@ export interface CreateInput {
   effort?: string;
   /** Undefined means on, which is the column's default */
   thinking?: boolean;
+  /** Set when this is a sub-conversation: it shares the parent's workspace and CLI session */
+  parentId?: string;
 }
 
 export function create(input: CreateInput): Conversation {
   const now = nowIso();
   const id = crypto.randomUUID();
   run(
-    `insert into conversations (id, user_id, agent, title, model, effort, thinking, status, created_at, updated_at)
-     values (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+    `insert into conversations (id, user_id, agent, title, model, effort, thinking, status, created_at, updated_at, parent_id)
+     values (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
     id,
     input.userId,
     input.agent,
@@ -211,6 +224,7 @@ export function create(input: CreateInput): Conversation {
     flag(input.thinking ?? true),
     now,
     now,
+    input.parentId ?? null,
   );
   return full(id, input.userId)!;
 }
@@ -301,6 +315,99 @@ export function appendMessage(
   });
 }
 
+/** One message, with the position that decides whether editing it forks the conversation */
+export function messageAt(
+  conversationId: string,
+  userId: string,
+  messageId: string,
+): (StoredMessage & { seq: number }) | undefined {
+  if (!exists(conversationId, userId)) return undefined;
+  const r = get<MsgRow>(
+    'select * from messages where conversation_id = ? and id = ?',
+    conversationId,
+    messageId,
+  );
+  return r ? { ...toMessage(r), seq: r.seq } : undefined;
+}
+
+/** The newest thing the user said, which is the one an edit re-answers in place */
+export function lastUserMessage(
+  conversationId: string,
+  userId: string,
+): (StoredMessage & { seq: number }) | undefined {
+  if (!exists(conversationId, userId)) return undefined;
+  const r = get<MsgRow>(
+    `select * from messages where conversation_id = ? and role = 'user' order by seq desc limit 1`,
+    conversationId,
+  );
+  return r ? { ...toMessage(r), seq: r.seq } : undefined;
+}
+
+/**
+ * The newest thing the agent said — the answer an in-place edit or a retry is about to
+ * discard. Captured before the truncation, because afterwards the CLI is the only place it
+ * still exists, and its text is what the gateway matches to drop it from later requests.
+ */
+export function lastAssistantMessage(
+  conversationId: string,
+  userId: string,
+): (StoredMessage & { seq: number }) | undefined {
+  if (!exists(conversationId, userId)) return undefined;
+  const r = get<MsgRow>(
+    `select * from messages where conversation_id = ? and role = 'assistant' order by seq desc limit 1`,
+    conversationId,
+  );
+  return r ? { ...toMessage(r), seq: r.seq } : undefined;
+}
+
+/**
+ * Replace a message's text, keeping its place.
+ *
+ * The fork sends the CLI a prompt with the kept conversation wrapped around the question;
+ * what belongs in the record is the question. Storing the wrapper would put a replay of the
+ * whole branch into the reader's first bubble.
+ */
+export function rewriteMessage(
+  conversationId: string,
+  userId: string,
+  messageId: string,
+  text: string,
+): boolean {
+  if (!exists(conversationId, userId)) return false;
+  return (
+    run(
+      'update messages set blocks = ? where conversation_id = ? and id = ?',
+      JSON.stringify([{ kind: 'text', blockId: 0, text }]),
+      conversationId,
+      messageId,
+    ).changes > 0
+  );
+}
+
+/** Everything from this position on, gone. Returns how many rows that was. */
+export function truncateFrom(conversationId: string, userId: string, seq: number): number {
+  if (!exists(conversationId, userId)) return 0;
+  return run(
+    'delete from messages where conversation_id = ? and seq >= ?',
+    conversationId,
+    seq,
+  ).changes;
+}
+
+/** Everything up to but not including this position, oldest first */
+export function messagesBefore(
+  conversationId: string,
+  userId: string,
+  seq: number,
+): StoredMessage[] {
+  if (!exists(conversationId, userId)) return [];
+  return all<MsgRow>(
+    'select * from messages where conversation_id = ? and seq < ? order by seq',
+    conversationId,
+    seq,
+  ).map(toMessage);
+}
+
 export function messageCount(conversationId: string): number {
   return (
     get<{ n: number }>('select count(*) as n from messages where conversation_id = ?', conversationId)
@@ -310,6 +417,64 @@ export function messageCount(conversationId: string): number {
 
 export function remove(id: string, userId: string): boolean {
   return run('delete from conversations where id = ? and user_id = ?', id, userId).changes > 0;
+}
+
+/* ---------------- Sub-conversations: one workspace and one CLI session per family ---------------- */
+
+/**
+ * The root of a conversation's family: itself when it has no parent.
+ *
+ * A sub-conversation shares the parent's workspace and CLI session, so both have to resolve
+ * through the chain. The /sub route only ever creates one level of nesting, but walking
+ * instead of assuming keeps a grandchild from silently splitting off a third directory.
+ */
+export function rootOf(conversationId: string, userId: string): string {
+  let id = conversationId;
+  const seen = new Set<string>();
+  while (!seen.has(id)) {
+    seen.add(id);
+    const r = get<{ parent_id: string | null }>(
+      'select parent_id from conversations where id = ? and user_id = ?',
+      id,
+      userId,
+    );
+    if (!r?.parent_id) break;
+    id = r.parent_id;
+  }
+  return id;
+}
+
+/** The root's CLI session id — the one every member of the family resumes */
+export function rootSessionId(conversationId: string, userId: string): string | undefined {
+  const r = get<{ agent_session_id: string | null }>(
+    'select agent_session_id from conversations where id = ? and user_id = ?',
+    rootOf(conversationId, userId),
+    userId,
+  );
+  return r?.agent_session_id ?? undefined;
+}
+
+/**
+ * Every conversation sharing this one's CLI session — the family, itself included.
+ *
+ * One turn at a time per session: the CLI's transcript is a single stream, and two members
+ * writing to it concurrently would corrupt it. The busy checks and the abort path both use
+ * this, so a turn in the sub-conversation makes the parent busy and vice versa.
+ */
+export function familyIds(conversationId: string, userId: string): string[] {
+  const root = rootOf(conversationId, userId);
+  return all<{ id: string }>(
+    `with recursive family as (
+       select id from conversations where id = ? and user_id = ?
+       union all
+       select c.id from conversations c join family f on c.parent_id = f.id
+       where c.user_id = ?
+     )
+     select id from family`,
+    root,
+    userId,
+    userId,
+  ).map((r) => r.id);
 }
 
 export function idsForUser(userId: string): string[] {

@@ -160,6 +160,8 @@ export interface ConversationSummary {
   createdAt: string;
   updatedAt: string;
   messageCount: number;
+  /** The conversation this one is a sub-conversation of; absent for an ordinary one */
+  parentId?: string;
 }
 
 export interface Conversation extends ConversationSummary {

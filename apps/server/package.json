@@ -43,7 +43,10 @@
     "test:relay": "tsx src/gateway/relay.test.ts",
     "test:billable": "tsx src/core/db/billable.test.ts",
     "test:refusal": "tsx src/core/db/refusal.test.ts",
-    "test:series": "tsx src/core/db/series.test.ts"
+    "test:series": "tsx src/core/db/series.test.ts",
+    "test:edit-retry": "tsx src/app/edit-retry.test.ts",
+    "test:redo-trim": "tsx src/gateway/redo-trim.test.ts",
+    "test:conversation-routes": "tsx src/app/routes/conversations.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

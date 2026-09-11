@@ -156,10 +156,15 @@ create table if not exists conversations (
   title_at         text,
   -- Whether the agent's thinking is asked for. On by default: the CLI asks for it anyway,
   -- and this is the switch that turns it off. See gateway/upstream.ts withThinking.
-  thinking         integer not null default 1
+  thinking         integer not null default 1,
+  -- The conversation this one branched off from as a sub-conversation. A sub-conversation
+  -- shares the parent's workspace and CLI session: it is a thread on the same work, not a
+  -- separate copy. See app/turns.ts and the /sub route.
+  parent_id        text references conversations(id) on delete cascade
 );
 create index if not exists idx_conv_user on conversations(user_id, updated_at desc);
 create index if not exists idx_conv_user_agent on conversations(user_id, agent, updated_at desc);
+create index if not exists idx_conv_parent on conversations(parent_id);
 
 create table if not exists messages (
   id              text primary key,
@@ -174,6 +179,19 @@ create table if not exists messages (
   unique (conversation_id, seq)
 );
 create index if not exists idx_msg_conv on messages(conversation_id, seq);
+
+/* ---------------- Message trims (edit / retry) ---------------- */
+
+-- An answer the user asked to replace. The CLI's own transcript keeps the discarded
+-- reply forever, so the gateway drops it from every later request until compaction
+-- rewrites the text and the rule stops matching. See gateway/redo-trim.ts.
+create table if not exists message_trims (
+  conversation_id text not null references conversations(id) on delete cascade,
+  -- The discarded answer's text, joined from its text blocks; compared exactly (trimmed)
+  match_text      text not null,
+  created_at      text not null
+);
+create index if not exists idx_trims_conv on message_trims(conversation_id);
 
 /* ---------------- Usage ---------------- */
 

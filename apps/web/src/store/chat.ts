@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { ApiError, api } from '../lib/api';
 import { openEventStream } from '../lib/stream';
+import { t } from '../lib/i18n';
 import { useQuota } from './quota';
 import type {
   AgentId,
@@ -67,6 +68,12 @@ function toLive(b: MessageBlock): LiveBlock {
   return { kind: b.kind, blockId: b.blockId, text: b.text, streaming: false };
 }
 
+/** Everything from this message on, gone — the same cut the server just made */
+function cutAt(messages: ChatMessage[], messageId: string): ChatMessage[] {
+  const i = messages.findIndex((m) => m.id === messageId);
+  return i === -1 ? messages : messages.slice(0, i);
+}
+
 function toChatMessage(m: StoredMessage): ChatMessage {
   return {
     id: m.id,
@@ -108,6 +115,11 @@ interface ChatState {
   connected: boolean;
   error: string | null;
   /**
+   * Something worth saying that is not a failure — a fork whose workspace did not come
+   * along, say. Kept apart from `error` so a red banner is never the messenger.
+   */
+  notice: string | null;
+  /**
    * The agent whose workspace has been bootstrapped, or null.
    *
    * `activeId` used to answer this: it was non-null the moment the chat page had been set
@@ -117,6 +129,11 @@ interface ChatState {
    * newest old thread.
    */
   bootstrappedFor: AgentId | null;
+  /* The sub-conversation panel: a thread on a selection, sharing the parent's session */
+  subOpen: boolean;
+  subConversationId: string | null;
+  subMessages: ChatMessage[];
+  subStreaming: boolean;
   /** The mobile drawer. Transient: choosing a conversation closes it again */
   sidebarOpen: boolean;
   /**
@@ -144,6 +161,15 @@ interface ChatState {
   ensureConversation: () => Promise<string | null>;
   select: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
+  /** Correct a question. Returns the branch's id when editing an older one made one. */
+  editMessage: (messageId: string, text: string) => Promise<string | null>;
+  /** Ask the newest question again, optionally somewhere else */
+  retry: (opts?: { model?: string; effort?: string }) => Promise<void>;
+  /** Open a sub-conversation on a selection and ask it as its first question */
+  openSub: (text: string) => Promise<void>;
+  /** Ask the sub-conversation something else */
+  sendSub: (text: string) => Promise<void>;
+  closeSub: () => void;
   abort: () => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
   setModel: (model: string) => Promise<void>;
@@ -162,14 +188,23 @@ interface ChatState {
   hideSidebar: () => void;
   bumpFiles: () => void;
   dismissError: () => void;
+  dismissNotice: () => void;
   _applyBatch: (batch: ServerEvent[]) => void;
+  _applySubBatch: (batch: ServerEvent[]) => void;
 }
 
-/* ---- The SSE connection and rAF batching. Kept outside the store, so none of it becomes React state. ---- */
+/* ---- The SSE connections and rAF batching. Kept outside the store, so none of it becomes React state. ----
+ * Two channels: the main conversation, and the sub-conversation panel. They are independent
+ * SSE streams — the server publishes each conversation's events to its own channel — and
+ * each has its own queue and frame so a busy sub-conversation never stalls the main one. */
 
-let closeSource: (() => void) | null = null;
-let queue: ServerEvent[] = [];
-let raf: number | null = null;
+let closeMain: (() => void) | null = null;
+let queueMain: ServerEvent[] = [];
+let rafMain: number | null = null;
+
+let closeSub: (() => void) | null = null;
+let queueSub: ServerEvent[] = [];
+let rafSub: number | null = null;
 
 /**
  * The conversation being created right now, if one is.
@@ -192,35 +227,245 @@ let creating: Promise<string | null> | null = null;
  */
 let draftEpoch = 0;
 
-function flush() {
-  raf = null;
-  const batch = queue;
-  queue = [];
+function flushMain() {
+  rafMain = null;
+  const batch = queueMain;
+  queueMain = [];
   if (batch.length) useChat.getState()._applyBatch(batch);
 }
 
-function enqueue(e: ServerEvent) {
-  queue.push(e);
-  if (raf === null) raf = requestAnimationFrame(flush);
+function flushSub() {
+  rafSub = null;
+  const batch = queueSub;
+  queueSub = [];
+  if (batch.length) useChat.getState()._applySubBatch(batch);
 }
 
-function closeStream() {
-  closeSource?.();
-  closeSource = null;
-  queue = [];
-  if (raf !== null) {
-    cancelAnimationFrame(raf);
-    raf = null;
+function enqueueMain(e: ServerEvent) {
+  queueMain.push(e);
+  if (rafMain === null) rafMain = requestAnimationFrame(flushMain);
+}
+
+function enqueueSub(e: ServerEvent) {
+  queueSub.push(e);
+  if (rafSub === null) rafSub = requestAnimationFrame(flushSub);
+}
+
+function closeStreams() {
+  closeMain?.();
+  closeMain = null;
+  queueMain = [];
+  if (rafMain !== null) {
+    cancelAnimationFrame(rafMain);
+    rafMain = null;
   }
+  closeSubStream();
 }
 
 function openStream(conversationId: string) {
-  closeStream();
-  closeSource = openEventStream({
+  closeMain?.();
+  closeMain = openEventStream({
     conversationId,
-    onEvent: enqueue,
+    onEvent: enqueueMain,
     onStatus: (connected) => useChat.setState({ connected }),
   });
+}
+
+/** Just the panel's stream: closing it must not disconnect the conversation behind it */
+function closeSubStream() {
+  closeSub?.();
+  closeSub = null;
+  queueSub = [];
+  if (rafSub !== null) {
+    cancelAnimationFrame(rafSub);
+    rafSub = null;
+  }
+}
+
+function openSubStream(conversationId: string) {
+  closeSub?.();
+  closeSub = openEventStream({
+    conversationId,
+    onEvent: enqueueSub,
+    onStatus: () => {}, // the panel is not the connection status indicator
+  });
+}
+
+/**
+ * Fold a frame's worth of events into a transcript.
+ *
+ * Out here, and taking the transcript as an argument, because there are two of them: the
+ * conversation and the sub-conversation opened on a selection. The event shapes are the same
+ * and the folding is a hundred and fifty lines, so the alternative was two copies that would
+ * drift the first time anybody touched one of them.
+ *
+ * The three fields only the main transcript has — the title, the list it appears in, the
+ * queue position shown in the composer — are returned either way and ignored by the caller
+ * that has no use for them.
+ */
+function applyEvents(
+  batch: ServerEvent[],
+  state: {
+  messages: ChatMessage[];
+  streaming: boolean;
+  queuePosition: number;
+  title: string;
+  conversations: ConversationSummary[];
+  },
+): {
+  messages: ChatMessage[];
+  streaming: boolean;
+  queuePosition: number;
+  title: string;
+  conversations: ConversationSummary[];
+} {
+  const messages = state.messages.slice();
+    let streaming = state.streaming;
+    let queuePosition = state.queuePosition;
+    let title = state.title;
+    let conversations = state.conversations;
+
+    // Clone the trailing message once per frame, instead of allocating a new object per delta
+    const cloned = new Set<number>();
+    const mutable = (idx: number): ChatMessage | undefined => {
+      const m = messages[idx];
+      if (!m) return undefined;
+      if (!cloned.has(idx)) {
+        const copy: ChatMessage = { ...m, blocks: m.blocks.map((b) => ({ ...b })) };
+        messages[idx] = copy;
+        cloned.add(idx);
+        return copy;
+      }
+      return m;
+    };
+    const lastAssistant = (): ChatMessage | undefined => {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i]?.role === 'assistant') return mutable(i);
+      }
+      return undefined;
+    };
+
+    for (const e of batch) {
+      switch (e.type) {
+        case 'turn.started': {
+          messages.push({
+            id: e.turnId,
+            role: 'assistant',
+            blocks: [],
+            createdAt: new Date().toISOString(),
+            pending: true,
+          });
+          cloned.add(messages.length - 1);
+          streaming = true;
+          queuePosition = 0;
+          break;
+        }
+
+        case 'block.start': {
+          const msg = lastAssistant();
+          if (!msg?.pending) break;
+          if (msg.blocks.some((b) => b.blockId === e.blockId)) break;
+          msg.blocks.push(
+            e.kind === 'tool_use'
+              ? {
+                  kind: 'tool_use',
+                  blockId: e.blockId,
+                  toolId: e.toolId ?? `tool_${e.blockId}`,
+                  toolName: e.toolName ?? 'unknown',
+                  inputPartial: '',
+                  input: {},
+                  streaming: true,
+                }
+              : { kind: e.kind, blockId: e.blockId, text: '', streaming: true },
+          );
+          break;
+        }
+
+        case 'text.delta':
+        case 'thinking.delta': {
+          queuePosition = 0;
+          lastAssistant();
+          const b = findBlock(messages, e.blockId);
+          if (b && b.kind !== 'tool_use') b.text += e.text;
+          // A subscription reports the size of the thinking instead of the thinking
+          if (e.type === 'thinking.delta' && e.tokens && b?.kind === 'thinking') {
+            b.tokens = (b.tokens ?? 0) + e.tokens;
+          }
+          break;
+        }
+
+        case 'tool.input.delta': {
+          lastAssistant();
+          const b = findBlock(messages, e.blockId);
+          if (b?.kind === 'tool_use') b.inputPartial += e.partial;
+          break;
+        }
+
+        case 'tool.input': {
+          lastAssistant();
+          const b = findBlock(messages, e.blockId);
+          if (b?.kind === 'tool_use') b.input = e.input;
+          break;
+        }
+
+        case 'block.stop': {
+          lastAssistant();
+          const b = findBlock(messages, e.blockId);
+          if (b) b.streaming = false;
+          break;
+        }
+
+        case 'tool.result': {
+          const msg = lastAssistant();
+          const b = msg?.blocks.find(
+            (x): x is LiveToolBlock => x.kind === 'tool_use' && x.toolId === e.toolId,
+          );
+          if (b) {
+            b.result = { isError: e.isError, content: e.content };
+            b.streaming = false;
+          }
+          break;
+        }
+
+        case 'turn.completed':
+        case 'turn.error':
+        case 'turn.aborted': {
+          const msg = lastAssistant();
+          if (msg) {
+            msg.pending = false;
+            msg.blocks.forEach((b) => (b.streaming = false));
+            if (e.type === 'turn.completed') msg.usage = e.usage;
+            if (e.type === 'turn.error') msg.error = e.message;
+            if (e.type === 'turn.aborted') msg.aborted = true;
+          }
+          streaming = false;
+          queuePosition = 0;
+          void useChat.getState().refreshList();
+          break;
+        }
+
+        case 'title.updated': {
+          title = e.title;
+          conversations = conversations.map((c) =>
+            c.id === e.conversationId ? { ...c, title: e.title } : c,
+          );
+          break;
+        }
+
+        case 'quota.updated':
+          useQuota.getState().set(e.quota);
+          break;
+
+        case 'queue.waiting':
+          queuePosition = e.position;
+          break;
+
+        case 'heartbeat':
+          break;
+      }
+    }
+
+  return { messages, streaming, title, conversations, queuePosition };
 }
 
 /** Find a block by blockId in the most recent assistant message */
@@ -258,7 +503,12 @@ export const useChat = create<ChatState>((set, get) => ({
   loading: false,
   connected: false,
   error: null,
+  notice: null,
   bootstrappedFor: null,
+  subOpen: false,
+  subConversationId: null,
+  subMessages: [],
+  subStreaming: false,
   sidebarOpen: false,
   sidebarCollapsed: localStorage.getItem(COLLAPSED_KEY) === '1',
 
@@ -273,9 +523,10 @@ export const useChat = create<ChatState>((set, get) => ({
   },
   bumpFiles: () => set((s) => ({ filesVersion: s.filesVersion + 1 })),
   dismissError: () => set({ error: null }),
+  dismissNotice: () => set({ notice: null }),
 
   async bootstrap(agent) {
-    closeStream();
+    closeStreams();
     draftEpoch++;
     creating = null;
     set({
@@ -301,7 +552,7 @@ export const useChat = create<ChatState>((set, get) => ({
   },
 
   reset() {
-    closeStream();
+    closeStreams();
     draftEpoch++;
     creating = null;
     set({
@@ -343,7 +594,7 @@ export const useChat = create<ChatState>((set, get) => ({
    * until it is created.
    */
   async newConversation() {
-    closeStream();
+    closeStreams();
     draftEpoch++;
     creating = null;
     set({
@@ -418,7 +669,7 @@ export const useChat = create<ChatState>((set, get) => ({
     if (get().activeId === id && get().messages.length) return;
     // Whatever draft was being created is no longer the one on screen
     draftEpoch++;
-    set({ loading: true, activeId: id, messages: [], sidebarOpen: false });
+    set({ loading: true, activeId: id, messages: [], sidebarOpen: false, notice: null });
     try {
       const conv = await api.getConversation(id);
       set({
@@ -474,6 +725,58 @@ export const useChat = create<ChatState>((set, get) => ({
         error: err instanceof Error ? err.message : String(err),
         messages: s.messages.filter((m) => m.id !== optimistic.id),
       }));
+    }
+  },
+
+  /*
+   * Both of these cut the record and start a turn, so both drop the messages the server is
+   * about to drop and let the stream fill in what replaces them. Optimism would be wrong
+   * here: what an edit does depends on where the message was, and the server is the one that
+   * knows — guessing and then correcting would flicker between two different conversations.
+   */
+  async editMessage(messageId, text) {
+    const id = get().activeId;
+    if (!id || get().streaming) return null;
+    try {
+      const r = await api.editMessage(id, messageId, text);
+      if (r.forked) {
+        await get().refreshList();
+        await get().select(r.conversationId);
+        set({
+          streaming: true,
+          // A branch that could not take the workspace with it is a different thing to be
+          // told about than one that did — the agent has nothing to look at but the words
+          notice: r.filesCopied ? null : t('The workspace could not be copied, so this conversation starts with an empty directory'),
+        });
+        return r.conversationId;
+      }
+      set((s) => ({
+        messages: [...cutAt(s.messages, messageId), toChatMessage(r.userMessage)],
+        streaming: true,
+      }));
+      return null;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
+  },
+
+  async retry(opts = {}) {
+    const id = get().activeId;
+    if (!id || get().streaming) return;
+    const asked = [...get().messages].reverse().find((m) => m.role === 'user');
+    try {
+      const r = await api.retry(id, opts);
+      set((s) => ({
+        messages: [...(asked ? cutAt(s.messages, asked.id) : s.messages), toChatMessage(r.userMessage)],
+        streaming: true,
+        ...(opts.model !== undefined ? { model: opts.model } : {}),
+        ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
+      }));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
+      set({ error: err instanceof Error ? err.message : String(err) });
     }
   },
 
@@ -555,162 +858,99 @@ export const useChat = create<ChatState>((set, get) => ({
     const rest = get().conversations.filter((c) => c.id !== id);
     set({ conversations: rest });
     if (get().activeId === id) {
-      closeStream();
+      closeStreams();
       const next = rest[0];
       if (next) await get().select(next.id);
       else await get().newConversation();
     }
   },
 
+  /**
+   * Open a thread on a selection.
+   *
+   * The selection is the question, verbatim — whatever somebody highlighted is what they
+   * want to ask about, and rewording it here would put words in their mouth. The server
+   * gives the child the parent's workspace and CLI session, so the thread can see the files
+   * and remembers the conversation it was opened from; what it does not do is put its
+   * answers in the main transcript, which is the whole point of asking off to one side.
+   */
+  async openSub(text) {
+    const parent = get().activeId;
+    if (!parent) return;
+    set({ subOpen: true, subMessages: [], subStreaming: true, notice: null });
+    try {
+      const r = await api.createSubConversation(parent, text);
+      set({
+        subConversationId: r.conversationId,
+        subMessages: r.conversation.messages.map(toChatMessage),
+      });
+      openSubStream(r.conversationId);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
+      set({ subStreaming: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  async sendSub(text) {
+    const id = get().subConversationId;
+    if (!id || get().subStreaming) return;
+    const optimistic: ChatMessage = {
+      id: `local-sub-${Date.now()}`,
+      role: 'user',
+      blocks: [{ kind: 'text', blockId: 0, text, streaming: false }],
+      createdAt: new Date().toISOString(),
+    };
+    set((s) => ({ subMessages: [...s.subMessages, optimistic], subStreaming: true }));
+    try {
+      const { userMessage } = await api.sendMessage(id, text);
+      set((s) => ({
+        subMessages: s.subMessages.map((m) =>
+          m.id === optimistic.id ? toChatMessage(userMessage) : m,
+        ),
+      }));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 402) void useQuota.getState().refresh();
+      set((s) => ({
+        subStreaming: false,
+        error: err instanceof Error ? err.message : String(err),
+        subMessages: s.subMessages.filter((m) => m.id !== optimistic.id),
+      }));
+    }
+  },
+
+  /**
+   * Shut the panel, keep the thread.
+   *
+   * The conversation stays on the server with its messages: it is reachable again by asking
+   * about the same passage, and throwing it away because a panel was closed would lose an
+   * answer somebody may be halfway through reading. Only the stream goes.
+   */
+  closeSub() {
+    closeSubStream();
+    set({ subOpen: false, subConversationId: null, subMessages: [], subStreaming: false });
+  },
+
   _applyBatch(batch) {
+    set((state) => applyEvents(batch, state));
+  },
+
+  /**
+   * The same folding, against the panel's own transcript.
+   *
+   * Only the messages and whether it is streaming are kept: the sub-conversation is not in
+   * the sidebar, its title is nobody's heading, and the queue position belongs to the
+   * composer at the bottom of the main column.
+   */
+  _applySubBatch(batch) {
     set((state) => {
-      const messages = state.messages.slice();
-      let streaming = state.streaming;
-      let queuePosition = state.queuePosition;
-      let title = state.title;
-      let conversations = state.conversations;
-
-      // Clone the trailing message once per frame, instead of allocating a new object per delta
-      const cloned = new Set<number>();
-      const mutable = (idx: number): ChatMessage | undefined => {
-        const m = messages[idx];
-        if (!m) return undefined;
-        if (!cloned.has(idx)) {
-          const copy: ChatMessage = { ...m, blocks: m.blocks.map((b) => ({ ...b })) };
-          messages[idx] = copy;
-          cloned.add(idx);
-          return copy;
-        }
-        return m;
-      };
-      const lastAssistant = (): ChatMessage | undefined => {
-        for (let i = messages.length - 1; i >= 0; i--) {
-          if (messages[i]?.role === 'assistant') return mutable(i);
-        }
-        return undefined;
-      };
-
-      for (const e of batch) {
-        switch (e.type) {
-          case 'turn.started': {
-            messages.push({
-              id: e.turnId,
-              role: 'assistant',
-              blocks: [],
-              createdAt: new Date().toISOString(),
-              pending: true,
-            });
-            cloned.add(messages.length - 1);
-            streaming = true;
-            queuePosition = 0;
-            break;
-          }
-
-          case 'block.start': {
-            const msg = lastAssistant();
-            if (!msg?.pending) break;
-            if (msg.blocks.some((b) => b.blockId === e.blockId)) break;
-            msg.blocks.push(
-              e.kind === 'tool_use'
-                ? {
-                    kind: 'tool_use',
-                    blockId: e.blockId,
-                    toolId: e.toolId ?? `tool_${e.blockId}`,
-                    toolName: e.toolName ?? 'unknown',
-                    inputPartial: '',
-                    input: {},
-                    streaming: true,
-                  }
-                : { kind: e.kind, blockId: e.blockId, text: '', streaming: true },
-            );
-            break;
-          }
-
-          case 'text.delta':
-          case 'thinking.delta': {
-            queuePosition = 0;
-            lastAssistant();
-            const b = findBlock(messages, e.blockId);
-            if (b && b.kind !== 'tool_use') b.text += e.text;
-            // A subscription reports the size of the thinking instead of the thinking
-            if (e.type === 'thinking.delta' && e.tokens && b?.kind === 'thinking') {
-              b.tokens = (b.tokens ?? 0) + e.tokens;
-            }
-            break;
-          }
-
-          case 'tool.input.delta': {
-            lastAssistant();
-            const b = findBlock(messages, e.blockId);
-            if (b?.kind === 'tool_use') b.inputPartial += e.partial;
-            break;
-          }
-
-          case 'tool.input': {
-            lastAssistant();
-            const b = findBlock(messages, e.blockId);
-            if (b?.kind === 'tool_use') b.input = e.input;
-            break;
-          }
-
-          case 'block.stop': {
-            lastAssistant();
-            const b = findBlock(messages, e.blockId);
-            if (b) b.streaming = false;
-            break;
-          }
-
-          case 'tool.result': {
-            const msg = lastAssistant();
-            const b = msg?.blocks.find(
-              (x): x is LiveToolBlock => x.kind === 'tool_use' && x.toolId === e.toolId,
-            );
-            if (b) {
-              b.result = { isError: e.isError, content: e.content };
-              b.streaming = false;
-            }
-            break;
-          }
-
-          case 'turn.completed':
-          case 'turn.error':
-          case 'turn.aborted': {
-            const msg = lastAssistant();
-            if (msg) {
-              msg.pending = false;
-              msg.blocks.forEach((b) => (b.streaming = false));
-              if (e.type === 'turn.completed') msg.usage = e.usage;
-              if (e.type === 'turn.error') msg.error = e.message;
-              if (e.type === 'turn.aborted') msg.aborted = true;
-            }
-            streaming = false;
-            queuePosition = 0;
-            void get().refreshList();
-            break;
-          }
-
-          case 'title.updated': {
-            title = e.title;
-            conversations = conversations.map((c) =>
-              c.id === e.conversationId ? { ...c, title: e.title } : c,
-            );
-            break;
-          }
-
-          case 'quota.updated':
-            useQuota.getState().set(e.quota);
-            break;
-
-          case 'queue.waiting':
-            queuePosition = e.position;
-            break;
-
-          case 'heartbeat':
-            break;
-        }
-      }
-
-      return { messages, streaming, title, conversations, queuePosition };
+      const r = applyEvents(batch, {
+        messages: state.subMessages,
+        streaming: state.subStreaming,
+        queuePosition: state.queuePosition,
+        title: state.title,
+        conversations: state.conversations,
+      });
+      return { subMessages: r.messages, subStreaming: r.streaming };
     });
   },
 }));

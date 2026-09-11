@@ -17,6 +17,10 @@ const box = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-memory-'))
 process.env.DATA_DIR = box;
 process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 
+// `workspaceDir` resolves a sub-conversation to its root, so this needs a connection —
+// no rows, just somewhere for `rootOf` to look
+const { initDb } = await import('../core/db/index.js');
+initDb();
 const memory = await import('./memory.js');
 const workspace = await import('./workspace.js');
 

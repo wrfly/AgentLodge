@@ -620,4 +620,19 @@ export const ja: Record<string, string> = {
   '{n} waiting': '{n} 件待機',
   '{n} failed upstream': '{n} 件が上流で失敗',
   'this window has ended': 'このウィンドウは終了しました',
+
+  // Editing a question already asked, and asking one again
+  'Replaces the answer below': '下の回答を置き換えます',
+  'Branches into a new conversation': '新しい会話に分岐します',
+
+  'The workspace could not be copied, so this conversation starts with an empty directory': 'ワークスペースをコピーできなかったため、この新しい会話は空のディレクトリから始まります',
+  'Branch': '分岐',
+  'Edit and ask again': '直して聞き直す',
+  'Edit, branching from here': 'ここから分岐して編集',
+  'Answer again': 'もう一度答えさせる',
+  'Retry': '再試行',
+
+  // The thread opened on a selection
+  'Ask about this': 'ここについて聞く',
+  'Thread': 'スレッド',
 };

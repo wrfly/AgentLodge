@@ -20,6 +20,10 @@ const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentlodge-ws-'));
 process.env.DATA_DIR = dataDir;
 process.env.JWT_SECRET = 'test-secret-for-workspace-tests';
 
+// `workspaceDir` resolves a sub-conversation to its root, so these path checks now
+// need a connection — no rows, just somewhere for `rootOf` to look
+const { initDb } = await import('../core/db/index.js');
+initDb();
 const { resolveInside, preview, list, remove, O_WRITE_NOFOLLOW } = await import('./workspace.js');
 
 const USER = 'u1';

@@ -225,6 +225,49 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ text }) },
     ),
 
+  /**
+   * Edit a question already asked. The server decides what that means from where the message
+   * sits — correcting the newest one re-answers it, editing an older one branches — and says
+   * which it did, because a branch is somewhere else and the interface has to go there.
+   */
+  editMessage: (id: string, messageId: string, text: string) =>
+    request<
+      | { forked: false; turnId: string; userMessage: StoredMessage }
+      | {
+          forked: true;
+          conversationId: string;
+          turnId: string;
+          userMessage: StoredMessage;
+          /** False when the source directory was too large to copy, or was never written */
+          filesCopied: boolean;
+        }
+    >(`/api/conversations/${id}/messages/${messageId}/edit`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
+  /** Ask the newest question again, optionally somewhere else */
+  retry: (id: string, opts: { model?: string; effort?: string } = {}) =>
+    request<{ turnId: string; userMessage: StoredMessage }>(
+      `/api/conversations/${id}/retry`,
+      { method: 'POST', body: JSON.stringify(opts) },
+    ),
+
+  /**
+   * Open a sub-conversation on a selection. It shares the parent's workspace and CLI
+   * session; the selection becomes its first question.
+   */
+  createSubConversation: (id: string, text: string) =>
+    request<{
+      conversationId: string;
+      turnId: string;
+      userMessage: StoredMessage;
+      conversation: Conversation;
+    }>(`/api/conversations/${id}/sub`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
   abort: (id: string) =>
     request<{ ok: boolean }>(`/api/conversations/${id}/abort`, { method: 'POST' }).catch(
       () => ({ ok: false }),

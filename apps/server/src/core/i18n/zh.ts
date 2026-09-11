@@ -85,4 +85,9 @@ export const zh: Record<string, string> = {
   'Upstream "{name}" has no credential configured; ask an administrator': '上游「{name}」没有配置凭据，请找管理员',
   'No such model': '没有这个模型',
   'That window has no ceiling, so a top-up would do nothing — set a limit first': '这个窗口没有上限，加量不会生效——先设一个限额',
+  'No such message': '没有这条消息',
+
+  'Only a question can be edited': '只能编辑自己的提问',
+
+  'There is nothing to retry yet': '还没有可以重试的内容',
 };

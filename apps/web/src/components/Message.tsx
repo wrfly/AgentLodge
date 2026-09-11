@@ -1,9 +1,10 @@
 import { memo, useState } from 'react';
-import { Brain, ChevronRight, CircleAlert, OctagonX } from 'lucide-react';
+import { Brain, ChevronRight, CircleAlert, OctagonX, Pencil, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import { useChat, type ChatMessage, type LiveBlock } from '../store/chat';
 import { Markdown } from './Markdown';
 import { ToolCard } from './ToolCard';
+import { Button } from './ui';
 import { useT } from '../lib/i18n';
 import { StreamingContext } from '../lib/streaming';
 
@@ -108,22 +109,135 @@ function PendingIndicator() {
 }
 
 /**
- * Memoised on the message object. The store clones only the message a frame touched
- * (chat.ts, _applyBatch), so every earlier message arrives here as the same object as
- * last time and is skipped — without this, each delta re-rendered the whole transcript.
+ * A question, and the two things you can do to one you have already asked.
+ *
+ * Editing is not one action. Correcting the newest question means the answer was to the
+ * wrong question, so it goes and the corrected one is asked in its place; editing something
+ * from several turns back is a different path from that point, and the exchanges after it
+ * happened — so that branches into its own conversation rather than deleting them. Which of
+ * the two it is follows from the position, so it is not a choice anybody is asked to make;
+ * the button says which one it will be.
  */
-export const Message = memo(function Message({ message }: { message: ChatMessage }) {
+function UserMessage({ message, inThread }: { message: ChatMessage; inThread: boolean }) {
   const t = useT();
-  if (message.role === 'user') {
-    const text = message.blocks.map((b) => (b.kind === 'tool_use' ? '' : b.text)).join('');
+  const text = message.blocks.map((b) => (b.kind === 'tool_use' ? '' : b.text)).join('');
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+  const [busy, setBusy] = useState(false);
+  const editMessage = useChat((s) => s.editMessage);
+  const streaming = useChat((s) => s.streaming);
+  const isLastQuestion = useChat(
+    (s) => [...s.messages].reverse().find((m) => m.role === 'user')?.id === message.id,
+  );
+  /*
+   * A message that has not reached the server yet has no id to edit by — and nothing in the
+   * thread panel is editable at all, because `editMessage` acts on the conversation the page
+   * is on. Offering the button there would let somebody rewrite a question in the
+   * conversation behind the panel while looking at a different one.
+   */
+  const savable = !inThread && !message.id.startsWith('local-');
+
+  const save = async () => {
+    const next = draft.trim();
+    if (!next || next === text) return setEditing(false);
+    setBusy(true);
+    await editMessage(message.id, next);
+    setBusy(false);
+    setEditing(false);
+  };
+
+  if (editing) {
     return (
       <div className="fade-up flex justify-end px-4 py-2.5">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-bubble px-4 py-2.5 text-[15px] leading-[1.7] whitespace-pre-wrap">
-          {text}
+        <div className="w-full max-w-[85%] rounded-2xl border border-line-strong bg-surface p-2.5">
+          <textarea
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setEditing(false);
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void save();
+            }}
+            rows={Math.min(draft.split('\n').length + 1, 12)}
+            className="w-full resize-none bg-transparent text-[15px] leading-[1.7] outline-none"
+          />
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <span className="mr-auto text-[11.5px] text-faint">
+              {isLastQuestion ? t('Replaces the answer below') : t('Branches into a new conversation')}
+            </span>
+            <Button variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
+              {t('Cancel')}
+            </Button>
+            <Button onClick={() => void save()} disabled={busy || !draft.trim()}>
+              {isLastQuestion ? t('Send') : t('Branch')}
+            </Button>
+          </div>
         </div>
       </div>
     );
   }
+
+  return (
+    <div className="group/msg fade-up flex justify-end px-4 py-2.5">
+      <div className="flex max-w-[85%] flex-col items-end">
+        <div className="rounded-2xl rounded-br-md bg-bubble px-4 py-2.5 text-[15px] leading-[1.7] whitespace-pre-wrap">
+          {text}
+        </div>
+        {savable && !streaming && (
+          <button
+            onClick={() => { setDraft(text); setEditing(true); }}
+            title={isLastQuestion ? t('Edit and ask again') : t('Edit, branching from here')}
+            className="mt-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100"
+          >
+            <Pencil size={11} />
+            {t('Edit')}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Ask the last question again.
+ *
+ * Offered on the newest answer only: everything after an older one is downstream of it, and
+ * silently discarding that is what the branch is for.
+ */
+function RetryButton() {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const retry = useChat((s) => s.retry);
+  return (
+    <button
+      onClick={() => { setBusy(true); void retry().finally(() => setBusy(false)); }}
+      disabled={busy}
+      title={t('Answer again')}
+      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100 disabled:opacity-40"
+    >
+      <RotateCcw size={11} />
+      {t('Retry')}
+    </button>
+  );
+}
+
+/**
+ * Memoised on the message object. The store clones only the message a frame touched
+ * (chat.ts, _applyBatch), so every earlier message arrives here as the same object as
+ * last time and is skipped — without this, each delta re-rendered the whole transcript.
+ */
+export const Message = memo(function Message({
+  message,
+  isLatest = false,
+  /** Rendered in the thread panel, where the affordances would act on the wrong conversation */
+  inThread = false,
+}: {
+  message: ChatMessage;
+  isLatest?: boolean;
+  inThread?: boolean;
+}) {
+  const t = useT();
+  if (message.role === 'user') return <UserMessage message={message} inThread={inThread} />;
 
   const empty = message.blocks.length === 0;
 
@@ -158,7 +272,10 @@ export const Message = memo(function Message({ message }: { message: ChatMessage
         </div>
       )}
 
-      {message.usage && !message.pending && <UsageFooter usage={message.usage} />}
+      <div className="mt-1 flex items-center gap-2">
+        {message.usage && !message.pending && <UsageFooter usage={message.usage} />}
+        {isLatest && !message.pending && <RetryButton />}
+      </div>
     </div>
   );
 });

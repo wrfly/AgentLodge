@@ -106,7 +106,7 @@ export function initDb(): DatabaseSync {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 12;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -332,6 +332,28 @@ function migrate(d: DatabaseSync): void {
         `[db] removed ${removed} conversation(s) with nothing in them` +
           (kept ? `; kept ${kept} that still hold uploaded files` : ''),
       );
+    }
+  }
+
+  if (from < 11) {
+    // An answer a user asked to replace: the CLI transcript cannot be edited, so the
+    // gateway matches the discarded text in later requests and drops it. One row per
+    // discarded answer; gone with the conversation.
+    d.exec(`create table if not exists message_trims (
+      conversation_id text not null references conversations(id) on delete cascade,
+      match_text      text not null,
+      created_at      text not null
+    )`);
+    d.exec('create index if not exists idx_trims_conv on message_trims(conversation_id)');
+  }
+
+  if (from < 12) {
+    // A sub-conversation: a thread opened from a selection, sharing the parent's workspace
+    // and CLI session rather than copying either. Old conversations have no parent, which
+    // is exactly the "not a sub-conversation" reading of a null.
+    if (!columns(d, 'conversations').has('parent_id')) {
+      d.exec('alter table conversations add column parent_id text references conversations(id) on delete cascade');
+      d.exec('create index if not exists idx_conv_parent on conversations(parent_id)');
     }
   }
 

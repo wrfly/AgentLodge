@@ -9,6 +9,8 @@ import type { AgentId } from '../lib/protocol';
 import { Message } from './Message';
 import { Composer } from './Composer';
 import { FilesPanel } from './FilesPanel';
+import { SubChatPanel } from './SubChatPanel';
+import { SelectionAsk } from './SelectionAsk';
 
 const NEAR_BOTTOM_PX = 120;
 
@@ -80,6 +82,8 @@ export function Chat({ agent }: { agent: AgentId }) {
   const connected = useChat((s) => s.connected);
   const error = useChat((s) => s.error);
   const dismissError = useChat((s) => s.dismissError);
+  const notice = useChat((s) => s.notice);
+  const dismissNotice = useChat((s) => s.dismissNotice);
   const showSidebar = useChat((s) => s.showSidebar);
   const sidebarCollapsed = useChat((s) => s.sidebarCollapsed);
   const activeId = useChat((s) => s.activeId);
@@ -92,6 +96,7 @@ export function Chat({ agent }: { agent: AgentId }) {
   const stick = useRef(true);
   const [showJump, setShowJump] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const subOpen = useChat((s) => s.subOpen);
 
   const onScroll = () => {
     const el = scroller.current;
@@ -174,6 +179,15 @@ export function Chat({ agent }: { agent: AgentId }) {
         </div>
       )}
 
+      {notice && !error && (
+        <div className="flex items-start gap-2 border-b border-line bg-bubble px-4 py-2 text-[13px] text-muted">
+          <span className="flex-1">{notice}</span>
+          <button onClick={dismissNotice} className="shrink-0 underline">
+            {t('Close')}
+          </button>
+        </div>
+      )}
+
       {/*
         The composer is a sibling of the scroll area, not the last thing inside it. Inside,
         it could only be held down with `sticky`, and sticky does nothing until the container
@@ -192,9 +206,14 @@ export function Chat({ agent }: { agent: AgentId }) {
             ) : messages.length === 0 ? (
               <Empty agent={agent} />
             ) : (
-              <div className="py-4">
-                {messages.map((m) => (
-                  <Message key={m.id} message={m} />
+              /* Marks what a selection has to be inside to count as asking about the
+                 conversation — see SelectionAsk */
+              <div className="py-4" data-transcript>
+                {messages.map((m, i) => (
+                  /* Retry is offered on the newest answer only: everything after an older
+                     one is downstream of it, and discarding that quietly is what editing an
+                     older question branches for instead */
+                  <Message key={m.id} message={m} isLatest={i === messages.length - 1} />
                 ))}
               </div>
             )}
@@ -219,6 +238,16 @@ export function Chat({ agent }: { agent: AgentId }) {
           <FilesPanel conversationId={activeId} onClose={() => setFilesOpen(false)} />
         </div>
       )}
+
+      {/* One at a time: both are the same column on a narrow screen, and a thread opened
+          while the files are up would otherwise be behind them */}
+      {subOpen && !filesOpen && (
+        <div className="absolute inset-0 z-30 md:static md:z-auto">
+          <SubChatPanel />
+        </div>
+      )}
+
+      <SelectionAsk />
     </div>
   );
 }

@@ -593,4 +593,19 @@ export const pt: Record<string, string> = {
   '{n} waiting': '{n} à espera',
   '{n} failed upstream': '{n} falharam no upstream',
   'this window has ended': 'esta janela terminou',
+
+  // Editing a question already asked, and asking one again
+  'Replaces the answer below': 'Substitui a resposta abaixo',
+  'Branches into a new conversation': 'Ramifica para uma conversa nova',
+
+  'The workspace could not be copied, so this conversation starts with an empty directory': 'Não foi possível copiar o espaço de trabalho, então esta nova conversa começa com uma pasta vazia',
+  'Branch': 'Ramificar',
+  'Edit and ask again': 'Corrigir e perguntar de novo',
+  'Edit, branching from here': 'Editar, ramificando daqui',
+  'Answer again': 'Responder de novo',
+  'Retry': 'Tentar de novo',
+
+  // The thread opened on a selection
+  'Ask about this': 'Perguntar sobre isto',
+  'Thread': 'Tópico',
 };

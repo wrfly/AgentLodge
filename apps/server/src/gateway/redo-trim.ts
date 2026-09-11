@@ -1,0 +1,115 @@
+/**
+ * Drop answers a user asked to replace from a request body.
+ *
+ * Editing the newest question, or retrying the newest answer, deletes the answer from our
+ * records — and cannot delete it from the CLI's transcript, which lives in the agent's own
+ * session and is not something we can write to. So `--resume` keeps sending the discarded
+ * reply on every later request, and a model with its own answer still in front of it tends
+ * to repeat it or refer back to it.
+ *
+ * This is the other half of that fix: the routes keep the discarded answer's text
+ * (core/db/trims.ts), and the gateway matches it in each request body and cuts the message.
+ *
+ * The cut is the whole segment from the discarded assistant message up to — but not
+ * including — the next user message, never a single block out of the middle. A tool-using
+ * answer can carry `tool_use` blocks whose results arrive in the following user message;
+ * removing only the assistant message would orphan the results and the API would refuse the
+ * request. Cutting the segment keeps the pairing whole.
+ *
+ * Everything here degrades to "forward unchanged":
+ *   - a rule that no longer matches — compaction rewrote the text, say — changes nothing
+ *   - a conversation with no rules costs one indexed query and no rewriting
+ *   - a body with no messages array (a tool continuation, an internal call) is left alone
+ */
+export function trimRedoAnswers(body: unknown, matches: string[]): unknown {
+  if (!matches.length || !body || typeof body !== 'object') return body;
+  const b = body as { messages?: unknown[]; input?: unknown[] };
+
+  if (Array.isArray(b.messages)) {
+    const next = dropSegment(b.messages, isUserMessage, isAssistantMessage, messageText, matches);
+    return next === b.messages ? body : { ...b, messages: next };
+  }
+  if (Array.isArray(b.input)) {
+    const next = dropSegment(b.input, isUserItem, isAssistantItem, itemText, matches);
+    return next === b.input ? body : { ...b, input: next };
+  }
+  return body;
+}
+
+/**
+ * Remove every segment [assistant, next-user) whose assistant message matches a rule.
+ *
+ * Returns the original array when nothing matched, so the caller can tell "rewritten" from
+ * "untouched" by identity — a body that changed nothing is forwarded as it stood.
+ */
+function dropSegment<T>(
+  arr: T[],
+  isUser: (m: unknown) => boolean,
+  isAssistant: (m: unknown) => boolean,
+  textOf: (m: unknown) => string,
+  matches: string[],
+): T[] {
+  let out: T[] = arr;
+  for (let i = 0; i < out.length; i++) {
+    const maybe = out[i];
+    if (!maybe || !isAssistant(maybe)) continue;
+    const text = textOf(maybe).trim();
+    if (!text || !matches.includes(text)) continue;
+
+    let j = i + 1;
+    while (j < out.length && !isUser(out[j])) j++;
+    // No user message after it — nothing to define the cut by, so the rule is skipped.
+    // A request always ends in a user message, so this is a guard rather than a case.
+    if (j >= out.length) continue;
+
+    if (out === arr) out = arr.slice();
+    out.splice(i, j - i);
+    i--; // the element that slid into i is the next one to inspect
+  }
+  return out;
+}
+
+/* ---------------- Anthropic Messages (Claude Code) ---------------- */
+
+type WireMessage = { role?: string; content?: unknown };
+
+function isUserMessage(m: unknown): boolean {
+  return (m as WireMessage)?.role === 'user';
+}
+function isAssistantMessage(m: unknown): boolean {
+  return (m as WireMessage)?.role === 'assistant';
+}
+
+/** What a message says on the Anthropic wire: a string, or text blocks */
+function messageText(m: unknown): string {
+  const c = (m as WireMessage)?.content;
+  if (typeof c === 'string') return c;
+  if (!Array.isArray(c)) return '';
+  return c
+    .map((p) => (p && typeof p === 'object' && (p as { type?: string }).type === 'text'
+      ? String((p as { text?: unknown }).text ?? '')
+      : ''))
+    .join('');
+}
+
+/* ---------------- Responses (Codex) ---------------- */
+
+type WireItem = { type?: string; role?: string; content?: Array<{ type?: string; text?: string }> };
+
+function isUserItem(m: unknown): boolean {
+  const i = m as WireItem;
+  return i?.type === 'message' && i.role === 'user';
+}
+function isAssistantItem(m: unknown): boolean {
+  const i = m as WireItem;
+  return i?.type === 'message' && i.role === 'assistant';
+}
+
+/** What a message says on the Responses wire: its input/output text parts */
+function itemText(m: unknown): string {
+  const i = m as WireItem;
+  return (i?.content ?? [])
+    .filter((p) => p.type === 'input_text' || p.type === 'output_text')
+    .map((p) => p.text ?? '')
+    .join('');
+}

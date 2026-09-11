@@ -85,4 +85,9 @@ export const ru: Record<string, string> = {
   'Upstream "{name}" has no credential configured; ask an administrator': 'Для апстрима «{name}» не настроены учётные данные — обратитесь к администратору',
   'No such model': 'Такой модели нет',
   'That window has no ceiling, so a top-up would do nothing — set a limit first': 'У этого окна нет потолка, поэтому пополнение ничего не даст — сначала задайте лимит',
+  'No such message': 'Нет такого сообщения',
+
+  'Only a question can be edited': 'Редактировать можно только свой вопрос',
+
+  'There is nothing to retry yet': 'Пока нечего повторять',
 };

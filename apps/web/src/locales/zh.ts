@@ -620,4 +620,19 @@ export const zh: Record<string, string> = {
   '{n} waiting': '{n} 个等待',
   '{n} failed upstream': '{n} 轮上游失败',
   'this window has ended': '这个窗口已经结束',
+
+  // Editing a question already asked, and asking one again
+  'Replaces the answer below': '替换下面那条回复',
+  'Branches into a new conversation': '分叉出一条新对话',
+
+  'The workspace could not be copied, so this conversation starts with an empty directory': '工作区复制失败，这个新会话从空目录开始',
+  'Branch': '分叉',
+  'Edit and ask again': '改一下重新问',
+  'Edit, branching from here': '从这里分叉着改',
+  'Answer again': '重新回答',
+  'Retry': '重试',
+
+  // The thread opened on a selection
+  'Ask about this': '就这段提问',
+  'Thread': '支线',
 };

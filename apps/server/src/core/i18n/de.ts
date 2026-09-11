@@ -85,4 +85,9 @@ export const de: Record<string, string> = {
   'Upstream "{name}" has no credential configured; ask an administrator': 'Für Upstream „{name}“ sind keine Zugangsdaten konfiguriert; wenden Sie sich an einen Administrator',
   'No such model': 'Kein solches Modell',
   'That window has no ceiling, so a top-up would do nothing — set a limit first': 'Dieses Fenster hat keine Obergrenze, eine Aufstockung bliebe wirkungslos — setzen Sie zuerst ein Limit',
+  'No such message': 'Diese Nachricht gibt es nicht',
+
+  'Only a question can be edited': 'Nur eine eigene Frage lässt sich bearbeiten',
+
+  'There is nothing to retry yet': 'Es gibt noch nichts zu wiederholen',
 };
