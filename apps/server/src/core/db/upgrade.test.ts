@@ -50,7 +50,18 @@ const added = [...source.matchAll(/alter table (\w+) add column (\w+)/g)].map((m
 // Build the file initDb() will open, then take it back to before those columns existed.
 {
   const old = new DatabaseSync(path.join(box, 'agentlodge.db'));
-  old.exec(fs.readFileSync(path.join(here, 'schema.sql'), 'utf8'));
+  // Dropping a column makes SQLite re-parse the `create table` it has on file, and the
+  // build in Node 22 reads a comment left at the end of that text as an unfinished
+  // statement. parent_id is the last column of conversations and has one above it. This
+  // database is scaffolding for the test, so it is built from the same DDL with the
+  // comments taken out rather than from a schema.sql written around the parser.
+  // Block comments come out first. A `--` inside one would otherwise take its closing
+  // `*/` with it, and everything down to the next one stops being SQL.
+  const bare = fs
+    .readFileSync(path.join(here, 'schema.sql'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/--[^\n]*/g, '');
+  old.exec(bare);
 
   // SQLite refuses to drop a column an index names, which is the whole shape of the bug:
   // schema.sql carries indexes over columns that only a migration adds.
