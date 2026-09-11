@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { ArrowLeft, CornerDownLeft, Square, X } from 'lucide-react';
 import { useT } from '../lib/i18n';
 import { useChat } from '../store/chat';
@@ -31,19 +31,26 @@ export function SubChatPanel() {
   const abortSub = useChat((s) => s.abortSub);
   const showThreads = useChat((s) => s.showThreads);
   const openThread = useChat((s) => s.openThread);
-  // Keyed on the thread, or a question half-typed in one appears in the next one opened
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  /*
+   * Both live in the store, not here. This panel unmounts whenever the files panel is opened
+   * (same column) or the chat pane is left for another page, and component state goes with
+   * it — a follow-up typed into a thread and not yet sent used to be gone on the way back.
+   * Still keyed on the thread, or a question half-typed in one appears in the next opened.
+   */
+  const drafts = useChat((s) => s.subDrafts);
+  const setSubDraft = useChat((s) => s.setSubDraft);
+  const question = useChat((s) => s.subQuestion);
+  const setQuestion = useChat((s) => s.setSubQuestion);
   const draft = conversationId ? (drafts[conversationId] ?? '') : '';
-  const setDraft = (v: string) =>
-    setDrafts((d) => (conversationId ? { ...d, [conversationId]: v } : d));
-  const [question, setQuestion] = useState('');
+  const setDraft = (v: string) => conversationId && setSubDraft(conversationId, v);
   const bottom = useRef<HTMLDivElement>(null);
 
   // Pre-filled rather than blank: the default is what most people mean, and editing a
-  // sentence is less work than writing one
+  // sentence is less work than writing one. Only when there is nothing there — a passage
+  // arrives with the question cleared, so this fills it once and leaves any rewrite alone.
   useEffect(() => {
-    if (quote) setQuestion(t(DEFAULT_QUESTION));
-  }, [quote, t]);
+    if (quote && !question) setQuestion(t(DEFAULT_QUESTION));
+  }, [quote, question, setQuestion, t]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' });
@@ -87,7 +94,9 @@ export function SubChatPanel() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  if (question.trim()) void openSub(quote, question);
+                  // `streaming` is the thread being opened. Without it a second Enter while
+                  // the first was in the air opened a second thread and started a second turn
+                  if (question.trim() && !streaming) void openSub(quote, question);
                 }
               }}
               rows={3}
@@ -96,8 +105,11 @@ export function SubChatPanel() {
             />
             <div className="mt-2 flex justify-end gap-2">
               <Button variant="ghost" onClick={closeSub}>{t('Cancel')}</Button>
-              <Button onClick={() => question.trim() && void openSub(quote, question)} disabled={!question.trim()}>
-                {t('Ask')}
+              <Button
+                onClick={() => question.trim() && !streaming && void openSub(quote, question)}
+                disabled={!question.trim() || streaming}
+              >
+                {streaming ? t('Asking…') : t('Ask')}
               </Button>
             </div>
           </div>

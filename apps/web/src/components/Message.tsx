@@ -156,9 +156,12 @@ function UserMessage({ message, inThread }: { message: ChatMessage; inThread: bo
     const next = draft.trim();
     if (!next || next === text) return setEditing(false);
     setBusy(true);
-    await editMessage(message.id, next);
+    const landed = await editMessage(message.id, next);
     setBusy(false);
-    setEditing(false);
+    // Only on success. Closing either way threw away a rewritten question whenever the send
+    // was refused — out of quota, conversation busy — and re-opening resets the field to the
+    // original text, so there was nothing left to try again with.
+    if (landed) setEditing(false);
   };
 
   if (editing) {

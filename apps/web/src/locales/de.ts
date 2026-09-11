@@ -616,6 +616,7 @@ export const de: Record<string, string> = {
   'What do you want to know about it?': 'Was möchten Sie darüber wissen?',
 
   'Ask': 'Fragen',
+  'Asking…': 'Wird gefragt …',
   'Take back': 'Ins Gespräch übernehmen',
 
   'Put this in the message box, to send on to the conversation': 'In das Eingabefeld legen, um es ans Gespräch zu schicken',

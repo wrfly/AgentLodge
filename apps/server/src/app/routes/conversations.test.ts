@@ -29,6 +29,7 @@ initDb();
 const convRepo = await import('../../core/db/conversations.js');
 const db = await import('../../core/db/index.js');
 const trims = await import('../../core/db/trims.js');
+const usage = await import('../../core/db/usage.js');
 const turns = await import('../turns.js');
 const users = await import('../../core/db/users.js');
 const sessions = await import('../../core/db/sessions.js');
@@ -187,6 +188,37 @@ console.log('\n=== Deleting a sub-conversation leaves the parent\'s workspace al
   ok('the shared workspace survives', fs.existsSync(path.join(dir, 'sort.py')));
 }
 
+console.log('\n=== Deleting a conversation stops the threads inside it ===');
+{
+  /*
+   * `abortConversation` stops one conversation, now that a thread runs beside its parent
+   * rather than instead of it. Deleting the parent used to leave the thread's CLI running:
+   * the cascade took its rows, `fs.rm` took the working directory out from under a process
+   * still executing in it, and when the process finished `appendMessage` found no
+   * conversation and dropped the answer with no error anywhere. A process burning the user's
+   * quota for nobody.
+   *
+   * The stub is rewritten to hang so there is a running turn to observe. Same path, so
+   * `config.claudeBin` — read once at module load — still points at it.
+   */
+  fs.writeFileSync(stubBin, '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+  const { id } = conversationOf(['sort it', 'wrote sort.py']);
+  const sub = await post(`/api/conversations/${id}/sub`, { text: 'what about it?' });
+  const childId = (sub.json() as { conversationId: string }).conversationId;
+  await new Promise((r) => setTimeout(r, 150));
+  ok('the thread is generating', turns.isBusy(childId), String(turns.isBusy(childId)));
+
+  await app.inject({
+    method: 'DELETE', url: `/api/conversations/${id}`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  // `abort()` signals the process; the turn leaves the active map when it actually ends
+  for (let i = 0; i < 40 && turns.isBusy(childId); i++) await new Promise((r) => setTimeout(r, 50));
+  ok('deleting the parent stops it', !turns.isBusy(childId), String(turns.isBusy(childId)));
+  ok('and the thread is gone with it', !convRepo.meta(childId, alice.id));
+  fs.writeFileSync(stubBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+}
+
 console.log('\n=== A retry that never starts leaves nothing behind ===');
 {
   /*
@@ -227,6 +259,108 @@ console.log('\n=== A retry that never starts leaves nothing behind ===');
   await post(`/api/conversations/${hadNone}/retry`, { model: 'opus' });
   ok('a conversation with no model of its own still has none',
     !convRepo.meta(hadNone, alice.id)?.model, String(convRepo.meta(hadNone, alice.id)?.model));
+}
+
+console.log('\n=== A turn that never starts leaves no trim rules behind ===');
+{
+  /*
+   * The rules go in before the turn, and they have to: `startTurn` spawns the CLI, whose
+   * first request can reach the gateway before the call returns. So a turn that never starts
+   * has already written them, and putting the messages back is only half the undo — the
+   * answer would be on screen and in the database while every later request had it cut out
+   * of the body. A conversation the model cannot see, with nothing to undo it.
+   */
+  const c = convRepo.create({ userId: alice.id, agent: 'claude' });
+  db.run("update conversations set agent = 'no-such-agent' where id = ?", c.id);
+  const q = convRepo.appendMessage(c.id, alice.id, {
+    role: 'user', blocks: [{ kind: 'text', blockId: 0, text: 'sort it' }],
+    createdAt: new Date().toISOString(),
+  })!;
+  convRepo.appendMessage(c.id, alice.id, {
+    role: 'assistant', blocks: [{ kind: 'text', blockId: 0, text: 'wrote sort.py' }],
+    createdAt: new Date(Date.now() + 1000).toISOString(),
+  });
+
+  const retried = await post(`/api/conversations/${c.id}/retry`, {});
+  ok('the retry failed', retried.statusCode >= 400, String(retried.statusCode));
+  ok('and took its rule back with it', !trims.forConversation(c.id).includes('wrote sort.py'),
+    JSON.stringify(trims.forConversation(c.id)));
+
+  const edited = await post(`/api/conversations/${c.id}/messages/${q.id}/edit`, { text: 'sort it by size' });
+  ok('the edit failed too', edited.statusCode >= 400, String(edited.statusCode));
+  ok('and left no rule either', trims.forConversation(c.id).length === 0,
+    JSON.stringify(trims.forConversation(c.id)));
+}
+
+console.log('\n=== A thread can be opened while the conversation is answering ===');
+{
+  /*
+   * `/sub` used to refuse when the parent was busy, which is the one case the feature exists
+   * for — you select a passage from an earlier answer precisely because the current one is
+   * still coming. It was true when a thread resumed the parent's session; it stopped being
+   * true when a thread got its own.
+   */
+  const { id } = conversationOf(['sort it', 'wrote sort.py']);
+  const busy = await post(`/api/conversations/${id}/messages`, { text: 'and now?' });
+  ok('the conversation has a turn running', busy.statusCode === 202, String(busy.statusCode));
+  const sub = await post(`/api/conversations/${id}/sub`, { text: '> sort.py\n\nwhat is in it?' });
+  ok('a thread opens anyway', sub.statusCode === 202, String(sub.statusCode));
+  await settle();
+}
+
+console.log('\n=== A thread that never starts is not left in the list ===');
+{
+  /*
+   * The child row is created before the turn, because the turn needs somewhere to put its
+   * messages. A turn refused for quota used to leave it: no question, no answer, and the
+   * panel has no way to delete one. Three refused clicks, three of them in the list for good.
+   */
+  const { id } = conversationOf(['sort it', 'wrote sort.py']);
+  db.run("update conversations set agent = 'no-such-agent' where id = ?", id);
+  const sub = await post(`/api/conversations/${id}/sub`, { text: 'what about it?' });
+  ok('the thread failed to open', sub.statusCode >= 400, String(sub.statusCode));
+  ok('and is not in the list', convRepo.listThreads(id, alice.id).length === 0,
+    JSON.stringify(convRepo.listThreads(id, alice.id)));
+}
+
+console.log('\n=== What a conversation cost counts its threads too ===');
+{
+  /*
+   * A thread is its own conversation row, so counting by `conversation_id` alone left its
+   * spend out of the one place a conversation's cost is shown. Threads are kept out of the
+   * sidebar on purpose, so that money appeared nowhere but the global usage page — while
+   * coming off the same quota, for questions asked from this conversation.
+   */
+  const { id } = conversationOf(['sort it', 'wrote sort.py']);
+  const sub = await post(`/api/conversations/${id}/sub`, { text: 'what about it?' });
+  const childId = (sub.json() as { conversationId: string }).conversationId;
+  await settle();
+
+  const spend = (conversationId: string, inputTokens: number) =>
+    usage.record({
+      userId: alice.id, conversationId, agent: 'claude', model: 'sonnet',
+      usage: { inputTokens, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+      status: 'ok',
+    } as never);
+  spend(id, 1000);
+  spend(childId, 250);
+
+  const res = await app.inject({
+    method: 'GET', url: `/api/conversations/${id}/usage`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const rows = (res.json() as { byModel: Array<{ model: string; inputTokens: number }> }).byModel;
+  const total = rows.reduce((n, r) => n + r.inputTokens, 0);
+  ok('the thread\'s tokens are in the conversation\'s total', total === 1250, String(total));
+
+  // And a thread asked about on its own still answers for itself alone
+  const own = await app.inject({
+    method: 'GET', url: `/api/conversations/${childId}/usage`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const mine = (own.json() as { byModel: Array<{ inputTokens: number }> }).byModel
+    .reduce((n, r) => n + r.inputTokens, 0);
+  ok('and the thread alone is still the thread alone', mine === 250, String(mine));
 }
 
 console.log('\n=== The guards around editing ===');

@@ -187,7 +187,24 @@ export function recentTranscript(messages: StoredMessage[], budget = 24_000): st
     used += one.length;
     kept.unshift(messages[i]!);
   }
-  return transcript(kept);
+  if (kept.length) return transcript(kept);
+
+  /*
+   * Nothing fit, so take the end of the newest message instead of nothing.
+   *
+   * One message over budget is not rare for a coding agent — an answer that dumps a file is
+   * over 24 000 characters on its own — and the loop above breaks on it, leaving a thread
+   * with no context at all. The prompt then reads as a bare question about a passage the
+   * model has never seen, and it answers anyway, plausibly and wrongly, with nothing on
+   * screen saying the replay did not happen. The tail is the part a passage is likely to be
+   * near, and a marked truncation is honest about what is missing.
+   */
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const one = transcript([messages[i]!]);
+    if (!one) continue;
+    return `…${one.slice(-budget)}`;
+  }
+  return '';
 }
 
 export function transcript(messages: StoredMessage[]): string {

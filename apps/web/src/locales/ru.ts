@@ -643,6 +643,7 @@ export const ru: Record<string, string> = {
   'What do you want to know about it?': 'Что вы хотите об этом узнать?',
 
   'Ask': 'Спросить',
+  'Asking…': 'Спрашиваю…',
   'Take back': 'Вернуть в разговор',
 
   'Put this in the message box, to send on to the conversation': 'Поместить в поле ввода, чтобы отправить в разговор',

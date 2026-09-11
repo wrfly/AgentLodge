@@ -212,9 +212,30 @@ console.log('\n=== What a thread is handed, and how much of it ===');
     capped.slice(0, 40));
   ok('a conversation with nothing in it sends nothing',
     turns.recentTranscript([]) === '');
-  /* One message over budget is still one message: sending nothing would be worse */
-  ok('and a single oversized message does not blank it out',
-    turns.recentTranscript(all, 10).length === 0 || turns.recentTranscript(all, 10).length <= 10);
+  /*
+   * One message over budget on its own, which is routine — an answer that dumps a file is
+   * past 24 000 characters by itself. The loop spends the budget from the end backwards and
+   * breaks on the first message that does not fit, so this used to come back empty: a thread
+   * whose whole premise is being handed the conversation got none of it, and answered the
+   * bare question anyway, plausibly and wrongly.
+   *
+   * The old assertion here read `length === 0 || length <= 10`, which is true of every
+   * number, and its comment said sending nothing would be worse — which is what the code
+   * did.
+   */
+  const huge = convRepo.create({ userId: alice, agent: 'claude' });
+  convRepo.appendMessage(huge.id, alice, {
+    role: 'assistant',
+    blocks: [{ kind: 'text', blockId: 0, text: 'HEAD ' + 'x'.repeat(30_000) + ' TAIL' }],
+    createdAt: new Date().toISOString(),
+  });
+  const oversized = turns.recentTranscript(convRepo.full(huge.id, alice)!.messages, 2_000);
+  ok('one message over budget still sends something', oversized.length > 0, String(oversized.length));
+  ok('within the budget, plus the mark', oversized.length <= 2_001, String(oversized.length));
+  ok('and it is the end of it, where the passage will be', oversized.includes('TAIL'));
+  ok('marked as cut, rather than passing for the whole thing', oversized.startsWith('…'));
+  ok('a conversation of nothing but empty messages still sends nothing',
+    turns.recentTranscript([{ role: 'assistant', blocks: [] }] as never, 2_000) === '');
 }
 
 console.log('\n=== A thread is labelled by the passage, not by the prompt ===');

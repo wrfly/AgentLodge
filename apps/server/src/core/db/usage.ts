@@ -380,13 +380,27 @@ export function hourlyForUserRange(userId: string, range: Range): HourlyPoint[] 
  * A turn with no model recorded groups under an empty name; the interface reads that as
  * "whatever the CLI picked".
  */
+/**
+ * What one conversation cost, per model — threads included.
+ *
+ * A thread is its own conversation row, so counting `conversation_id` alone left its spend
+ * out of the only place a conversation's cost is shown. Threads are kept out of the sidebar
+ * on purpose, which means that spend appeared nowhere but the global usage page, even though
+ * it came off the same quota and was started from this conversation.
+ *
+ * The subquery is one level deep because the tree is: a thread cannot have threads of its
+ * own, `parent_id` is only ever set to a conversation the user owns, and nothing creates a
+ * child of a child.
+ */
 export function byModelForConversation(conversationId: string): Array<Totals & { model: string }> {
   return all<TotalsRow & { model: string | null }>(
     `select coalesce(model, '') as model, ${SUM()}
        from usage_records
       where conversation_id = ?
+         or conversation_id in (select id from conversations where parent_id = ?)
       group by coalesce(model, '')
       order by cost_micro desc`,
+    conversationId,
     conversationId,
   ).map((r) => ({ model: r.model ?? '', ...toTotals(r) }));
 }

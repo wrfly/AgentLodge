@@ -616,6 +616,7 @@ export const pt: Record<string, string> = {
   'What do you want to know about it?': 'O que queres saber sobre isto?',
 
   'Ask': 'Perguntar',
+  'Asking…': 'A perguntar…',
   'Take back': 'Levar para a conversa',
 
   'Put this in the message box, to send on to the conversation': 'Pôr na caixa de mensagem, para enviar à conversa',

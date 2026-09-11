@@ -57,11 +57,24 @@ function dropSegment<T>(
   isBoundToNext: (m: unknown) => boolean = () => false,
 ): T[] {
   let out: T[] = arr;
+  /*
+   * One cut per rule, and it is the earliest match that gets it.
+   *
+   * A rule is exact text and never expires, so an answer the model gives again later —
+   * "Done." after a step, which a coding agent says often — matched the rule written for a
+   * different turn and had its whole segment cut, tool calls and all. The user saw that turn
+   * on screen; the model never saw it again, and nothing said so. The discarded answer is
+   * always earlier in the transcript than any later twin, so spending the rule on the first
+   * match takes the right one. Retried three times to the same words? Three rules, three
+   * cuts.
+   */
+  const unspent = [...matches];
   for (let i = 0; i < out.length; i++) {
     const maybe = out[i];
     if (!maybe || !isAssistant(maybe)) continue;
     const text = textOf(maybe).trim();
-    if (!text || !matches.includes(text)) continue;
+    const rule = text ? unspent.indexOf(text) : -1;
+    if (rule === -1) continue;
 
     let j = i + 1;
     while (j < out.length && !isUser(out[j])) j++;
@@ -73,6 +86,7 @@ function dropSegment<T>(
     let start = i;
     while (start > 0 && isBoundToNext(out[start - 1])) start--;
 
+    unspent.splice(rule, 1);
     if (out === arr) out = arr.slice();
     out.splice(start, j - start);
     i = start - 1; // the element that slid into `start` is the next one to inspect

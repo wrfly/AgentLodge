@@ -209,6 +209,43 @@ console.log('\n=== A reasoning item travels with the message it reasoned into ==
   ok('the two questions are what else remains', out.input.length === 5, JSON.stringify(ids));
 }
 
+console.log('\n=== A rule is spent on the answer it was written for ===');
+{
+  /*
+   * A rule is exact text and never expires. A coding agent says "Done." at the end of a
+   * step often enough that a later turn matching the rule written for an earlier one is not
+   * a hypothetical — and the cut takes the whole segment, so that turn's tool calls go with
+   * it. The user sees the turn on screen; the model never sees it again.
+   *
+   * The discarded answer is always earlier in the transcript than any later twin, so the
+   * first match is the right one.
+   */
+  const body = {
+    messages: [
+      { role: 'user', content: 'step one' },
+      { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
+      { role: 'user', content: 'step one, differently' },
+      { role: 'assistant', content: [
+        { type: 'text', text: 'Done.' },
+        { type: 'tool_use', id: 't4', name: 'Write', input: {} },
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't4', content: 'written' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'And the file is written.' }] },
+      { role: 'user', content: 'step two' },
+    ],
+  };
+  const out = trimRedoAnswers(body, ['Done.']) as typeof body;
+  ok('the discarded answer is gone', out.messages[0]?.content === 'step one'
+    && out.messages[1]?.content === 'step one, differently', JSON.stringify(out.messages.map((m) => m.role)));
+  ok('the later turn that said the same thing is not', JSON.stringify(out).includes('And the file is written.'));
+  ok('nor is the work it did', JSON.stringify(out).includes('tool_use'));
+  ok('one message gone, not four', out.messages.length === 6, String(out.messages.length));
+
+  // Retried twice to the same words means two rules, and both are spent
+  const twice = trimRedoAnswers(body, ['Done.', 'Done.']) as typeof body;
+  ok('two rules take both', !JSON.stringify(twice).includes('Done.'), String(twice.messages.length));
+}
+
 console.log('\n=== Each piece of an answer is its own rule ===');
 {
   /*

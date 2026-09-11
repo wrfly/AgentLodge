@@ -27,6 +27,32 @@ export function add(conversationId: string, matchText: string): boolean {
   );
 }
 
+/**
+ * Take rules back, for an answer that turned out not to be discarded after all.
+ *
+ * The routes record the rules before starting the replacement turn, because the CLI is
+ * spawned inside `startTurn` and its first request can reach the gateway before the call
+ * returns — a rule written afterwards would be too late for the turn it exists for.
+ *
+ * So a turn that never starts — out of quota, container engine down — has already written
+ * them, and restoring the messages is not enough: the answer would be back on screen and in
+ * the database while every later request had it cut out of the body. The user would be
+ * looking at a conversation the model cannot see, with nothing to undo it.
+ */
+export function forget(conversationId: string, matchTexts: string[]): number {
+  let gone = 0;
+  for (const text of matchTexts) {
+    const t = text.trim();
+    if (!t) continue;
+    gone += run(
+      'delete from message_trims where conversation_id = ? and match_text = ?',
+      conversationId,
+      t,
+    ).changes;
+  }
+  return gone;
+}
+
 /** The discarded answers for one conversation, newest first — the order they were discarded in */
 export function forConversation(conversationId: string): string[] {
   return all<TrimRow>(

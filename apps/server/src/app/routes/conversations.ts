@@ -81,6 +81,17 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const conv = convRepo.meta(id, req.user!.id);
     if (!conv) return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    /*
+     * The threads go first, and they have to: `abortConversation` stops one conversation now
+     * that a thread runs beside its parent rather than instead of it. Without this the
+     * thread's CLI keeps running, `fs.rm` below pulls the working directory out from under
+     * it mid-turn, and when it finishes `appendMessage` finds no conversation and drops the
+     * answer silently — a process still burning the user's quota for nobody.
+     */
+    for (const child of conv.parentId ? [] : convRepo.listThreads(id, req.user!.id)) {
+      turns.abortConversation(child.id);
+      dropChannel(child.id);
+    }
     turns.abortConversation(id);
     convRepo.remove(id, req.user!.id);
     dropChannel(id);
@@ -149,8 +160,9 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     try {
       // The question and whatever was answered to it
       const cut = convRepo.truncateFrom(id, req.user!.id, at.seq);
+      let rules: string[] = [];
       try {
-        rememberDiscarded(id, cut);
+        rules = rememberDiscarded(id, cut);
         const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
         reply.code(202);
         return { turnId, userMessage };
@@ -159,6 +171,10 @@ export function registerConversationRoutes(app: FastifyInstance): void {
         // question goes back. It is the only copy, and answering 402 over the space where it
         // used to be loses what somebody typed for a reason that has nothing to do with it.
         convRepo.restoreMessages(id, req.user!.id, cut);
+        // And so do the rules. Restoring the answer without them leaves it on screen and in
+        // the database while the gateway cuts it out of every later request — a conversation
+        // the model cannot see, with nothing to undo it.
+        trimsRepo.forget(id, rules);
         throw err;
       }
     } catch (err) {
@@ -198,8 +214,9 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       // one, and a retry that left the old row behind would show it twice
       const cut = convRepo.truncateFrom(id, req.user!.id, last.seq);
       const before = convRepo.meta(id, req.user!.id);
+      let rules: string[] = [];
       try {
-        rememberDiscarded(id, cut);
+        rules = rememberDiscarded(id, cut);
         // The retry has to run on the model it was retried *with*, so this lands before the
         // turn — and comes back off below if the turn never started. It used to be written
         // outside the try, where a refusal left the conversation on a model the interface
@@ -210,6 +227,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
         return { turnId, userMessage };
       } catch (err) {
         convRepo.restoreMessages(id, req.user!.id, cut);
+        trimsRepo.forget(id, rules);
         // Only the keys the retry set, and an empty string where there was nothing before —
         // `update` ignores undefined, so passing it through would leave the new value standing
         if (before && Object.keys(settings).length) {
@@ -236,8 +254,10 @@ export function registerConversationRoutes(app: FastifyInstance): void {
    * selection becomes its first question. It is not a branch; nothing is copied, and the
    * two conversations see each other's turns through the shared transcript.
    *
-   * One turn at a time per family, like one turn at a time per conversation: the shared
-   * session cannot take two writes.
+   * A thread runs beside the conversation, not instead of it. It has its own session, so
+   * there is nothing shared to wedge and no reason to ask whether the parent is busy —
+   * asking a side question while the main answer is still coming is the case the feature
+   * exists for. `startTurn` still refuses a second turn in the thread itself.
    */
   /** The quoted part of a thread's opening prompt, without the `>` markers */
   const quotedPassage = (text: string): string =>
@@ -255,8 +275,6 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
     const parent = convRepo.meta(id, req.user!.id);
     if (!parent) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id))
-      return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     const child = convRepo.create({
       userId: req.user!.id,
@@ -304,6 +322,14 @@ export function registerConversationRoutes(app: FastifyInstance): void {
         conversation: convRepo.full(child.id, req.user!.id),
       };
     } catch (err) {
+      /*
+       * The row was created before the turn, because the turn needs somewhere to put its
+       * messages. A turn that never starts leaves it empty, and an empty thread is not
+       * something anybody can act on: no question to read, no answer to wait for, and the
+       * panel that lists threads has no way to delete one. Three refused clicks used to mean
+       * three of them in the list for good.
+       */
+      convRepo.remove(child.id, req.user!.id);
       if (err instanceof turns.QuotaExceededError) {
         return reply.code(402).send({ error: err.message, quota: err.status });
       }
@@ -545,11 +571,15 @@ export function registerConversationRoutes(app: FastifyInstance): void {
 function rememberDiscarded(
   conversationId: string,
   cut: Array<{ role: string; blocks: Array<{ kind?: string; text?: string }> }>,
-): void {
+): string[] {
+  const written: string[] = [];
   for (const m of cut) {
     if (m.role !== 'assistant') continue;
-    for (const rule of trimRulesFor(m)) trimsRepo.add(conversationId, rule);
+    for (const rule of trimRulesFor(m)) {
+      if (trimsRepo.add(conversationId, rule)) written.push(rule);
+    }
   }
+  return written;
 }
 
 function trimRulesFor(m: { blocks: Array<{ kind?: string; text?: string }> }): string[] {
