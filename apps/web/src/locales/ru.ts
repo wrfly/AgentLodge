@@ -621,4 +621,31 @@ export const ru: Record<string, string> = {
   '{n} waiting': '{n} в очереди',
   '{n} failed upstream': '{n} с ошибкой вверх по потоку',
   'this window has ended': 'это окно закончилось',
+
+  // Editing a question already asked, and asking one again
+  'Replaces the answer below': 'Заменит ответ ниже',
+  'Branches into a new conversation': 'Ветвится в новый разговор',
+
+  'The workspace could not be copied, so this conversation starts with an empty directory': 'Не удалось скопировать рабочую область, поэтому новый разговор начинается с пустой папки',
+  'Branch': 'Ветвить',
+  'Edit and ask again': 'Исправить и спросить снова',
+  'Edit, branching from here': 'Изменить, ответвившись отсюда',
+  'Answer again': 'Ответить заново',
+  'Retry': 'Заново',
+
+  // The thread opened on a selection
+  'Ask about this': 'Спросить об этом',
+  'Thread': 'Ветка',
+  'Threads': 'Ветки',
+
+  'All threads': 'Все ветки',
+
+  'No threads yet. Select a passage in the conversation to start one.': 'Веток пока нет. Выделите фрагмент разговора, чтобы начать.',
+  'Tell me more about this.': 'Расскажи об этом подробнее.',
+
+
+
+  'What do you want to know about it?': 'Что вы хотите об этом узнать?',
+
+  'Ask': 'Спросить',
 };

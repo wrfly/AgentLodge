@@ -85,4 +85,9 @@ export const es: Record<string, string> = {
   'Upstream "{name}" has no credential configured; ask an administrator': 'El upstream «{name}» no tiene credencial configurada; avisa a un administrador',
   'No such model': 'No existe ese modelo',
   'That window has no ceiling, so a top-up would do nothing — set a limit first': 'Esta ventana no tiene techo, así que una recarga no haría nada: fija primero un límite',
+  'No such message': 'No existe ese mensaje',
+
+  'Only a question can be edited': 'Solo se puede editar una pregunta propia',
+
+  'There is nothing to retry yet': 'Todavía no hay nada que reintentar',
 };

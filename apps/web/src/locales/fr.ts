@@ -594,4 +594,31 @@ export const fr: Record<string, string> = {
   '{n} waiting': '{n} en attente',
   '{n} failed upstream': '{n} en échec côté amont',
   'this window has ended': 'cette fenêtre est terminée',
+
+  // Editing a question already asked, and asking one again
+  'Replaces the answer below': 'Remplace la réponse ci-dessous',
+  'Branches into a new conversation': 'Bifurque vers une nouvelle conversation',
+
+  'The workspace could not be copied, so this conversation starts with an empty directory': "L'espace de travail n'a pas pu être copié, cette nouvelle conversation commence donc avec un dossier vide",
+  'Branch': 'Bifurquer',
+  'Edit and ask again': 'Corriger et redemander',
+  'Edit, branching from here': 'Modifier, en bifurquant d’ici',
+  'Answer again': 'Répondre à nouveau',
+  'Retry': 'Réessayer',
+
+  // The thread opened on a selection
+  'Ask about this': 'Poser une question là-dessus',
+  'Thread': 'Fil',
+  'Threads': 'Fils',
+
+  'All threads': 'Tous les fils',
+
+  'No threads yet. Select a passage in the conversation to start one.': 'Aucun fil pour l’instant. Sélectionnez un passage de la conversation pour en ouvrir un.',
+  'Tell me more about this.': 'Dis-m’en plus à ce sujet.',
+
+
+
+  'What do you want to know about it?': 'Que voulez-vous savoir à ce sujet ?',
+
+  'Ask': 'Demander',
 };

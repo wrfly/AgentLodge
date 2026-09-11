@@ -594,4 +594,31 @@ export const de: Record<string, string> = {
   '{n} waiting': '{n} warten',
   '{n} failed upstream': '{n} beim Upstream fehlgeschlagen',
   'this window has ended': 'dieses Fenster ist vorbei',
+
+  // Editing a question already asked, and asking one again
+  'Replaces the answer below': 'Ersetzt die Antwort darunter',
+  'Branches into a new conversation': 'Verzweigt in ein neues Gespräch',
+
+  'The workspace could not be copied, so this conversation starts with an empty directory': 'Der Arbeitsbereich konnte nicht kopiert werden, daher startet dieser neue Chat mit einem leeren Verzeichnis',
+  'Branch': 'Verzweigen',
+  'Edit and ask again': 'Ändern und neu fragen',
+  'Edit, branching from here': 'Ändern, von hier aus verzweigend',
+  'Answer again': 'Neu antworten',
+  'Retry': 'Wiederholen',
+
+  // The thread opened on a selection
+  'Ask about this': 'Dazu nachfragen',
+  'Thread': 'Thread',
+  'Threads': 'Threads',
+
+  'All threads': 'Alle Threads',
+
+  'No threads yet. Select a passage in the conversation to start one.': 'Noch keine Threads. Markieren Sie eine Stelle im Gespräch, um einen zu beginnen.',
+  'Tell me more about this.': 'Erzähl mir mehr darüber.',
+
+
+
+  'What do you want to know about it?': 'Was möchten Sie darüber wissen?',
+
+  'Ask': 'Fragen',
 };

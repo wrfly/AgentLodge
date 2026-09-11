@@ -85,4 +85,9 @@ export const ja: Record<string, string> = {
   'Upstream "{name}" has no credential configured; ask an administrator': 'アップストリーム「{name}」に認証情報が設定されていません。管理者に連絡してください',
   'No such model': 'そのモデルはありません',
   'That window has no ceiling, so a top-up would do nothing — set a limit first': 'このウィンドウには上限がないため、追加しても効きません。先に上限を設定してください',
+  'No such message': 'そのメッセージはありません',
+
+  'Only a question can be edited': '編集できるのは自分の質問だけです',
+
+  'There is nothing to retry yet': 'まだ再試行できるものがありません',
 };

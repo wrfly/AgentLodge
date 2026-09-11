@@ -59,6 +59,8 @@ import { fetchModels } from './models.js';
 import { startModelRefresh } from './model-refresh.js';
 import * as modelsRepo from '../core/db/models.js';
 import * as providersRepo from '../core/db/providers.js';
+import * as trimsRepo from '../core/db/trims.js';
+import { trimRedoAnswers } from './redo-trim.js';
 
 /**
  * The metering gateway.
@@ -416,11 +418,19 @@ async function handleProxy(
      * the proxy, and the question is about the vendor at the other end of it.
      */
     const sent = withThinking(renamed, claims.thinking, speaksAdaptiveThinking(target.url));
+    /*
+     * An answer the user asked to replace. The CLI's transcript cannot be edited, so it
+     * keeps sending the discarded reply on every later request; cut it here, on the one
+     * body this conversation's traffic all passes through. A rule that no longer matches —
+     * compaction rewrote the text, say — leaves the request as it stood.
+     */
+    const redoMatches = claims.cid ? trimsRepo.forConversation(claims.cid) : [];
+    const trimmed = redoMatches.length ? trimRedoAnswers(sent, redoMatches) : sent;
     const outbound = !target.translate
-      ? sent
+      ? trimmed
       : wire === 'anthropic'
-        ? anthropicRequestToChat(sent as AnthropicRequest, reqModel)
-        : responsesRequestToChat(sent as ResponsesRequest, reqModel);
+        ? anthropicRequestToChat(trimmed as AnthropicRequest, reqModel)
+        : responsesRequestToChat(trimmed as ResponsesRequest, reqModel);
 
     // null was already refused above, so this cannot fall back to a direct connection
     const egress = egressTarget(target)!;

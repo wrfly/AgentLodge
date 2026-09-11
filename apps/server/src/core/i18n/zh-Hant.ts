@@ -89,4 +89,9 @@ export const zhHant: Record<string, string> = {
   'Upstream "{name}" has no credential configured; ask an administrator': '上游「{name}」沒有設定憑證，請找管理員',
   'No such model': '沒有這個模型',
   'That window has no ceiling, so a top-up would do nothing — set a limit first': '這個視窗沒有上限，加量不會生效——先設一個限額',
+  'No such message': '沒有這條訊息',
+
+  'Only a question can be edited': '只能編輯自己的提問',
+
+  'There is nothing to retry yet': '還沒有可以重試的內容',
 };

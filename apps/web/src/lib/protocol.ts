@@ -88,6 +88,15 @@ export interface QuotaWindow {
   exceeded: boolean;
 }
 
+/** A thread opened on a passage inside a conversation */
+export interface ThreadSummary {
+  id: string;
+  createdAt: string;
+  messageCount: number;
+  /** The passage it was opened on — its own first message */
+  about: string;
+}
+
 export interface QuotaStatus {
   limitKind: LimitKind;
   currency: string;
@@ -160,6 +169,8 @@ export interface ConversationSummary {
   createdAt: string;
   updatedAt: string;
   messageCount: number;
+  /** The conversation this one is a sub-conversation of; absent for an ordinary one */
+  parentId?: string;
 }
 
 export interface Conversation extends ConversationSummary {

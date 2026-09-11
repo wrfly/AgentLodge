@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { currentSeq, dropChannel, liveStartSeq, subscribe } from '../../core/events.js';
 import { defaultAgent, isAgentId, isEnabledAgent } from '../agents/registry.js';
 import * as convRepo from '../../core/db/conversations.js';
+import * as trimsRepo from '../../core/db/trims.js';
 import * as turns from '../turns.js';
 import * as quota from '../../core/quota.js';
 import { requireUser } from '../../core/auth/guard.js';
@@ -46,7 +47,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const conv = convRepo.full(id, req.user!.id);
     if (!conv) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    return { ...conv, busy: turns.isBusy(id) };
+    return { ...conv, busy: turns.isBusy(id, req.user!.id) };
   });
 
   app.patch('/api/conversations/:id', guard, async (req, reply) => {
@@ -76,12 +77,18 @@ export function registerConversationRoutes(app: FastifyInstance): void {
 
   app.delete('/api/conversations/:id', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    turns.abortConversation(id);
+    const conv = convRepo.meta(id, req.user!.id);
+    if (!conv) return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    turns.abortConversation(id, req.user!.id);
     convRepo.remove(id, req.user!.id);
     dropChannel(id);
-    // The working directory goes with it, or disk use only ever grows
-    await fs.rm(turns.workspaceDir(req.user!.id, id), { recursive: true, force: true });
+    // The working directory goes with it, or disk use only ever grows. A sub-conversation
+    // does not have one of its own — its directory is the parent's, and deleting the child
+    // has to leave the parent's files alone. (Deleting the parent takes the directory, and
+    // the cascade takes the children's rows with it.)
+    if (!conv.parentId) {
+      await fs.rm(turns.workspaceDir(req.user!.id, id), { recursive: true, force: true });
+    }
     return reply.code(204).send();
   });
 
@@ -93,7 +100,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const text = (body.text ?? '').trim();
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     try {
       const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
@@ -107,10 +114,157 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     }
   });
 
+  /**
+   * Edit something already asked.
+   *
+   * Which of two things that means is decided here rather than offered as a choice, because
+   * the position says the intent. Correcting the newest question means the answer to it was
+   * to the wrong question: it goes, and the corrected one is asked in its place. Editing
+   * something from several turns back is not a correction — the exchanges after it happened,
+   * and somebody may still want them — so it branches instead.
+   */
+  app.post('/api/conversations/:id/messages/:messageId/edit', guard, async (req, reply) => {
+    const { id, messageId } = req.params as { id: string; messageId: string };
+    const body = (req.body ?? {}) as { text?: string };
+    const text = (body.text ?? '').trim();
+    if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
+    if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+
+    const at = convRepo.messageAt(id, req.user!.id, messageId);
+    if (!at) return reply.code(404).send({ error: tr(req, 'No such message') });
+    if (at.role !== 'user') return reply.code(400).send({ error: tr(req, 'Only a question can be edited') });
+
+    const last = convRepo.lastUserMessage(id, req.user!.id);
+    const inPlace = last?.id === messageId;
+
+    try {
+      if (!inPlace) {
+        const r = await turns.forkAt(id, req.user!.id, messageId, text);
+        reply.code(202);
+        return { forked: true, ...r };
+      }
+      // The question and whatever was answered to it. The answer's text is kept for the
+      // gateway: the CLI's transcript still holds it, and without the rule the model would
+      // see — and tend to repeat — the very reply the user just discarded.
+      const answer = convRepo.lastAssistantMessage(id, req.user!.id);
+      convRepo.truncateFrom(id, req.user!.id, at.seq);
+      if (answer) trimsRepo.add(id, textOf(answer));
+      const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
+      reply.code(202);
+      return { forked: false, turnId, userMessage };
+    } catch (err) {
+      if (err instanceof turns.QuotaExceededError) {
+        return reply.code(402).send({ error: err.message, quota: err.status });
+      }
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  /**
+   * Ask the newest question again, optionally somewhere else.
+   *
+   * The model and effort are part of it on purpose: the usual reason to retry is that the
+   * answer was not good enough, and the usual next move is a bigger model. Making that one
+   * action rather than "change the setting, then retry" is the difference between the button
+   * being useful and being a refresh.
+   */
+  app.post('/api/conversations/:id/retry', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { model?: string; effort?: string };
+    if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    if (turns.isBusy(id, req.user!.id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+
+    const last = convRepo.lastUserMessage(id, req.user!.id);
+    if (!last) return reply.code(400).send({ error: tr(req, 'There is nothing to retry yet') });
+    const text = last.blocks.map((b) => (b.kind === 'text' ? b.text : '')).join('').trim();
+    if (!text) return reply.code(400).send({ error: tr(req, 'There is nothing to retry yet') });
+
+    if (body.model !== undefined || body.effort !== undefined) {
+      convRepo.update(id, req.user!.id, {
+        ...(body.model !== undefined ? { model: body.model } : {}),
+        ...(body.effort !== undefined ? { effort: body.effort } : {}),
+      });
+    }
+
+    try {
+      // The question goes too, and is asked again — `startTurn` is the only thing that stores
+      // one, and a retry that left the old row behind would show it twice. The discarded
+      // answer is captured first, so the gateway can drop it from the CLI's later requests.
+      const answer = convRepo.lastAssistantMessage(id, req.user!.id);
+      convRepo.truncateFrom(id, req.user!.id, last.seq);
+      if (answer) trimsRepo.add(id, textOf(answer));
+      const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
+      reply.code(202);
+      return { turnId, userMessage };
+    } catch (err) {
+      if (err instanceof turns.QuotaExceededError) {
+        return reply.code(402).send({ error: err.message, quota: err.status });
+      }
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  /**
+   * Open a sub-conversation on a selection.
+   *
+   * A sub-conversation is a thread on the same work: it shares the parent's working
+   * directory and CLI session — the model keeps everything it already knew — and the
+   * selection becomes its first question. It is not a branch; nothing is copied, and the
+   * two conversations see each other's turns through the shared transcript.
+   *
+   * One turn at a time per family, like one turn at a time per conversation: the shared
+   * session cannot take two writes.
+   */
+  app.post('/api/conversations/:id/sub', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { text?: string };
+    const text = (body.text ?? '').trim();
+    if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
+    const parent = convRepo.meta(id, req.user!.id);
+    if (!parent) return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    if (turns.isBusy(id, req.user!.id))
+      return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
+
+    const child = convRepo.create({
+      userId: req.user!.id,
+      agent: parent.agent,
+      model: parent.model,
+      effort: parent.effort,
+      thinking: parent.thinking,
+      parentId: id,
+    });
+
+    try {
+      const { turnId, userMessage } = await turns.startTurn(child.id, req.user!.id, text);
+      reply.code(202);
+      return { conversationId: child.id, turnId, userMessage, conversation: convRepo.full(child.id, req.user!.id) };
+    } catch (err) {
+      if (err instanceof turns.QuotaExceededError) {
+        return reply.code(402).send({ error: err.message, quota: err.status });
+      }
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  /**
+   * The threads opened inside this conversation.
+   *
+   * Threads are deliberately absent from the sidebar — a thread is part of the conversation
+   * it was opened in, not a conversation of its own — which left them with no way back once
+   * their panel was closed. They are listed from here instead.
+   */
+  app.get('/api/conversations/:id/threads', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!convRepo.exists(id, req.user!.id))
+      return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    return convRepo.listThreads(id, req.user!.id);
+  });
+
   app.post('/api/conversations/:id/abort', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    if (!turns.abortConversation(id))
+    if (!turns.abortConversation(id, req.user!.id))
       return reply.code(404).send({ error: tr(req, 'Nothing is running in this conversation') });
     return { ok: true };
   });
@@ -284,6 +438,11 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       return reply.code(400).send({ error: tr(req, 'Invalid path') });
     return { ok: true, files: await workspace.list(req.user!.id, id) };
   });
+}
+
+/** What a message says, as the gateway will see it on the wire: its text blocks, joined */
+function textOf(m: { blocks: Array<{ kind?: string; text?: string }> }): string {
+  return m.blocks.map((b) => (b.kind === 'text' ? b.text ?? '' : '')).join('');
 }
 
 /** Render a conversation as Markdown, for keeping or sharing */
