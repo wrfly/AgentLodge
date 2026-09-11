@@ -70,7 +70,6 @@ export const zhHant: Record<string, string> = {
   'Every conversation has its own working directory. {label} can read and write files and run commands in it.': '每個對話有自己的工作目錄。{label} 可以在裡面讀寫檔案、執行指令。',
   '{label} is not connected': '{label} 未連線',
   'The command-line tool was not found on this machine.': '這台機器上找不到命令列工具。',
-  'Total usage for this conversation': '這個對話的總用量',
   'Open sidebar': '展開側邊欄',
   'Event stream dropped — reconnecting': '事件串流中斷——正在重連',
   Reconnecting: '重新連線中',
@@ -622,4 +621,9 @@ export const zhHant: Record<string, string> = {
 
   'Put this in the message box, to send on to the conversation': '放進下面的輸入框，由你確認後發給主對話',
   'Stop': '停止',
+  'What this conversation has cost': '這條對話花了多少',
+
+  'Cache': '快取',
+
+  'Priced from the model price table.': '按模型價格表計算。',
 };

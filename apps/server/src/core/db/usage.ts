@@ -369,6 +369,28 @@ export function hourlyForUserRange(userId: string, range: Range): HourlyPoint[] 
   ).map((r) => ({ hour: r.hour, ...toTotals(r) }));
 }
 
+/**
+ * What one conversation cost, split by the model that answered.
+ *
+ * From `usage_records`, which is what the usage page and the quota both read, so the figure
+ * in the chat header is the same figure they are. The header used to add up
+ * `message.usage.costUsd` — the CLI's own report of what it spent — which is a different
+ * number in a different currency from the one this deployment bills in.
+ *
+ * A turn with no model recorded groups under an empty name; the interface reads that as
+ * "whatever the CLI picked".
+ */
+export function byModelForConversation(conversationId: string): Array<Totals & { model: string }> {
+  return all<TotalsRow & { model: string | null }>(
+    `select coalesce(model, '') as model, ${SUM()}
+       from usage_records
+      where conversation_id = ?
+      group by coalesce(model, '')
+      order by cost_micro desc`,
+    conversationId,
+  ).map((r) => ({ model: r.model ?? '', ...toTotals(r) }));
+}
+
 export interface AgentBreakdown extends Totals {
   agent: string;
   model: string | null;

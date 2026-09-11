@@ -75,7 +75,9 @@ function UsageFooter({ usage }: { usage: NonNullable<ChatMessage['usage']> }) {
 
   return (
     <div
-      className="mt-2 flex gap-3 font-mono text-[11px] text-faint opacity-0 transition-opacity group-hover/msg:opacity-100"
+      // No margin of its own: the row it sits in owns the spacing, and a `mt-2` here pushed
+      // the figures half a line below the buttons beside them
+      className="flex gap-3 font-mono text-[11.5px] text-faint opacity-0 transition-opacity group-hover/msg:opacity-100"
       title={t('in {in} · cache read {read} · cache write {write} · out {out}', {
         in: usage.inputTokens,
         read: usage.cacheReadTokens,
@@ -228,7 +230,7 @@ function CarryButton({ message }: { message: ChatMessage }) {
         closeSub();
       }}
       title={t('Put this in the message box, to send on to the conversation')}
-      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100"
+      className="flex items-center gap-1 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100"
     >
       <CornerUpLeft size={11} />
       {t('Take back')}
@@ -251,7 +253,7 @@ function RetryButton() {
       onClick={() => { setBusy(true); void retry().finally(() => setBusy(false)); }}
       disabled={busy}
       title={t('Answer again')}
-      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100 disabled:opacity-40"
+      className="flex items-center gap-1 text-[11.5px] text-faint opacity-0 transition hover:text-muted group-hover/msg:opacity-100 disabled:opacity-40"
     >
       <RotateCcw size={11} />
       {t('Retry')}
@@ -310,7 +312,7 @@ export const Message = memo(function Message({
         </div>
       )}
 
-      <div className="mt-1 flex items-center gap-2">
+      <div className="mt-2 flex items-center gap-3">
         {message.usage && !message.pending && <UsageFooter usage={message.usage} />}
         {isLatest && !message.pending && !inThread && <RetryButton />}
         {inThread && !message.pending && <CarryButton message={message} />}

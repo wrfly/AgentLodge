@@ -255,6 +255,12 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
+  /** What this conversation has cost, split by the model that answered */
+  conversationUsage: (id: string) =>
+    request<{ currency: string; byModel: Array<UsageTotals & { model: string }> }>(
+      `/api/conversations/${id}/usage`,
+    ),
+
   /** The threads opened inside this conversation, newest first */
   threads: (id: string) => request<ThreadSummary[]>(`/api/conversations/${id}/threads`),
 

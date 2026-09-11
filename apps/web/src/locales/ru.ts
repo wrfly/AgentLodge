@@ -76,7 +76,6 @@ export const ru: Record<string, string> = {
   'Every conversation has its own working directory. {label} can read and write files and run commands in it.': 'У каждой беседы своя рабочая директория: {label} может читать и изменять файлы и выполнять в ней команды.',
   '{label} is not connected': '{label} не подключён',
   'The command-line tool was not found on this machine.': 'Соответствующая утилита командной строки на этой машине не найдена.',
-  'Total usage for this conversation': 'Суммарное использование в этой беседе',
   'Open sidebar': 'Открыть панель',
   'Event stream dropped — reconnecting': 'Поток событий прерван — переподключение',
   Reconnecting: 'Переподключение',
@@ -648,4 +647,9 @@ export const ru: Record<string, string> = {
 
   'Put this in the message box, to send on to the conversation': 'Поместить в поле ввода, чтобы отправить в разговор',
   'Stop': 'Стоп',
+  'What this conversation has cost': 'Во что обошёлся этот разговор',
+
+  'Cache': 'Кэш',
+
+  'Priced from the model price table.': 'Рассчитано по таблице цен на модели.',
 };

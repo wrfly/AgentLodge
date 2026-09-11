@@ -76,7 +76,6 @@ export const ja: Record<string, string> = {
   'Every conversation has its own working directory. {label} can read and write files and run commands in it.': '会話ごとに独立した作業ディレクトリがあり、{label} はその中でファイルの読み書きやコマンドの実行ができます。',
   '{label} is not connected': '{label} は未接続です',
   'The command-line tool was not found on this machine.': 'このマシンに対応するコマンドラインツールが見つかりません。',
-  'Total usage for this conversation': 'この会話の累計使用量',
   'Open sidebar': 'サイドバーを開く',
   'Event stream dropped — reconnecting': 'イベントストリームが切断されました。再接続しています',
   Reconnecting: '再接続中',
@@ -648,4 +647,9 @@ export const ja: Record<string, string> = {
 
   'Put this in the message box, to send on to the conversation': '入力欄に入れます。確認してから会話に送れます',
   'Stop': '停止',
+  'What this conversation has cost': 'この会話にかかった費用',
+
+  'Cache': 'キャッシュ',
+
+  'Priced from the model price table.': 'モデル価格表に基づく算出。',
 };

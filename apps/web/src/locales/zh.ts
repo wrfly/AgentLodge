@@ -76,7 +76,6 @@ export const zh: Record<string, string> = {
   'Every conversation has its own working directory. {label} can read and write files and run commands in it.': '每个会话都有自己独立的工作目录，{label} 可以在里面读写文件、执行命令。',
   '{label} is not connected': '{label} 未接入',
   'The command-line tool was not found on this machine.': '本机没有找到对应的命令行工具。',
-  'Total usage for this conversation': '本会话累计用量',
   'Open sidebar': '打开侧栏',
   'Event stream dropped — reconnecting': '事件流已断开，正在自动重连',
   Reconnecting: '重连中',
@@ -648,4 +647,9 @@ export const zh: Record<string, string> = {
 
   'Put this in the message box, to send on to the conversation': '放进下面的输入框，由你确认后发给主对话',
   'Stop': '停止',
+  'What this conversation has cost': '这条对话花了多少',
+
+  'Cache': '缓存',
+
+  'Priced from the model price table.': '按模型价格表计算。',
 };

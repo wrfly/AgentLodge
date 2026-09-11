@@ -5,6 +5,8 @@ import type { FastifyInstance } from 'fastify';
 import { currentSeq, dropChannel, liveStartSeq, subscribe } from '../../core/events.js';
 import { defaultAgent, isAgentId, isEnabledAgent } from '../agents/registry.js';
 import * as convRepo from '../../core/db/conversations.js';
+import { getString } from '../../core/db/settings.js';
+import * as usageRepo from '../../core/db/usage.js';
 import * as trimsRepo from '../../core/db/trims.js';
 import * as turns from '../turns.js';
 import * as quota from '../../core/quota.js';
@@ -372,6 +374,24 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   });
 
   /** Checked before sending, so the composer can be disabled when the quota is short */
+  /**
+   * What this conversation has cost, split by the model that answered.
+   *
+   * From `usage_records` and the price table, which is where the usage page and the quota
+   * read from too. The header used to add up what the CLI reported spending, so the same
+   * conversation carried two different figures in two different currencies depending on
+   * which page you were looking at.
+   */
+  app.get('/api/conversations/:id/usage', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!convRepo.exists(id, req.user!.id))
+      return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    return {
+      currency: getString('billing.currency', 'USD'),
+      byModel: usageRepo.byModelForConversation(id),
+    };
+  });
+
   app.get('/api/conversations/:id/quota', guard, async (req) => quota.status(req.user!.id));
 
   /** Export as Markdown */

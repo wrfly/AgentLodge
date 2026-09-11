@@ -69,7 +69,6 @@ export const pt: Record<string, string> = {
   'Every conversation has its own working directory. {label} can read and write files and run commands in it.': 'Cada conversa tem o seu próprio diretório de trabalho. O {label} pode ler e escrever ficheiros e executar comandos lá dentro.',
   '{label} is not connected': 'O {label} não está ligado',
   'The command-line tool was not found on this machine.': 'A ferramenta de linha de comandos não foi encontrada nesta máquina.',
-  'Total usage for this conversation': 'Utilização total desta conversa',
   'Open sidebar': 'Abrir a barra lateral',
   'Event stream dropped — reconnecting': 'O fluxo de eventos caiu — a religar',
   Reconnecting: 'A religar',
@@ -621,4 +620,9 @@ export const pt: Record<string, string> = {
 
   'Put this in the message box, to send on to the conversation': 'Pôr na caixa de mensagem, para enviar à conversa',
   'Stop': 'Parar',
+  'What this conversation has cost': 'Quanto custou esta conversa',
+
+  'Cache': 'Cache',
+
+  'Priced from the model price table.': 'Calculado pela tabela de preços dos modelos.',
 };
