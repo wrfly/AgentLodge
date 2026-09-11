@@ -38,6 +38,7 @@ const startOfDay = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), d.
  * Always in the server's local timezone, so it agrees with daily totals and quota periods.
  */
 function resolveRange(
+  userId: string,
   preset: RangePreset,
   /*
    * Required, so that no preset can fall back to a window of its own invention. The five-hour
@@ -83,7 +84,16 @@ function resolveRange(
     case 'last30':
       return { from: iso(new Date(today.getTime() - 29 * day)), to: endOfToday, label: 'Last 30 days' };
     case 'all':
-      return { from: '1970-01-01T00:00:00.000Z', to: endOfToday, label: 'All time' };
+      /*
+       * Where this account's history actually starts. Written as 1970 before, which made the
+       * range twenty thousand days long — harmless while the chart only drew the days that
+       * had usage, and three megabytes of empty buckets once it stopped skipping them.
+       */
+      return {
+        from: usageRepo.firstRecordFor(userId) ?? iso(today),
+        to: endOfToday,
+        label: 'All time',
+      };
     case 'custom': {
       // A bare date (YYYY-MM-DD) means whole local days, with `to` inclusive
       const from = fromRaw ? new Date(fromRaw.length === 10 ? `${fromRaw}T00:00:00` : fromRaw) : today;
@@ -127,7 +137,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
     const q = req.query as { preset?: RangePreset; from?: string; to?: string };
     const quotaStatus = quota.status(userId);
 
-    const range = resolveRange(q.preset ?? 'quota', quotaStatus, q.from, q.to);
+    const range = resolveRange(userId, q.preset ?? 'quota', quotaStatus, q.from, q.to);
     const window = { from: range.from, to: range.to };
 
     // Two days or less is shown hourly, longer spans daily — grouping "today" by day is one bar
@@ -145,8 +155,8 @@ export function registerMeRoutes(app: FastifyInstance): void {
       byConversation: usageRepo.byConversationForUser(userId, 10, window),
       /** A few figures people look at often, so the frontend does not fire several requests */
       quick: {
-        today: usageRepo.totalsForUser(userId, resolveRange('today', quotaStatus)),
-        month: usageRepo.totalsForUser(userId, resolveRange('month', quotaStatus)),
+        today: usageRepo.totalsForUser(userId, resolveRange(userId, 'today', quotaStatus)),
+        month: usageRepo.totalsForUser(userId, resolveRange(userId, 'month', quotaStatus)),
         allTime: usageRepo.totalsForUser(userId),
       },
     };

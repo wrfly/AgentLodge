@@ -165,6 +165,45 @@ console.log('\n=== One person\'s chart covers the period, not just the days they
   ok('the first bucket is the start of the range', series[0]?.t === dayKey(from), `${series[0]?.t} vs ${dayKey(from)}`);
 }
 
+console.log('\n=== A range nobody could chart is not filled in ===');
+{
+  /*
+   * Filling the gaps turned "All time" — written as `from: 1970-01-01` in the route — into
+   * 20 708 daily buckets and a 3.3 MB response, measured. Two answers to that, and both are
+   * here: the route now starts that range at the account's first record, and the padding
+   * itself refuses a range longer than a chart could draw, handing back the rows as they came.
+   */
+  const dave = users.create({
+    email: 'd@example.com', username: 'dave', passwordHash: 'x', role: 'user',
+  }).id;
+  ok('an account that has spent nothing has no first record',
+    usage.firstRecordFor(dave) === undefined, String(usage.firstRecordFor(dave)));
+
+  const at = new Date();
+  at.setHours(9, 0, 0, 0);
+  const before = new Date().toISOString();
+  usage.record({ userId: dave, agent: 'claude', status: 'completed', usage: SPEND });
+  run(`update usage_records set created_at = ?, day = ? where user_id = ? and created_at >= ?`,
+    at.toISOString(), dayKey(at), dave, before);
+  ok('and one that has, has one', usage.firstRecordFor(dave) === at.toISOString(),
+    String(usage.firstRecordFor(dave)));
+
+  const epoch = { from: '1970-01-01T00:00:00.000Z', to: new Date(at.getTime() + 3600_000).toISOString() };
+  const wild = usage.seriesForUserInRange(dave, epoch, 'day');
+  ok('a range back to the epoch comes back unpadded, not with twenty thousand buckets',
+    wild.length === 1, String(wild.length));
+  ok('and still adds up to the total',
+    wild.reduce((n, p) => n + p.billableTokens, 0) === usage.totalsForUser(dave, epoch).billableTokens);
+
+  // The cap is on the range, not on how much of it was used: a month is still filled in
+  const monthAgo = new Date(at);
+  monthAgo.setDate(monthAgo.getDate() - 29);
+  monthAgo.setHours(0, 0, 0, 0);
+  const month = usage.seriesForUserInRange(
+    dave, { from: monthAgo.toISOString(), to: epoch.to }, 'day');
+  ok('a month still gets one bucket per day', month.length === 30, String(month.length));
+}
+
 console.log('\n=== The breakdown adds up to the total printed above it ===');
 {
   /*

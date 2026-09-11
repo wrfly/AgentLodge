@@ -223,6 +223,20 @@ export function totalsForUser(userId: string, range?: Range | string): Totals {
   );
 }
 
+/**
+ * When this account first spent anything, or undefined if it never has.
+ *
+ * "All time" used to be written as 1970 in the route, which is only ever right by accident:
+ * the label claims a period the account did not exist for, and filling the gaps in it means
+ * twenty thousand empty days.
+ */
+export function firstRecordFor(userId: string): string | undefined {
+  return get<{ first: string | null }>(
+    'select min(created_at) as first from usage_records where user_id = ?',
+    userId,
+  )?.first ?? undefined;
+}
+
 export function totalsAll(since?: string): Totals {
   return toTotals(
     get<TotalsRow>(
@@ -513,6 +527,17 @@ export function dailyAllInRange(range: Range): DailyPoint[] {
  *
  * Walking the calendar from the server's own bucket keys sidesteps all three.
  */
+/**
+ * More buckets than a chart can draw, past which filling the gaps is not worth the response.
+ *
+ * `All time` starts at the account's first record, so this is normally the ceiling nobody
+ * reaches. It exists because a range that reaches back to the epoch produces 20 000 daily
+ * buckets and three megabytes of zeroes — measured, from one caller passing 1970 as `from`.
+ * Beyond the cap the rows go out as they came, which is what every chart here did before the
+ * gaps were filled at all.
+ */
+const MAX_BUCKETS = 1_000;
+
 function padded<T extends { t: string }>(
   rows: T[],
   from: string,
@@ -524,6 +549,7 @@ function padded<T extends { t: string }>(
   const step = unit === 'hour' ? 3600_000 : 86400_000;
   const start = new Date(from);
   const end = Math.min(new Date(to).getTime(), Date.now());
+  if ((end - start.getTime()) / step > MAX_BUCKETS) return rows;
   // Anchor on the bucket the range starts inside, not on `from` itself
   if (unit === 'hour') start.setMinutes(0, 0, 0);
   else start.setHours(0, 0, 0, 0);
