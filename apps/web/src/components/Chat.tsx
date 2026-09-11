@@ -224,6 +224,7 @@ export function Chat({ agent }: { agent: AgentId }) {
             {t('Reconnecting')}
           </span>
         )}
+        <SessionTotals />
         {/* The way to a thread that was closed. Threads are not in the sidebar — a thread
             belongs to the conversation it was opened in — so without this the only way to
             one is selecting the same passage, and that opens a second thread rather than
@@ -254,7 +255,6 @@ export function Chat({ agent }: { agent: AgentId }) {
             <FolderOpen size={16} />
           </button>
         )}
-        <SessionTotals />
       </header>
 
       {error && (
