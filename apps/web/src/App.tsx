@@ -117,12 +117,16 @@ function Shell({ route }: { route: Route }) {
    * it opened the usage page, which queries afresh, so the two numbers on screen disagreed —
    * and the stale one was the one that looked authoritative.
    *
+   * Keyed on the whole route rather than its name, so switching agent or admin tab counts as
+   * navigation too. The conversation is not in the URL at all, so selecting one is handled
+   * where that happens — see `select` in the chat store.
+   *
    * It is three aggregate queries, on navigation, which is rare and is exactly the moment
    * somebody is about to read it.
    */
   useEffect(() => {
     void refreshQuota();
-  }, [route.name, refreshQuota]);
+  }, [route, refreshQuota]);
 
   /*
    * The sidebar renders on every route, but the bootstrap that fills the

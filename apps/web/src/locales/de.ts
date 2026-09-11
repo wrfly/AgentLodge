@@ -215,7 +215,7 @@ export const de: Record<string, string> = {
   Custom: 'Eigener Zeitraum',
   Query: 'Abfragen',
   '{turns} turns · {calls} upstream calls · input {input} · cache {cache} · output': '{turns} Züge · {calls} Upstream-Aufrufe · Eingabe {input} · Cache {cache} · Ausgabe',
-  'A turn that used two models is counted once here and in both rows': 'Ein Zug, der zwei Modelle genutzt hat, zählt hier einmal und in beiden Zeilen je einmal',
+  'The turns column adds up to more than the total: a turn that called two models is one turn, counted under each of them.': 'Die Spalte der Züge summiert sich auf mehr als der Gesamtwert: Ein Zug, der zwei Modelle aufgerufen hat, ist ein Zug und zählt in beiden Zeilen.',
   'By agent and model': 'Nach Agent und Modell',
   Turns: 'Züge',
   Calls: 'Aufrufe',

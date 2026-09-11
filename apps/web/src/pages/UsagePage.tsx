@@ -189,6 +189,7 @@ export function UsagePage() {
 
   const load = async (p: RangePreset = preset, f = from, t = to) => {
     setBusy(true);
+    const since = useQuota.getState().seq;
     try {
       const report = await me.usage(p, f || undefined, t || undefined);
       setData(report);
@@ -197,9 +198,11 @@ export function UsagePage() {
        * event moves, and those are published per conversation — so it can be older than what
        * this page just queried, and the two would sit on screen together disagreeing. The
        * report already carries the current quota; taking it costs nothing and settles which
-       * of the two numbers is right.
+       * of the two numbers is right. Unless something newer landed while this was in the air —
+       * a turn finishing over the stream — in which case `adopt` leaves it alone rather than
+       * putting the bar back to where it was when the request went out.
        */
-      useQuota.getState().set(report.quota);
+      useQuota.getState().adopt(report.quota, since);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -380,9 +383,7 @@ export function UsagePage() {
                   <tfoot>
                     <tr className="border-t border-line-strong font-medium">
                       <td className="py-2" colSpan={2}>{t('Total')}</td>
-                      <td className="py-2 text-right tabular-nums" title={t('A turn that used two models is counted once here and in both rows')}>
-                        {data.totals.turns}
-                      </td>
+                      <td className="py-2 text-right tabular-nums">{data.totals.turns}</td>
                       <td className="py-2 text-right font-mono tabular-nums text-muted">
                         {fmtTokens(data.totals.inputTokens)}
                       </td>
@@ -401,6 +402,17 @@ export function UsagePage() {
                     </tr>
                   </tfoot>
                 </table>
+                {/*
+                  Said out loud, not in a `title`. Every other figure in the totals row is the
+                  column's sum and this one is not, which is exactly the "these two numbers
+                  disagree" reading this card exists to stop — and a tooltip inside a table
+                  that scrolls sideways on a phone is not an answer anybody will find.
+                */}
+                {data.byAgent.reduce((n, r) => n + r.turns, 0) !== data.totals.turns && (
+                  <p className="mt-2 text-[11.5px] text-faint">
+                    {t('The turns column adds up to more than the total: a turn that called two models is one turn, counted under each of them.')}
+                  </p>
+                )}
               </div>
             )}
           </Card>

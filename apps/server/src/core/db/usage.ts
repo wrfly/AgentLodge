@@ -545,25 +545,52 @@ function padded<T extends { t: string }>(
   unit: 'hour' | 'day',
   blank: Omit<T, 't'>,
 ): T[] {
+  const keys = bucketKeys(from, to, unit);
+  if (!keys) return rows;
   const hit = new Map(rows.map((r) => [r.t, r]));
-  const step = unit === 'hour' ? 3600_000 : 86400_000;
-  const start = new Date(from);
-  const end = Math.min(new Date(to).getTime(), Date.now());
-  if ((end - start.getTime()) / step > MAX_BUCKETS) return rows;
-  // Anchor on the bucket the range starts inside, not on `from` itself
-  if (unit === 'hour') start.setMinutes(0, 0, 0);
-  else start.setHours(0, 0, 0, 0);
+  return keys.map((t) => hit.get(t) ?? ({ ...blank, t } as T));
+}
 
-  const out: T[] = [];
-  for (let ms = start.getTime(); ms <= end; ms += step) {
-    const d = new Date(ms);
-    // Fixed-size steps drift by an hour across a DST change; re-anchoring each bucket to the
-    // calendar is what keeps one bucket per hour and one per day either way
-    if (unit === 'hour') d.setMinutes(0, 0, 0);
-    else d.setHours(0, 0, 0, 0);
-    const key = keyOf(d, unit);
-    if (out.length && out[out.length - 1]!.t === key) continue;
-    out.push(hit.get(key) ?? ({ ...blank, t: key } as T));
+/**
+ * Every bucket key the range covers, in order — or undefined when there are too many to draw.
+ *
+ * Separated out because this walk is where the bugs were, and it is pure: a range, a unit and
+ * a clock in, a list of keys out. The keys are the same strings SQLite's `localtime` produces,
+ * so they can be looked up directly against a grouped query.
+ *
+ * Stepped through the calendar rather than by a fixed number of milliseconds. Adding
+ * 86 400 000 across a fall-back lands on 23:00 of the day before, and every later step stays
+ * an hour behind — so the walk ends a day early and today's bar vanishes from under a
+ * headline that still counts it. On a server in New York on 2026-11-05 that was four buckets
+ * ending 11-04 under a total of 12,345. `setDate(+1)` keeps the local wall clock and moves
+ * the instant, which is what a day means here.
+ *
+ * A bucket belongs to the range when its own start does: before `to`, which is exclusive — a
+ * custom range written `2026-08-01 ~ 2026-08-15` used to draw a bucket for the 16th and put
+ * it on the axis — and not in the future, so a range running to the end of today stops at
+ * today.
+ */
+export function bucketKeys(
+  from: string,
+  to: string,
+  unit: 'hour' | 'day',
+  now = Date.now(),
+): string[] | undefined {
+  const step = unit === 'hour' ? 3600_000 : 86400_000;
+  const until = new Date(to).getTime();
+  // Anchor on the bucket the range starts inside, not on `from` itself
+  const at = new Date(from);
+  if (unit === 'hour') at.setMinutes(0, 0, 0);
+  else at.setHours(0, 0, 0, 0);
+  if ((Math.min(until, now) - at.getTime()) / step > MAX_BUCKETS) return undefined;
+
+  const out: string[] = [];
+  while (at.getTime() < until && at.getTime() <= now) {
+    const key = keyOf(at, unit);
+    // A fall-back repeats a local hour, and SQLite's `localtime` gives both the same key
+    if (out[out.length - 1] !== key) out.push(key);
+    if (unit === 'hour') at.setHours(at.getHours() + 1);
+    else at.setDate(at.getDate() + 1);
   }
   return out;
 }
