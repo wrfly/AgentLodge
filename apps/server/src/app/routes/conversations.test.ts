@@ -74,6 +74,19 @@ const post = (url: string, body: unknown) =>
 /** Let the stubbed turn's asynchronous tail (an empty assistant row) settle */
 const settle = () => new Promise((r) => setTimeout(r, 30));
 
+/*
+ * What survived a cut, counted in questions rather than rows.
+ *
+ * A stubbed turn writes an empty assistant row when the process exits, and whether that has
+ * landed 30ms later depends on how loaded the machine is — the row count was one locally and
+ * two on CI, for the same passing code. Questions are what the cut is about and the tail is
+ * never one, so this asks the question the test means to ask.
+ */
+const questionsIn = (id: string) =>
+  convRepo.full(id, alice.id)!.messages.filter((m) => m.role === 'user').length;
+const stillSays = (id: string, text: string) =>
+  JSON.stringify(convRepo.full(id, alice.id)!.messages).includes(text);
+
 /** A conversation of alternating turns, oldest first */
 function conversationOf(texts: string[]): { id: string; ids: string[] } {
   const c = convRepo.create({ userId: alice.id, agent: 'claude' });
@@ -97,8 +110,8 @@ console.log('\n=== Correcting the newest question answers it in place ===');
   ok('202', res.statusCode === 202, String(res.statusCode));
   ok('the corrected question is stored', body.userMessage?.blocks[0]?.text === 'sort it by size');
   await settle();
-  const conv = convRepo.full(id, alice.id)!;
-  ok('the old answer is gone from the record', conv.messages.length === 1, String(conv.messages.length));
+  ok('the old answer is gone from the record',
+    !stillSays(id, 'wrote sort.py') && questionsIn(id) === 1, String(questionsIn(id)));
   ok('the discarded answer was captured for the gateway',
     trims.forConversation(id).includes('wrote sort.py'));
 }
@@ -128,9 +141,9 @@ console.log('\n=== Retrying re-asks the newest question ===');
   ok('202', res.statusCode === 202, String(res.statusCode));
   ok('the question is asked again', body.userMessage?.blocks[0]?.text === 'sort it');
   await settle();
-  const conv = convRepo.full(id, alice.id)!;
-  ok('the old answer is gone', conv.messages.length === 1, String(conv.messages.length));
-  ok('the model choice went through', conv.model === 'opus');
+  ok('the old answer is gone', !stillSays(id, 'wrote sort.py') && questionsIn(id) === 1,
+    String(questionsIn(id)));
+  ok('the model choice went through', convRepo.meta(id, alice.id)?.model === 'opus');
   ok('the discarded answer was captured for the gateway',
     trims.forConversation(id).includes('wrote sort.py'));
 }
