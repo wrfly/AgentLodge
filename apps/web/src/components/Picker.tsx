@@ -173,14 +173,20 @@ export function Picker({
   };
 
   return (
-    <div ref={box} className="relative">
+    /*
+     * `min-w-0` is what lets the trigger give way. It shares a row with the send button, and
+     * a flex item's default `min-width: auto` refuses to go below its content — so on a phone
+     * the two pickers held their full width, the row overflowed, and the send button was
+     * pushed past the right edge of the box it lives in. The label truncates instead.
+     */
+    <div ref={box} className="relative min-w-0 max-w-[180px]">
       <button
         type="button"
         onClick={() => !disabled && (open ? close() : setOpen(true))}
         disabled={disabled}
         title={title}
         className={clsx(
-          'flex max-w-[180px] items-center gap-1.5 rounded-lg border px-2 py-1 text-[12px] transition',
+          'flex w-full items-center gap-1.5 rounded-lg border px-2 py-1 text-[12px] transition',
           disabled
             ? 'cursor-not-allowed border-line text-faint'
             : 'border-line hover:border-line-strong hover:bg-bubble',
