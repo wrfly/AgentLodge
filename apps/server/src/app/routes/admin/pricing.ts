@@ -2,12 +2,23 @@
 import type { FastifyInstance } from 'fastify';
 import * as audit from '../../../core/db/audit.js';
 import * as pricing from '../../../core/db/pricing.js';
+import { getString } from '../../../core/db/settings.js';
 import { guard } from './shared.js';
 import { tr } from '../../../core/i18n/locale.js';
 
 export function register(app: FastifyInstance): void {
 
-  app.get('/api/admin/pricing', guard, async () => pricing.list());
+  /*
+   * The rows, and the currency they are supposed to be in.
+   *
+   * The column is per row, so the table cannot say on its own which money a *new* row belongs
+   * in — the interface was reading that off whatever row happened to be first. This is the
+   * platform's answer, which is the one the form's labels want.
+   */
+  app.get('/api/admin/pricing', guard, async () => ({
+    currency: getString('billing.currency', 'USD'),
+    rows: pricing.list(),
+  }));
 
   app.post('/api/admin/pricing', guard, async (req, reply) => {
     const body = (req.body ?? {}) as {
