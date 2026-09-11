@@ -117,6 +117,25 @@ export interface UpsertInput {
   note?: string;
 }
 
+/**
+ * The address of an upstream, with the endpoint taken off if somebody pasted one.
+ *
+ * The field wants a root — the gateway appends the path itself, per kind and per wire. Paste
+ * the URL out of a vendor's curl example and you get `…/chat/completions/chat/completions`,
+ * which 404s; Claude Code renders that 404 as "the model may not exist or you may not have
+ * access to it", so the one thing the error never mentions is the address. Copying that URL
+ * is the obvious thing to do, so it is handled rather than rejected.
+ *
+ * `/v1` stays: it is part of the root for Ollama and most compatibility layers. `/anthropic`
+ * stays too — that is DeepSeek's routing prefix, and the gateway strips it per wire.
+ */
+export function normalizeBaseUrl(url: string): string {
+  return url
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/(chat\/completions|responses|v1\/messages)$/i, '');
+}
+
 export function create(input: UpsertInput): Provider {
   const id = crypto.randomUUID();
   const now = nowIso();
@@ -127,7 +146,7 @@ export function create(input: UpsertInput): Provider {
     id,
     input.name.trim(),
     input.kind,
-    (input.baseUrl ?? '').replace(/\/+$/, ''),
+    normalizeBaseUrl(input.baseUrl ?? ''),
     (input.credentialId ?? '').trim() || null,
     input.note ?? null,
     now,
@@ -146,7 +165,7 @@ export function update(id: string, patch: Partial<UpsertInput>): Provider | unde
   const args: (string | null)[] = [
     patch.name?.trim() ?? cur.name,
     patch.kind ?? cur.kind,
-    (patch.baseUrl ?? cur.baseUrl).replace(/\/+$/, ''),
+    normalizeBaseUrl(patch.baseUrl ?? cur.baseUrl),
     patch.note ?? cur.note ?? null,
     nowIso(),
   ];

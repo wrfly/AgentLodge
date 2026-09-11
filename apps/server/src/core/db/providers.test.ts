@@ -75,7 +75,7 @@ await new Promise<void>((resolve) => manager.listen(managerSocket, resolve));
 
 const { initDb, get, getDb, columns, run } = await import('./index.js');
 initDb();
-const { create, update, secretOf } = await import('./providers.js');
+const { create, update, secretOf, normalizeBaseUrl } = await import('./providers.js');
 const { encrypt } = await import('./settings.js');
 const { drainLegacyProviderKeys } = await import('../../gateway/legacy-keys.js');
 
@@ -168,6 +168,35 @@ console.log('\n=== Draining a database from before the credential manager ===');
   logs.length = 0;
   await drainLegacyProviderKeys((m) => logs.push(m));
   ok('a second run does nothing', logs.length === 0, logs.join(' | '));
+}
+
+console.log('\n=== The base URL is a root, whatever was pasted into it ===');
+{
+  /*
+   * A URL copied out of a vendor's curl example ends in the endpoint. The gateway appends
+   * its own — per kind and per wire — so the request goes to `…/chat/completions/chat/
+   * completions`, the upstream 404s, and Claude Code renders that 404 as "the model may not
+   * exist or you may not have access to it". The address is the one thing the message never
+   * mentions, which is why this is fixed on the way in rather than reported on the way out.
+   */
+  ok('a pasted chat endpoint is taken off',
+    normalizeBaseUrl('https://ark.example.com/api/v3/chat/completions') === 'https://ark.example.com/api/v3',
+    normalizeBaseUrl('https://ark.example.com/api/v3/chat/completions'));
+  ok('and a Responses one', normalizeBaseUrl('https://api.openai.com/v1/responses/') === 'https://api.openai.com/v1');
+  ok('and a Messages one', normalizeBaseUrl('https://api.anthropic.com/v1/messages') === 'https://api.anthropic.com');
+  ok('trailing slashes still go', normalizeBaseUrl('https://api.example.com///') === 'https://api.example.com');
+
+  // What must survive: /v1 is part of the root for Ollama and most compatibility layers,
+  // and /anthropic is DeepSeek's routing prefix, which the gateway strips per wire itself
+  ok('a bare /v1 root is left alone', normalizeBaseUrl('http://127.0.0.1:11434/v1') === 'http://127.0.0.1:11434/v1');
+  ok("DeepSeek's prefix is left alone",
+    normalizeBaseUrl('https://api.deepseek.com/anthropic') === 'https://api.deepseek.com/anthropic');
+  ok('and a path that merely contains the word', normalizeBaseUrl('https://x.example.com/responses/v2') === 'https://x.example.com/responses/v2');
+
+  const p = create({ name: 'pasted', kind: 'openai-chat', baseUrl: 'https://ark.example.com/api/v3/chat/completions' });
+  ok('saving goes through it', p.baseUrl === 'https://ark.example.com/api/v3', p.baseUrl);
+  const edited = update(p.id, { baseUrl: 'https://ark.example.com/api/v3/responses' });
+  ok('and so does editing', edited?.baseUrl === 'https://ark.example.com/api/v3', edited?.baseUrl);
 }
 
 manager.close();
