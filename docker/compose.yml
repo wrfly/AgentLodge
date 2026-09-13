@@ -73,6 +73,18 @@ services:
       # http origin, and what that looks like is a 200 from the login endpoint followed by a
       # request that is somehow signed out again. Production runs on https and leaves it true.
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      # How many reverse-proxy hops to believe when reading the client's address. Count the
+      # proxies in front of this process: the stack's own caddy is one, so `1` is right for
+      # the deployment as it ships; a CDN in front makes it 2; a CDN plus your own nginx
+      # makes it 3. Set it too low and every request is attributed to the nearest proxy —
+      # audit rows and the session list all show one address, and auth.ts's per-IP lockout
+      # becomes a per-site one. Too high and a client forges its own address by writing
+      # X-Forwarded-For. The reasoning is in apps/server/src/index.ts.
+      #
+      # Named here because the environment block is a closed list: read by the server but
+      # missing from this file, it looked settable in .env and did nothing, and a deployment
+      # behind Cloudflare logged every login from the docker bridge address.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
       DATA_DIR: /data
       # What the console's "read the key from a file" field validates and lists against; see

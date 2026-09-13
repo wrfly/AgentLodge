@@ -55,6 +55,13 @@ services:
       # shell's `date` picks it up and Node does not (DESIGN.md §16).
       TZ: ${TZ:-UTC}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      # Reverse-proxy hops in front of this process, counted from it outwards: the stack's
+      # own caddy is 1 (the default, and right as it ships), a CDN in front makes it 2, a CDN
+      # plus your own nginx makes it 3. Too low and every request is attributed to the
+      # nearest proxy — one address in the audit log and the session list, and the per-IP
+      # login lockout turns into a per-site one. Too high and a client forges its address by
+      # writing X-Forwarded-For.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
       DATA_DIR: /data
       USE_CONTAINERS: "true"
