@@ -1,3 +1,24 @@
+# Who may speak for somebody else's address.
+#
+# Caddy trusts **no** proxy by default: a request from an untrusted source has its
+# X-Forwarded-* headers ignored and rewritten to the address of the connection Caddy itself
+# accepted. Put another reverse proxy in front — the usual shape is nginx on the host
+# terminating a domain, with Cloudflare in front of that — and everything it forwarded is
+# discarded here, one hop before the application. What app then sees is a single-entry
+# X-Forwarded-For holding the docker bridge address, and no value of TRUST_PROXY can recover
+# what was thrown away: every login in the signed-in-devices list reads 172.x.0.1.
+#
+# Anything reaching Caddy from a private address is another proxy on this machine, so those
+# are trusted and their header is kept and appended to. It is not what decides the client's
+# address — app does that by counting hops from the right (TRUST_PROXY, see compose.yml),
+# which is the direction a client cannot write into. This only stops Caddy from destroying
+# the evidence on the way past.
+{
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
 {$SITE_ADDRESS:localhost} {
 	encode gzip
 
