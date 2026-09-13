@@ -102,7 +102,7 @@ function Devices() {
   };
 
   return (
-    <Card title={t('Signed-in devices')} description={t('See one you do not recognise? Sign it out')}>
+    <Card title={t('Signed-in devices')}>
       {error && <Banner tone="error">{error}</Banner>}
       {!sessions ? (
         <Spinner />

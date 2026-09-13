@@ -108,7 +108,7 @@ export function Overview() {
 const WINDOW_LABEL: Record<string, string> = {
   '5h': 'Rolling 5 hours',
   '7d': 'Rolling 7 days',
-  '7d_oi': 'Rolling 7 days, premium models',
+  '7d_oi': 'Rolling 7 days, Fable models',
   overage: 'Overage'
 };
 
