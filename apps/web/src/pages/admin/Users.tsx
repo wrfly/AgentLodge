@@ -4,7 +4,7 @@
  * Split out of AdminPage.tsx, which had grown to 2700 lines; one file per tab now.
  */
 import { useEffect, useState } from 'react';
-import { Ban, RotateCcw, ShieldMinus, ShieldPlus, Wallet, UserCheck } from 'lucide-react';
+import { Gauge, RotateCcw, Wallet } from 'lucide-react';
 import clsx from 'clsx';
 import { admin, type AdminUser, fmtMoney, type QuotaScope } from '../../lib/api';
 import {
@@ -233,35 +233,61 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
-          <Button variant="ghost" onClick={() => setTopup((v) => !v)}>
-            <Wallet size={12} />
-            {t('Top up')}
-          </Button>
-          <Button variant="ghost" onClick={() => setEditing((v) => !v)}>
-            {t('Quota')}
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => void resetUsage()}
-            disabled={busy}
-            title={t('Zero the usage for this period — nothing is deleted, the counting start just moves forward')}
-          >
-            <RotateCcw size={12} />
-            {t('Reset to zero')}
-          </Button>
-          {!user.first && (
-            <Button variant="ghost" onClick={() => void toggleRole()} disabled={busy}>
-              {user.role === 'admin' ? <ShieldMinus size={12} /> : <ShieldPlus size={12} />}
-              {user.role === 'admin' ? t('Make standard user') : t('Make administrator')}
+        {/* Two tiers rather than one row of five buttons, and the weight differs with the
+            stakes. Spending is adjusted daily, so it keeps the buttons; role and status are
+            touched once in the life of an account and read as quiet links under them. A
+            labelled pair of groups was the first attempt at the split and it put two grey
+            words on every row to say what the layout already says. */}
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <Button variant="ghost" onClick={() => setTopup((v) => !v)}>
+              <Wallet size={12} />
+              {t('Top up')}
             </Button>
-          )}
-          {/* The first account cannot be disabled, but one that is disabled can still be enabled */}
+            <Button variant="ghost" onClick={() => setEditing((v) => !v)}>
+              <Gauge size={12} />
+              {t('Quota')}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => void resetUsage()}
+              disabled={busy}
+              title={t('Zero the usage for this period — nothing is deleted, the counting start just moves forward')}
+            >
+              <RotateCcw size={12} />
+              {t('Reset to zero')}
+            </Button>
+          </div>
+
+          {/* The first account has neither control — it cannot be demoted, and can only be
+              disabled if something else already disabled it — so the tier is simply absent.
+              `pr-3` is the buttons' own horizontal padding: without it the links hang off
+              the right of the labels they sit under. */}
           {(!user.first || user.status === 'suspended') && (
-            <Button variant="ghost" onClick={() => void toggleStatus()} disabled={busy}>
-              {user.status === 'active' ? <Ban size={12} /> : <UserCheck size={12} />}
-              {t(user.status === 'active' ? 'Disable' : 'Enable')}
-            </Button>
+            <div className="flex items-center gap-2 pr-3 text-[11.5px] text-faint">
+              {!user.first && (
+                <>
+                  <button
+                    onClick={() => void toggleRole()}
+                    disabled={busy}
+                    className="transition hover:text-ink disabled:opacity-40"
+                  >
+                    {user.role === 'admin' ? t('Make standard user') : t('Make administrator')}
+                  </button>
+                  <span aria-hidden>·</span>
+                </>
+              )}
+              <button
+                onClick={() => void toggleStatus()}
+                disabled={busy}
+                className={clsx(
+                  'transition disabled:opacity-40',
+                  user.status === 'active' ? 'hover:text-danger' : 'hover:text-ink',
+                )}
+              >
+                {t(user.status === 'active' ? 'Disable' : 'Enable')}
+              </button>
+            </div>
           )}
         </div>
       </div>
