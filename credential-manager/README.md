@@ -40,11 +40,10 @@ Nothing here ever returns a stored value: a listing carries a masked hint
 **Signing in** (`/login/*`) is the ordinary one, and it is two steps because the
 authorising happens in a browser this process does not have. `start` returns an
 authorize URL; the operator approves there and the redirect lands on a page
-showing a code; `finish` takes that code — `code#state`, as the page prints it —
-and exchanges it. PKCE throughout: the verifier is generated here, never leaves,
-and the `state` is checked on the way back. This is the same flow `claude login`
-uses when it cannot open a browser itself; there is no device-code grant to use
-instead.
+showing `code#state`; `finish` checks the state half against the one it sent out
+and exchanges the code half. PKCE throughout: the verifier is generated here and
+never leaves. This is the same flow `claude login` uses when it cannot open a
+browser itself; there is no device-code grant to use instead.
 
 The endpoints are the ones that CLI uses, and they are not guessable from one
 another: authorising happens on `claude.com`, the redirect lands on

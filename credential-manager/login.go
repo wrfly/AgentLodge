@@ -71,7 +71,9 @@ func (a *manager) startLogin(kind, credID, label string) (*pendingLogin, string,
 	if err != nil {
 		return nil, "", err
 	}
-	state, err := randomURLSafe(16)
+	// 32 bytes, like the verifier: the size `claude login` draws. The authorize
+	// page answered a shorter one with "Invalid request format".
+	state, err := randomURLSafe(32)
 	if err != nil {
 		return nil, "", err
 	}
@@ -83,15 +85,26 @@ func (a *manager) startLogin(kind, credID, label string) (*pendingLogin, string,
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
 
-	q := url.Values{
-		"code":                  {"true"},
-		"client_id":             {cfg.clientID},
-		"response_type":         {"code"},
-		"redirect_uri":          {cfg.redirectURI},
-		"scope":                 {strings.Join(cfg.scopes, " ")},
-		"code_challenge":        {challenge},
-		"code_challenge_method": {"S256"},
-		"state":                 {state},
+	// The parameters in the order `claude login` writes them, so the page gets
+	// the request it is known to accept. url.Values would sort them.
+	params := [][2]string{
+		{"code", "true"},
+		{"client_id", cfg.clientID},
+		{"response_type", "code"},
+		{"redirect_uri", cfg.redirectURI},
+		{"scope", strings.Join(cfg.scopes, " ")},
+		{"code_challenge", challenge},
+		{"code_challenge_method", "S256"},
+		{"state", state},
+	}
+	var q strings.Builder
+	for i, kv := range params {
+		if i > 0 {
+			q.WriteByte('&')
+		}
+		q.WriteString(url.QueryEscape(kv[0]))
+		q.WriteByte('=')
+		q.WriteString(url.QueryEscape(kv[1]))
 	}
 
 	p := &pendingLogin{ID: id, Kind: kind, CredID: credID, Label: label, verifier: verifier, state: state, started: time.Now()}
@@ -101,7 +114,7 @@ func (a *manager) startLogin(kind, credID, label string) (*pendingLogin, string,
 	a.pruneLogins()
 	a.logins[id] = p
 
-	return p, cfg.authorizeURL + "?" + q.Encode(), nil
+	return p, cfg.authorizeURL + "?" + q.String(), nil
 }
 
 // pruneLogins drops the expired ones. Assumes the caller holds a.lock().
@@ -115,11 +128,10 @@ func (a *manager) pruneLogins() {
 
 // finishLogin exchanges the pasted code for tokens and stores the credential.
 //
-// What the redirect page shows can carry the state after a `#`. That whole
-// string is what goes upstream as the code — the CLI sends it verbatim too, and
-// the endpoint is the one that decides what the two halves mean. The state is
-// still checked here when it is there, which is the part that makes a code
-// pasted from somebody else's sign-in useless.
+// The redirect page prints `code#state`. The state half is checked against the
+// one this sign-in sent out, which is what makes a code pasted from somebody
+// else's sign-in useless. Only the code half goes upstream, as `claude login`
+// sends it.
 func (a *manager) finishLogin(ctx context.Context, loginID, pasted string) (*credential, error) {
 	a.lock()
 	a.pruneLogins()
@@ -129,11 +141,15 @@ func (a *manager) finishLogin(ctx context.Context, loginID, pasted string) (*cre
 		return nil, fmt.Errorf("this sign-in has expired or was already completed; start it again")
 	}
 
-	code := strings.TrimSpace(pasted)
+	code, state, found := strings.Cut(strings.TrimSpace(pasted), "#")
+	code, state = strings.TrimSpace(code), strings.TrimSpace(state)
 	if code == "" {
 		return nil, fmt.Errorf("no code in what was pasted")
 	}
-	if _, state, found := strings.Cut(code, "#"); found && state != p.state {
+	if !found || state == "" {
+		return nil, fmt.Errorf("paste the whole code the page shows, code#state")
+	}
+	if state != p.state {
 		return nil, fmt.Errorf("this code belongs to a different sign-in")
 	}
 
