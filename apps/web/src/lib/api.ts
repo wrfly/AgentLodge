@@ -482,7 +482,15 @@ export const me = {
       method: 'POST',
       body: JSON.stringify({ name }),
     }),
+  renameApiKey: (id: string, name: string) =>
+    request<{ key: Omit<ApiKeyRow, 'usage'> }>(`/api/me/api-keys/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
   revokeApiKey: (id: string) =>
+    request<{ ok: boolean }>(`/api/me/api-keys/${id}/revoke`, { method: 'POST' }),
+  /** Only a revoked key can be deleted */
+  deleteApiKey: (id: string) =>
     request<{ ok: boolean }>(`/api/me/api-keys/${id}`, { method: 'DELETE' }),
 };
 

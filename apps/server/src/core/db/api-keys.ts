@@ -84,7 +84,12 @@ export function list(userId: string): ApiKey[] {
   ).map(toKey);
 }
 
-/** Revocation is a soft delete: the row has to stay for historical usage records to still point at a key */
+export function find(id: string, userId: string): ApiKey | undefined {
+  const row = get<Row>(`select * from api_keys where id = ? and user_id = ?`, id, userId);
+  return row ? toKey(row) : undefined;
+}
+
+/** Stops the key at once. The row stays, so the list still shows the key and what it used */
 export function revoke(id: string, userId: string): boolean {
   return (
     run(
@@ -94,6 +99,28 @@ export function revoke(id: string, userId: string): boolean {
       userId,
     ).changes > 0
   );
+}
+
+/**
+ * Only a revoked key, so deleting cannot cut off a machine still using one. Usage records
+ * keep the id and still count towards totals and quota; what goes is this key's line in the list.
+ */
+export function remove(id: string, userId: string): boolean {
+  return (
+    run(`delete from api_keys where id = ? and user_id = ? and revoked_at is not null`, id, userId)
+      .changes > 0
+  );
+}
+
+/** Only a key still in use: a revoked one keeps the name it was revoked under */
+export function rename(id: string, userId: string, name: string): ApiKey | undefined {
+  const changed = run(
+    `update api_keys set name = ? where id = ? and user_id = ? and revoked_at is null`,
+    name,
+    id,
+    userId,
+  ).changes;
+  return changed ? find(id, userId) : undefined;
 }
 
 export interface Verified {

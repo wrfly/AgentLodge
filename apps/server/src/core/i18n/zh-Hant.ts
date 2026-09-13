@@ -60,6 +60,8 @@ export const zhHant: Record<string, string> = {
   'A name can be at most 64 characters': '名稱最多 64 個字元',
   'At most 20 active keys; revoke some before creating more': '最多 20 把有效金鑰，請先撤銷幾把再新增',
   'No such key, or it has already been revoked': '金鑰不存在，或已被撤銷',
+  'No such key': '金鑰不存在',
+  'Revoke this key before deleting it': '請先撤銷這把金鑰再刪除',
   'Administrator access required': '需要管理員權限',
   'The credential is invalid or has expired': '憑證無效或已過期',
   'The server has no upstream provider enabled; ask an administrator': '伺服器沒有啟用任何上游 provider，請聯絡管理員',

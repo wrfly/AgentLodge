@@ -56,6 +56,8 @@ export const ja: Record<string, string> = {
   'A name can be at most 64 characters': '名前は最大 64 文字です',
   'At most 20 active keys; revoke some before creating more': '有効なキーは最大 20 個です。いくつか失効させてから作成してください',
   'No such key, or it has already been revoked': 'そのキーが見つからないか、すでに失効しています',
+  'No such key': 'そのキーが見つかりません',
+  'Revoke this key before deleting it': 'このキーは失効させてから削除してください',
   'Administrator access required': '管理者権限が必要です',
   'The credential is invalid or has expired': '認証情報が無効か、有効期限が切れています',
   'The server has no upstream provider enabled; ask an administrator': 'サーバーで上流 provider が有効になっていません。管理者にご連絡ください',

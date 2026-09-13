@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import * as apiKeysRepo from '../../core/db/api-keys.js';
 import * as audit from '../../core/db/audit.js';
 import * as usageRepo from '../../core/db/usage.js';
@@ -15,6 +15,14 @@ import { installCommand, installScript } from '../cli-install.js';
 import { installText, publicBase } from './cli.js';
 
 const guard = { preHandler: requireUser };
+
+/** A key's name, trimmed, or the reason it cannot be one */
+function keyName(req: FastifyRequest, raw: unknown): { name: string } | { error: string } {
+  const name = typeof raw === 'string' ? raw.trim() : '';
+  if (!name) return { error: tr(req, 'Give this key a name') };
+  if (name.length > 64) return { error: tr(req, 'A name can be at most 64 characters') };
+  return { name };
+}
 
 /* ---------------- Parsing a window ---------------- */
 
@@ -318,10 +326,8 @@ export function registerMeRoutes(app: FastifyInstance): void {
   });
 
   app.post('/api/me/api-keys', guard, async (req, reply) => {
-    const { name } = (req.body ?? {}) as { name?: string };
-    const trimmed = (name ?? '').trim();
-    if (!trimmed) return reply.code(400).send({ error: tr(req, 'Give this key a name') });
-    if (trimmed.length > 64) return reply.code(400).send({ error: tr(req, 'A name can be at most 64 characters') });
+    const given = keyName(req, ((req.body ?? {}) as { name?: unknown }).name);
+    if ('error' in given) return reply.code(400).send({ error: given.error });
 
     // A ceiling against creating them by accident, not a security boundary
     const live = apiKeysRepo.list(req.user!.id).filter((k) => !k.revokedAt);
@@ -329,13 +335,13 @@ export function registerMeRoutes(app: FastifyInstance): void {
       return reply.code(400).send({ error: tr(req, 'At most 20 active keys; revoke some before creating more') });
     }
 
-    const { key, plaintext } = apiKeysRepo.create(req.user!.id, trimmed);
+    const { key, plaintext } = apiKeysRepo.create(req.user!.id, given.name);
     audit.log({
       actorId: req.user!.id,
       action: 'apikey.create',
       targetType: 'api_key',
       targetId: key.id,
-      detail: { name: trimmed },
+      detail: { name: given.name },
       ip: req.ip,
     });
     // The plaintext exists this once; the database keeps only a sha256
@@ -343,7 +349,26 @@ export function registerMeRoutes(app: FastifyInstance): void {
     return { key, plaintext };
   });
 
-  app.delete('/api/me/api-keys/:id', guard, async (req, reply) => {
+  app.patch('/api/me/api-keys/:id', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const given = keyName(req, ((req.body ?? {}) as { name?: unknown }).name);
+    if ('error' in given) return reply.code(400).send({ error: given.error });
+    const key = apiKeysRepo.rename(id, req.user!.id, given.name);
+    if (!key) {
+      return reply.code(404).send({ error: tr(req, 'No such key, or it has already been revoked') });
+    }
+    audit.log({
+      actorId: req.user!.id,
+      action: 'apikey.rename',
+      targetType: 'api_key',
+      targetId: id,
+      detail: { name: given.name },
+      ip: req.ip,
+    });
+    return { key };
+  });
+
+  app.post('/api/me/api-keys/:id/revoke', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!apiKeysRepo.revoke(id, req.user!.id)) {
       return reply.code(404).send({ error: tr(req, 'No such key, or it has already been revoked') });
@@ -353,6 +378,23 @@ export function registerMeRoutes(app: FastifyInstance): void {
       action: 'apikey.revoke',
       targetType: 'api_key',
       targetId: id,
+      ip: req.ip,
+    });
+    return { ok: true };
+  });
+
+  app.delete('/api/me/api-keys/:id', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const key = apiKeysRepo.find(id, req.user!.id);
+    if (!key) return reply.code(404).send({ error: tr(req, 'No such key') });
+    if (!key.revokedAt) return reply.code(409).send({ error: tr(req, 'Revoke this key before deleting it') });
+    if (!apiKeysRepo.remove(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such key') });
+    audit.log({
+      actorId: req.user!.id,
+      action: 'apikey.delete',
+      targetType: 'api_key',
+      targetId: id,
+      detail: { name: key.name },
       ip: req.ip,
     });
     return { ok: true };

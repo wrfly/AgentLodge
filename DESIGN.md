@@ -1476,7 +1476,9 @@ GET    /api/stream-ticket                        # 换取 SSE 一次性票据
 # API 密钥（把本机 CLI 指过来）
 GET    /api/me/api-keys                 列表 + 每把的累计用量 + 该填的 BASE_URL
 POST   /api/me/api-keys                 创建，明文只在这一次返回
-DELETE /api/me/api-keys/:id             撤销（软删，历史用量还指得到）
+PATCH  /api/me/api-keys/:id             改名，已撤销的不能改
+POST   /api/me/api-keys/:id/revoke      撤销，立即失效
+DELETE /api/me/api-keys/:id             删除，只能删已撤销的，用量记录保留
 
 GET    /api/me/profile                  统计 + 画像 + 会话总结
 POST   /api/me/profile/recap            总结一批对话，全部就绪后写画像（计自己配额）
