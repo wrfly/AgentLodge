@@ -56,6 +56,8 @@ export const ru: Record<string, string> = {
   'A name can be at most 64 characters': 'Название — не более 64 символов',
   'At most 20 active keys; revoke some before creating more': 'Не более 20 активных ключей; отзовите часть перед созданием новых',
   'No such key, or it has already been revoked': 'Такого ключа нет либо он уже отозван',
+  'No such key': 'Такого ключа нет',
+  'Revoke this key before deleting it': 'Сначала отзовите этот ключ, затем удаляйте',
   'Administrator access required': 'Требуются права администратора',
   'The credential is invalid or has expired': 'Учётные данные недействительны или истекли',
   'The server has no upstream provider enabled; ask an administrator': 'На сервере не включён ни один провайдер; обратитесь к администратору',

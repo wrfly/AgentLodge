@@ -137,10 +137,15 @@ t "Authorization: Bearer works" "200" "$(curl -s -o /dev/null -w '%{http_code}' 
 t "x-api-key works too" "200" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $GW/v1/messages -H "x-api-key: $PLAIN" -H 'content-type: application/json' -d "$MSG")"
 t "codex's /v1/responses works" "200" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $GW/v1/responses -H "authorization: Bearer $PLAIN" -H 'content-type: application/json' -d '{"model":"m","stream":true,"input":[{"role":"user","content":"hi"}]}')"
 t "usage is attributed to this key" "True" "$(curl -s $API/api/me/api-keys -H "authorization: Bearer $AT" | jq_ "any(k['id']=='$KID' and (k['usage'] or {}).get('calls',0)>0 for k in d['keys'])")"
-t "bob cannot revoke alice's key" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/api/me/api-keys/$KID -H "authorization: Bearer $BT")"
-t "revoking your own" "200" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/api/me/api-keys/$KID -H "authorization: Bearer $AT")"
+t "a key in use cannot be deleted" "409" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/api/me/api-keys/$KID -H "authorization: Bearer $AT")"
+t "bob cannot revoke alice's key" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $API/api/me/api-keys/$KID/revoke -H "authorization: Bearer $BT")"
+t "revoking your own" "200" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $API/api/me/api-keys/$KID/revoke -H "authorization: Bearer $AT")"
 t "a revoked key dies immediately" "401" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $GW/v1/messages -H "authorization: Bearer $PLAIN" -H 'content-type: application/json' -d "$MSG")"
-t "revoking twice is a 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/api/me/api-keys/$KID -H "authorization: Bearer $AT")"
+t "revoking twice is a 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $API/api/me/api-keys/$KID/revoke -H "authorization: Bearer $AT")"
+t "bob cannot delete alice's key" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/api/me/api-keys/$KID -H "authorization: Bearer $BT")"
+t "deleting a revoked key" "200" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/api/me/api-keys/$KID -H "authorization: Bearer $AT")"
+t "a deleted key leaves the listing" "False" "$(curl -s $API/api/me/api-keys -H "authorization: Bearer $AT" | jq_ "any(k['id']=='$KID' for k in d['keys'])")"
+t "deleting twice is a 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/api/me/api-keys/$KID -H "authorization: Bearer $AT")"
 
 echo "── Audit proxy enforcement ──"
 PROV=$(curl -s $API/api/admin/providers -H "authorization: Bearer $AT")

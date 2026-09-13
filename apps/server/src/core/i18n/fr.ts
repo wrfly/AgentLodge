@@ -56,6 +56,8 @@ export const fr: Record<string, string> = {
   'A name can be at most 64 characters': 'Un nom ne peut pas dépasser 64 caractères',
   'At most 20 active keys; revoke some before creating more': '20 clés actives au maximum ; révoquez-en avant d\'en créer d\'autres',
   'No such key, or it has already been revoked': 'Cette clé n\'existe pas, ou elle a déjà été révoquée',
+  'No such key': 'Cette clé n\'existe pas',
+  'Revoke this key before deleting it': 'Révoquez cette clé avant de la supprimer',
   'Administrator access required': 'Accès administrateur requis',
   'The credential is invalid or has expired': 'Cet identifiant est invalide ou a expiré',
   'The server has no upstream provider enabled; ask an administrator': 'Aucun fournisseur n\'est activé sur le serveur ; adressez-vous à un administrateur',

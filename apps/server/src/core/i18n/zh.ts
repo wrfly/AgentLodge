@@ -56,6 +56,8 @@ export const zh: Record<string, string> = {
   'A name can be at most 64 characters': '名字最长 64 个字符',
   'At most 20 active keys; revoke some before creating more': '最多 20 把有效 key，先撤销几把再建',
   'No such key, or it has already been revoked': '找不到这把 key，或它已经撤销了',
+  'No such key': '找不到这把 key',
+  'Revoke this key before deleting it': '先撤销这把 key 才能删除',
   'Administrator access required': '需要管理员权限',
   'The credential is invalid or has expired': '凭据无效或已过期',
   'The server has no upstream provider enabled; ask an administrator': '服务端没有启用任何上游 provider，请联系管理员',

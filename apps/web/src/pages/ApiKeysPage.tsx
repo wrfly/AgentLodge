@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { Check, Copy, KeyRound, Plus, Trash2 } from 'lucide-react';
+import { Ban, Check, Copy, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import { me, type ApiKeyRow } from '../lib/api';
 import { Banner, Button, Card, Empty, Field, Input, Page, Spinner, fmtDate, fmtTokens } from '../components/ui';
 import { useT } from '../lib/i18n';
@@ -21,6 +21,10 @@ export function ApiKeysPage() {
   const [creating, setCreating] = useState(false);
   const [fresh, setFresh] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  // Escape leaves the field by blurring it too, and that blur must not save what Escape discarded
+  const discarded = useRef(false);
 
   const load = async () => {
     try {
@@ -54,14 +58,29 @@ export function ApiKeysPage() {
     }
   };
 
-  const revoke = async (k: ApiKeyRow) => {
+  /** One change to a key, then the list again; a failure shows in the banner */
+  const change = async (fn: () => Promise<unknown>) => {
     setError(null);
     try {
-      await me.revokeApiKey(k.id);
+      await fn();
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  const startRename = (k: ApiKeyRow) => {
+    setDraft(k.name);
+    setRenaming(k.id);
+  };
+
+  const finishRename = (k: ApiKeyRow) => {
+    const next = draft.trim();
+    const discard = discarded.current;
+    discarded.current = false;
+    setRenaming(null);
+    if (discard || !next || next === k.name) return;
+    void change(() => me.renameApiKey(k.id, next));
   };
 
   const live = keys?.filter((k) => !k.revokedAt) ?? [];
@@ -128,9 +147,26 @@ export function ApiKeysPage() {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className={clsx('truncate text-[13px]', k.revokedAt && 'text-faint line-through')}>
-                      {k.name}
-                    </span>
+                    {renaming === k.id ? (
+                      <input
+                        autoFocus
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.currentTarget.blur();
+                          if (e.key === 'Escape') {
+                            discarded.current = true;
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        onBlur={() => finishRename(k)}
+                        className="w-64 min-w-0 rounded-md border border-accent/50 bg-surface px-2 py-0.5 text-[13px] outline-none"
+                      />
+                    ) : (
+                      <span className={clsx('truncate text-[13px]', k.revokedAt && 'text-faint line-through')}>
+                        {k.name}
+                      </span>
+                    )}
                     <span className="shrink-0 rounded bg-bubble px-1.5 py-0.5 font-mono text-[11px] text-muted">
                       {k.prefix}…
                     </span>
@@ -157,9 +193,20 @@ export function ApiKeysPage() {
                     )}
                   </div>
                 </div>
-                {!k.revokedAt && (
-                  <Button variant="ghost" onClick={() => void revoke(k)}>
+                {!k.revokedAt && renaming !== k.id && (
+                  <Button variant="ghost" onClick={() => startRename(k)}>
+                    <Pencil size={14} />
+                    {t('Rename')}
+                  </Button>
+                )}
+                {k.revokedAt ? (
+                  <Button variant="ghost" onClick={() => void change(() => me.deleteApiKey(k.id))}>
                     <Trash2 size={14} />
+                    {t('Delete')}
+                  </Button>
+                ) : (
+                  <Button variant="ghost" onClick={() => void change(() => me.revokeApiKey(k.id))}>
+                    <Ban size={14} />
                     {t('Revoke')}
                   </Button>
                 )}
