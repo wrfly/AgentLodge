@@ -363,6 +363,8 @@ export const ru: Record<string, string> = {
   'key configured': 'ключ настроен',
   Enable: 'Включить',
   Disable: 'Отключить',
+  'Make administrator': 'Сделать администратором',
+  'Make standard user': 'Сделать обычным пользователем',
   'Exactly what goes upstream each time — system prompt, tool list, history. You only see your own.': 'Точное содержимое каждой отправки провайдеру — системный промпт, список инструментов, история. Видны только ваши.',
 
   // Admin: remaining

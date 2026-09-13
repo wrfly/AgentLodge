@@ -344,6 +344,8 @@ export const es: Record<string, string> = {
   'key configured': 'clave configurada',
   Enable: 'Activar',
   Disable: 'Desactivar',
+  'Make administrator': 'Hacer administrador',
+  'Make standard user': 'Pasar a usuario estándar',
   'Exactly what goes upstream each time — system prompt, tool list, history. You only see your own.': 'Exactamente lo que sale hacia el proveedor cada vez — prompt del sistema, lista de herramientas, historial. Solo ves lo tuyo.',
   'Invite codes': 'Códigos de invitación',
   'Egress traces': 'Registros salientes',

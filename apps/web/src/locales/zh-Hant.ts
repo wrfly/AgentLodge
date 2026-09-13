@@ -345,6 +345,8 @@ export const zhHant: Record<string, string> = {
   'key configured': '已設定金鑰',
   Enable: '啟用',
   Disable: '停用',
+  'Make administrator': '設為管理員',
+  'Make standard user': '設為一般使用者',
   'Exactly what goes upstream each time — system prompt, tool list, history. You only see your own.': '每一次出網的完整內容——系統提示、工具清單、歷史。你只看得到自己的。',
   'Invite codes': '邀請碼',
   'Egress traces': '出網記錄',

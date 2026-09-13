@@ -33,7 +33,6 @@ interface LegacyInvite {
   maxUses: number;
   usedCount: number;
   expiresAt?: string;
-  presetRole: string;
   presetTokenLimit: number | null;
   disabled: boolean;
   createdAt: string;
@@ -103,8 +102,8 @@ export function importLegacy(): void {
     run(
       `insert into invite_codes
          (id, code, created_by, note, max_uses, used_count, expires_at,
-          preset_role, preset_token_limit, disabled, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          preset_token_limit, disabled, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       i.id,
       i.code,
       i.createdBy ?? null,
@@ -112,7 +111,6 @@ export function importLegacy(): void {
       i.maxUses,
       i.usedCount,
       i.expiresAt ?? null,
-      i.presetRole,
       i.presetTokenLimit,
       flag(i.disabled),
       i.createdAt,

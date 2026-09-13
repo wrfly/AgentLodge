@@ -49,6 +49,7 @@
     "test:redo-trim": "tsx src/gateway/redo-trim.test.ts",
     "test:conversation-routes": "tsx src/app/routes/conversations.test.ts",
     "test:me-routes": "tsx src/app/routes/me.test.ts",
+    "test:admin-roles": "tsx src/app/routes/admin/users.test.ts",
     "test:buckets": "tsx src/core/db/buckets.test.ts"
   },
   "dependencies": {

@@ -666,6 +666,7 @@ Error: Usage endpoint is rate limited. Please try again in a moment.
 
 **认证**
 - 邀请码注册；**邮件邀请**（Resend / Brevo / SMTP 任选）：定向绑定邮箱，只有被邀请人能用
+- 第一个注册的账号是管理员，不能降级也不能停用；之后注册的都是普通用户，在后台用户列表里设为管理员
 - scrypt 口令哈希；登录失败 IP + 邮箱双维度锁定
 - access token（JWT / 15 分钟 / 只存内存）+ refresh token（30 天 / httpOnly cookie / 存库仅哈希）
 - **refresh token 轮转 + 重放检测**：旧 token 被二次使用即判定泄漏，撤销该用户全部会话

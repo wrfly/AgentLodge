@@ -158,7 +158,9 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       email,
       username,
       passwordHash: hashPassword(password),
-      role: invite.presetRole,
+      // The first account runs the deployment. Everyone after starts as a user, and an
+      // administrator promotes them from the user list
+      role: usersRepo.count() === 0 ? 'admin' : 'user',
       inviteCodeId: invite.id,
       tokenLimit: invite.presetTokenLimit,
     });

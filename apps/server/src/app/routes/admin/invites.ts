@@ -18,7 +18,6 @@ export function register(app: FastifyInstance): void {
       note?: string;
       maxUses?: number;
       expiresInDays?: number;
-      presetRole?: usersRepo.Role;
       presetTokenLimit?: number | null;
     };
     const count = Math.min(Math.max(body.count ?? 1, 1), 50);
@@ -32,7 +31,6 @@ export function register(app: FastifyInstance): void {
         note: body.note,
         maxUses: body.maxUses,
         expiresAt,
-        presetRole: body.presetRole,
         presetTokenLimit: body.presetTokenLimit,
       }),
     );
@@ -52,7 +50,6 @@ export function register(app: FastifyInstance): void {
       email?: string;
       note?: string;
       expiresInDays?: number;
-      presetRole?: usersRepo.Role;
       presetTokenLimit?: number | null;
     };
     const email = (body.email ?? '').trim().toLowerCase();
@@ -71,7 +68,6 @@ export function register(app: FastifyInstance): void {
       note: body.note,
       maxUses: 1,
       expiresAt,
-      presetRole: body.presetRole,
       presetTokenLimit: body.presetTokenLimit,
     });
 

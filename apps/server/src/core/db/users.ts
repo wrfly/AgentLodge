@@ -149,6 +149,11 @@ export function list(): User[] {
   return all<UserRow>('select * from users order by created_at').map(toUser);
 }
 
+/** The first account ever registered: always an administrator, and never disabled */
+export function firstId(): string | undefined {
+  return get<{ id: string }>('select id from users order by created_at, rowid limit 1')?.id;
+}
+
 /* ---------------- Writes ---------------- */
 
 export interface CreateUserInput {

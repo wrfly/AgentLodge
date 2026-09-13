@@ -363,6 +363,8 @@ export const ja: Record<string, string> = {
   'key configured': 'key 設定済み',
   Enable: '有効にする',
   Disable: '無効にする',
+  'Make administrator': '管理者にする',
+  'Make standard user': '一般ユーザーにする',
   'Exactly what goes upstream each time — system prompt, tool list, history. You only see your own.': '毎回上流に送られる実際の内容です。システムプロンプト、ツール一覧、履歴。自分のものだけが表示されます。',
 
   // Admin: remaining

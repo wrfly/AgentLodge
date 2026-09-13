@@ -13,7 +13,6 @@ import {
   Empty,
   Field,
   Input,
-  Select,
   Spinner,
   fmtTokens,
   mToTokens,
@@ -49,7 +48,6 @@ export function Invites() {
   const [email, setEmail] = useState('');
   const [limit, setLimit] = useState('');
   const [days, setDays] = useState('7');
-  const [role, setRole] = useState<'user' | 'admin'>('user');
 
   const load = () => admin.invites().then(setInvites).catch(() => {});
 
@@ -66,7 +64,6 @@ export function Invites() {
         email: email.trim(),
         presetTokenLimit: limit ? mToTokens(limit) : null,
         expiresInDays: Number(days) || 7,
-        presetRole: role,
       });
       setEmail('');
       if (res.mail.sent) {
@@ -96,7 +93,6 @@ export function Invites() {
         count: 1,
         presetTokenLimit: limit ? mToTokens(limit) : null,
         expiresInDays: Number(days) || undefined,
-        presetRole: role,
       });
       void load();
     } finally {
@@ -137,14 +133,6 @@ export function Invites() {
                 onChange={(e) => setDays(e.target.value.replace(/[^\d]/g, ''))}
                 inputMode="numeric"
               />
-            </Field>
-          </div>
-          <div className="w-28">
-            <Field label={t('Role')}>
-              <Select value={role} onChange={(e) => setRole(e.target.value as 'user' | 'admin')}>
-                <option value="user">{t('Standard user')}</option>
-                <option value="admin">{t('Administrator')}</option>
-              </Select>
             </Field>
           </div>
           <div className="flex gap-2 pb-3.5">

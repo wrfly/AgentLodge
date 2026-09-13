@@ -52,6 +52,7 @@ flowchart LR
 - [x] Access token + refresh-token rotation; **a replayed token is treated as a leak** and
       every session for that user is revoked
 - [x] Password change, password reset, multi-device management, instant lockout on suspend
+- [x] The first account is always an administrator and cannot be demoted or suspended; anyone else is promoted from the user list
 - [x] Failed logins throttled by IP and by address, separately
 
 **Metering and quota**

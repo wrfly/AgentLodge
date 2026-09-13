@@ -518,6 +518,8 @@ export const publicApi = {
 /* ---------------- Admin ---------------- */
 
 export interface AdminUser extends PublicUser {
+  /** The first account: always an active administrator, so it cannot be demoted or disabled */
+  first: boolean;
   quota: {
     /** The three ceilings, in the unit limitKind names. null means that window is unlimited. */
     window: number | null;
@@ -541,7 +543,6 @@ export interface InviteCode {
   maxUses: number;
   usedCount: number;
   expiresAt?: string;
-  presetRole: 'user' | 'admin';
   presetTokenLimit: number | null;
   disabled: boolean;
   createdAt: string;
@@ -976,14 +977,12 @@ export const admin = {
     note?: string;
     maxUses?: number;
     expiresInDays?: number;
-    presetRole?: 'user' | 'admin';
     presetTokenLimit?: number | null;
   }) => request<InviteCode[]>('/api/admin/invites', { method: 'POST', body: JSON.stringify(input) }),
   emailInvite: (input: {
     email: string;
     note?: string;
     expiresInDays?: number;
-    presetRole?: 'user' | 'admin';
     presetTokenLimit?: number | null;
   }) =>
     request<{ invite: InviteCode; mail: { sent: boolean; error?: string }; link?: string }>(

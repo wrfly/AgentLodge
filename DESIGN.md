@@ -568,7 +568,7 @@ refresh token）。订阅可以在控制台登录（authorization code + PKCE，
 | 表 | 装什么 |
 |---|---|
 | `users` / `user_quotas` | 账号，以及每人的额度、周期、软硬限 |
-| `invite_codes` | 邀请码，可定向到邮箱、可预置角色与额度 |
+| `invite_codes` | 邀请码，可定向到邮箱、可预置额度 |
 | `auth_sessions` | refresh token 的哈希，一台设备一行，带轮转来源 |
 | `password_resets` | 一次性重置令牌的哈希 |
 | `api_keys` | 用户自带 CLI 的长期 key，存哈希 + 展示用前缀 |
@@ -641,7 +641,7 @@ credential-manager 里（见 §3.4）。网关每次请求经 Unix socket 换一
 POST /api/auth/register  { email, username, password, inviteCode }
   1. 事务内 SELECT ... FOR UPDATE 锁定 invite_codes 行
   2. 校验：!disabled && used_count < max_uses && (expires_at is null || > now())
-  3. 创建 user（argon2id，memoryCost=64MB, timeCost=3）
+  3. 创建 user（argon2id，memoryCost=64MB, timeCost=3）；库里还没有账号时这个是管理员，其余一律普通用户
   4. 用邀请码的 preset_* 初始化 user_quotas；未设置则用全局默认
   5. used_count += 1
   6. 不自动创建容器（首次对话时惰性创建）
@@ -1496,9 +1496,8 @@ GET    /api/usage/conversations      # 按会话排行
 # 管理员
 GET    /api/admin/overview
 GET    /api/admin/users              ?q&sort
-PATCH  /api/admin/users/:id/quota
+PATCH  /api/admin/users/:id          额度、状态、角色；第一个账号不能降级或停用
 POST   /api/admin/users/:id/reset-usage
-POST   /api/admin/users/:id/suspend
 POST   /api/admin/users/:id/container/restart
 GET    /api/admin/invites
 POST   /api/admin/invites

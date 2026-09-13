@@ -363,6 +363,8 @@ export const zh: Record<string, string> = {
   'key configured': '已配 key',
   Enable: '启用',
   Disable: '停用',
+  'Make administrator': '设为管理员',
+  'Make standard user': '设为普通用户',
   'Exactly what goes upstream each time — system prompt, tool list, history. You only see your own.': '每次发往上游的真实内容 —— 系统提示词、工具清单、历史消息。只看得到自己的。',
 
   // Admin: remaining

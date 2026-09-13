@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import { all, bool, flag, get, nowIso, run } from './index.js';
-import type { Role } from './users.js';
 
 export interface InviteCode {
   id: string;
@@ -12,7 +11,6 @@ export interface InviteCode {
   maxUses: number;
   usedCount: number;
   expiresAt?: string;
-  presetRole: Role;
   presetTokenLimit: number | null;
   disabled: boolean;
   createdAt: string;
@@ -28,7 +26,6 @@ interface Row {
   max_uses: number;
   used_count: number;
   expires_at: string | null;
-  preset_role: string;
   preset_token_limit: number | null;
   disabled: number;
   created_at: string;
@@ -44,7 +41,6 @@ const toInvite = (r: Row): InviteCode => ({
   maxUses: r.max_uses,
   usedCount: r.used_count,
   expiresAt: r.expires_at ?? undefined,
-  presetRole: r.preset_role as Role,
   presetTokenLimit: r.preset_token_limit,
   disabled: bool(r.disabled),
   createdAt: r.created_at,
@@ -65,7 +61,6 @@ export interface CreateInviteInput {
   note?: string;
   maxUses?: number;
   expiresAt?: string;
-  presetRole?: Role;
   presetTokenLimit?: number | null;
 }
 
@@ -77,8 +72,8 @@ export function create(input: CreateInviteInput): InviteCode {
   run(
     `insert into invite_codes
        (id, code, email, created_by, note, max_uses, used_count, expires_at,
-        preset_role, preset_token_limit, disabled, created_at)
-     values (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?)`,
+        preset_token_limit, disabled, created_at)
+     values (?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?)`,
     id,
     code,
     input.email?.trim().toLowerCase() ?? null,
@@ -86,7 +81,6 @@ export function create(input: CreateInviteInput): InviteCode {
     input.note ?? null,
     input.maxUses ?? 1,
     input.expiresAt ?? null,
-    input.presetRole ?? 'user',
     input.presetTokenLimit ?? null,
     nowIso(),
   );
