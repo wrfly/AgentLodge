@@ -344,6 +344,8 @@ export const fr: Record<string, string> = {
   'key configured': 'clé configurée',
   Enable: 'Activer',
   Disable: 'Désactiver',
+  'Make administrator': 'Nommer administrateur',
+  'Make standard user': 'Repasser en utilisateur standard',
   'Exactly what goes upstream each time — system prompt, tool list, history. You only see your own.': 'Exactement ce qui part vers le fournisseur à chaque fois — invite système, liste d\'outils, historique. Vous ne voyez que les vôtres.',
   'Invite codes': 'Codes d\'invitation',
   'Egress traces': 'Enregistrements sortants',

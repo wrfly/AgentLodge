@@ -138,12 +138,12 @@ providersRepo.seedFromSettings();
 // Move the model list from global settings onto the provider (idempotent; the old rows are
 // deleted afterwards)
 
-/** A fresh deployment: mint a bootstrap administrator invite code and print it */
+/** A fresh deployment: mint the invite code the first account, the administrator, registers with */
 function bootstrapInvite(): void {
   if (usersRepo.count() > 0) return;
   const unused = invitesRepo.list().some((i) => !i.disabled && i.usedCount < i.maxUses);
   if (unused) return;
-  const invite = invitesRepo.create({ note: 'bootstrap admin', maxUses: 1, presetRole: 'admin' });
+  const invite = invitesRepo.create({ note: 'bootstrap admin', maxUses: 1 });
   console.log(`\n  ╭─────────────────────────────────────────────╮`);
   console.log(`  │  First administrator invite code             │`);
   console.log(`  │  ${invite.code.padEnd(43)}│`);

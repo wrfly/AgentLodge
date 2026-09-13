@@ -19,6 +19,7 @@ export function register(app: FastifyInstance): void {
     // count a top-up against a window the row above it has already ended
     const now = new Date();
     const windowBounds = quota.boundsOf('window', now);
+    const firstId = usersRepo.firstId();
     return usersRepo.list().map((u) => {
       const q = usersRepo.getQuota(u.id);
       // The 5-hour window is the one that bites first, so it is the one the list shows —
@@ -27,6 +28,8 @@ export function register(app: FastifyInstance): void {
       const windowStart = quota.countStartOf(q, windowBounds.start);
       return {
         ...usersRepo.toPublic(u),
+        // Always an active administrator, so the list offers no way to demote or disable it
+        first: u.id === firstId,
         quota: {
           // The configured ceilings, and only those: the edit form is seeded from them, so
           // folding a top-up in here would bake a temporary allowance into a permanent limit
@@ -90,6 +93,14 @@ export function register(app: FastifyInstance): void {
     };
     const user = usersRepo.findById(id);
     if (!user) return reply.code(404).send({ error: tr(req, 'No such user') });
+
+    if (body.role !== undefined && body.role !== 'user' && body.role !== 'admin')
+      return reply.code(400).send({ error: tr(req, 'Unknown role') });
+    if (body.status !== undefined && body.status !== 'active' && body.status !== 'suspended')
+      return reply.code(400).send({ error: tr(req, 'Unknown status') });
+    // The first account is always an active administrator
+    if ((body.role === 'user' || body.status === 'suspended') && id === usersRepo.firstId())
+      return reply.code(400).send({ error: tr(req, 'The first account cannot be disabled or demoted') });
 
     // Never demote or disable the last administrator, or nobody can reach the console
     const admins = usersRepo.list().filter((u) => u.role === 'admin' && u.status === 'active');

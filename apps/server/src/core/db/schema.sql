@@ -66,7 +66,6 @@ create table if not exists invite_codes (
   max_uses           integer not null default 1,
   used_count         integer not null default 0,
   expires_at         text,
-  preset_role        text not null default 'user',
   preset_token_limit integer,
   disabled           integer not null default 0,
   created_at         text not null,

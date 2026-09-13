@@ -4,7 +4,7 @@
  * Split out of AdminPage.tsx, which had grown to 2700 lines; one file per tab now.
  */
 import { useEffect, useState } from 'react';
-import { Ban, RotateCcw, Wallet, UserCheck } from 'lucide-react';
+import { Ban, RotateCcw, ShieldMinus, ShieldPlus, Wallet, UserCheck } from 'lucide-react';
 import clsx from 'clsx';
 import { admin, type AdminUser, fmtMoney, type QuotaScope } from '../../lib/api';
 import {
@@ -104,6 +104,7 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
   const [limitMonth, setLimitMonth] = useState(asM(user.quota.month));
   const [hardStop, setHardStop] = useState(user.quota.hardStop);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const byCost = user.quota.limitKind === 'cost';
   // The list shows the 5-hour window: it is the one that bites first, and usage.period is
@@ -156,17 +157,25 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
     }
   };
 
-  const toggleStatus = async () => {
+  /** A change the server can refuse, such as leaving no active administrator, says why under the row */
+  const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
+    setErr(null);
     try {
-      await admin.updateUser(user.id, {
-        status: user.status === 'active' ? 'suspended' : 'active',
-      });
+      await fn();
       onChange();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
+
+  const toggleStatus = () =>
+    act(() => admin.updateUser(user.id, { status: user.status === 'active' ? 'suspended' : 'active' }));
+
+  const toggleRole = () =>
+    act(() => admin.updateUser(user.id, { role: user.role === 'admin' ? 'user' : 'admin' }));
 
   return (
     <div className="border-b border-line px-1 py-3 last:border-0">
@@ -224,7 +233,7 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
           </div>
         </div>
 
-        <div className="flex shrink-0 gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           <Button variant="ghost" onClick={() => setTopup((v) => !v)}>
             <Wallet size={12} />
             {t('Top up')}
@@ -241,12 +250,23 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
             <RotateCcw size={12} />
             {t('Reset to zero')}
           </Button>
-          <Button variant="ghost" onClick={() => void toggleStatus()} disabled={busy}>
-            {user.status === 'active' ? <Ban size={12} /> : <UserCheck size={12} />}
-            {t(user.status === 'active' ? 'Disable' : 'Enable')}
-          </Button>
+          {!user.first && (
+            <Button variant="ghost" onClick={() => void toggleRole()} disabled={busy}>
+              {user.role === 'admin' ? <ShieldMinus size={12} /> : <ShieldPlus size={12} />}
+              {user.role === 'admin' ? t('Make standard user') : t('Make administrator')}
+            </Button>
+          )}
+          {/* The first account cannot be disabled, but one that is disabled can still be enabled */}
+          {(!user.first || user.status === 'suspended') && (
+            <Button variant="ghost" onClick={() => void toggleStatus()} disabled={busy}>
+              {user.status === 'active' ? <Ban size={12} /> : <UserCheck size={12} />}
+              {t(user.status === 'active' ? 'Disable' : 'Enable')}
+            </Button>
+          )}
         </div>
       </div>
+
+      {err && <div className="mt-2 text-[12px] text-danger">{err}</div>}
 
       {lastReset !== null && (
         <div className="mt-2 flex items-center gap-2 rounded-lg border border-line bg-elevated px-3 py-2 text-[12.5px]">
