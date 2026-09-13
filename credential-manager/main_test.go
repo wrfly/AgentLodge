@@ -556,6 +556,10 @@ func TestConsoleSignInCompletesTheCodeExchange(t *testing.T) {
 	if q.Get("state") == "" || q.Get("client_id") != "client-id" {
 		t.Fatalf("authorize url missing parameters: %s", authorizeURL)
 	}
+	// Shaped like the CLI's: its parameter order, and a 32-byte state.
+	if !strings.HasPrefix(u.RawQuery, "code=true&client_id=client-id&response_type=code&redirect_uri=") || len(q.Get("state")) != 43 {
+		t.Fatalf("authorize url is not shaped like the CLI's: %s", authorizeURL)
+	}
 
 	// Nothing is stored until the code comes back.
 	if len(a.list()) != 0 {
@@ -567,9 +571,8 @@ func TestConsoleSignInCompletesTheCodeExchange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finishLogin: %v", err)
 	}
-	// Verbatim, `#state` and all: that is what the CLI sends, and the endpoint is the
-	// one that decides what the two halves mean
-	if gotCode != "THE-CODE#"+q.Get("state") {
+	// The code half alone, as `claude login` sends it; the state half stays here.
+	if gotCode != "THE-CODE" {
 		t.Fatalf("code sent upstream = %q", gotCode)
 	}
 	if gotRedirect != cfg.logins[kindClaude].redirectURI {
@@ -610,6 +613,14 @@ func TestConsoleSignInRejectsAMismatchedState(t *testing.T) {
 	}
 	if _, err := a.finishLogin(context.Background(), pending.ID, "THE-CODE#someone-elses-state"); err == nil {
 		t.Fatal("want an error when the state does not match")
+	}
+	// Half a paste carries no state to check, so it is refused as well — and the
+	// sign-in stays open for the whole code.
+	if _, err := a.finishLogin(context.Background(), pending.ID, "THE-CODE"); err == nil {
+		t.Fatal("want an error when the state half is missing")
+	}
+	if _, open := a.logins[pending.ID]; !open {
+		t.Fatal("a refused paste must leave the sign-in open")
 	}
 }
 
