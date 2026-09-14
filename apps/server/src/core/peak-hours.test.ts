@@ -122,13 +122,18 @@ console.log('\n=== how it reads in the console ===');
 {
   ok(
     'a contiguous run of days is a range',
-    describePeak(DEEPSEEK) === 'Mon–Fri 01:00–04:00, 06:00–10:00 UTC',
+    describePeak(DEEPSEEK) === 'Mon–Fri 01–04, 06–10 UTC',
     describePeak(DEEPSEEK),
   );
   ok(
     'a gap in the days is listed rather than smoothed over',
-    describePeak({ days: [1, 2, 4], hours: [[1, 2]] }) === 'Mon, Tue, Thu 01:00–02:00 UTC',
+    describePeak({ days: [1, 2, 4], hours: [[1, 2]] }) === 'Mon, Tue, Thu 01–02 UTC',
     describePeak({ days: [1, 2, 4], hours: [[1, 2]] }),
+  );
+  ok(
+    'a range with minutes still prints them',
+    describePeak({ days: [1], hours: [[1.5, 2]] }) === 'Mon 01:30–02 UTC',
+    describePeak({ days: [1], hours: [[1.5, 2]] }),
   );
   ok('no schedule describes as nothing', describePeak(null) === '');
 }

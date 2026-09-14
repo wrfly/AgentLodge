@@ -604,6 +604,7 @@ export const zh: Record<string, string> = {
   'Cache read': '缓存读',
   'Cache write': '缓存写',
   'Time of day': '时段',
+  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': '这张表里有不止一种货币（{list}），而金额是直接相加的。在它们统一之前，所有总计都没有意义。',
   'in effect now': '当前生效',
   'A price is a number written with a dot — 0.15, not 0,15': '价格要写成用点的数字 —— 0.15,不是 0,15',
   'in use since {when}': '自 {when} 起生效',

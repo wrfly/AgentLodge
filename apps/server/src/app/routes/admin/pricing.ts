@@ -63,7 +63,12 @@ export function register(app: FastifyInstance): void {
     const FIELDS = ['priceInput', 'priceCacheRead', 'priceCacheWrite', 'priceOutput'] as const;
     for (const f of FIELDS) {
       const v = body[f];
-      if (v === undefined || v === null) continue; // absent means zero, which is a real price
+      // Absent is a caller that did not mention this price, and zero is a fair reading of
+      // that. **Null is not absent**: `JSON.stringify` writes NaN as null, so a field that
+      // arrives null is precisely the failure this check exists for — a number the sender
+      // could not represent. Letting it through as zero is the original bug with an extra
+      // step.
+      if (v === undefined) continue;
       if (typeof v !== 'number' || !Number.isFinite(v)) {
         return reply.code(400).send({ error: tr(req, 'Prices have to be numbers, written with a dot') });
       }

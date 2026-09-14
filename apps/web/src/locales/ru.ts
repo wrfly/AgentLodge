@@ -604,6 +604,7 @@ export const ru: Record<string, string> = {
   'Cache read': 'Чтение кэша',
   'Cache write': 'Запись кэша',
   'Time of day': 'Время суток',
+  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'В этой таблице больше одной валюты ({list}), а суммы складываются напрямую. Пока они не совпадут, любой итог бессмыслен.',
   'in effect now': 'действует сейчас',
   'A price is a number written with a dot — 0.15, not 0,15': 'Цена — это число с точкой: 0.15, а не 0,15',
   'in use since {when}': 'действует с {when}',

@@ -119,10 +119,14 @@ export function describePeak(windows: PeakWindows | null): string {
     ? `${NAMES[sorted[0]!]}–${NAMES[sorted[sorted.length - 1]!]}`
     : sorted.map((d) => NAMES[d]).join(', ');
 
+  // `01–04` rather than `01:00–04:00`: this goes in a table cell beside four money columns,
+  // and the minutes are zero in every schedule anyone has published. A range that does carry
+  // minutes prints them.
   const pad = (n: number) => {
     const h = Math.floor(n);
     const m = Math.round((n - h) * 60);
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    const hh = String(h).padStart(2, '0');
+    return m === 0 ? hh : `${hh}:${String(m).padStart(2, '0')}`;
   };
   const hours = windows.hours.map(([from, to]) => `${pad(from)}–${pad(to)}`).join(', ');
   return `${days} ${hours} UTC`;

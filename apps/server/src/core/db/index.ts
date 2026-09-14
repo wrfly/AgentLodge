@@ -128,7 +128,7 @@ function hasTables(d: DatabaseSync): boolean {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -460,7 +460,29 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
     ];
 
     const now = new Date().toISOString();
-    for (const c of corrections) {
+    /*
+     * The published DeepSeek rates are in US dollars, and this table is summed as if every
+     * row were the same money — the seed says so in as many words. So on a deployment
+     * billing in anything else, writing these numbers in is not a correction: it is two
+     * currencies added together, which is a number with no meaning and no error attached.
+     *
+     * There is no conversion to make here either. A rate is a decision with a date on it
+     * and nobody in this process has one. So the prices are named in the log and left to
+     * the person who does.
+     */
+    const [cur] = d
+      .prepare("select value from settings where key = 'billing.currency'")
+      .all() as Array<{ value: string }>;
+    const currency = cur?.value ?? 'USD';
+    if (currency !== 'USD') {
+      console.log(`[db] DeepSeek's 2026-09-10 rates are in USD and this table bills in ${currency},`);
+      console.log('     so they have not been written in. Per million tokens, in USD:');
+      console.log('       deepseek-flash    in 0.15  cache read 0.003  cache write 0.15  out 0.60');
+      console.log('       deepseek-v4-pro   in 0.66  cache read 0.022  cache write 0.66  out 1.98');
+      console.log(`     Convert at your own rate and add them under Settings → Price table.`);
+    }
+
+    for (const c of currency === 'USD' ? corrections : []) {
       const [row] = d
         .prepare(
           `select price_input as priceInput, currency from model_pricing
@@ -484,7 +506,7 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
            (model, provider_id, currency, price_input, price_cache_read, price_cache_write,
             price_output, effective_from, note, created_at)
          values (?, null, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(c.model, row?.currency ?? 'USD', c.in, c.cacheRead, c.cacheWrite, c.out, now, c.note, now);
+      ).run(c.model, currency, c.in, c.cacheRead, c.cacheWrite, c.out, now, c.note, now);
       console.log(`[db] priced ${c.model} at DeepSeek's 2026-09-10 rates${row ? '' : ' (was missing)'}`);
     }
   }
@@ -531,6 +553,59 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
       d.prepare('update model_pricing set peak_multiplier = 2, peak_windows = ? where id = ?')
         .run(WINDOWS, row.id);
       console.log(`[db] ${s.model} now doubles during DeepSeek's peak hours`);
+    }
+  }
+
+  if (from < 15) {
+    /*
+     * Undo the damage migration 13 did to a table that does not bill in dollars.
+     *
+     * It wrote DeepSeek's published USD rates in, taking the currency from whatever row it
+     * was correcting and falling back to 'USD' when there was none to correct — which for
+     * `deepseek-flash`, the row that had never existed, was always. On a deployment billing
+     * in CNY the result was three USD rows beside the yuan ones, and every consumer sums
+     * `cost_micro` across the lot: a bill that is two currencies added together, a quota
+     * counted in the same mixture, and nothing anywhere to say so.
+     *
+     * The repair is to take them back out, not to convert them — the rate is a decision
+     * with a date on it and this process has neither. One consistent currency, even without
+     * a DeepSeek price, beats a table whose total means nothing; without a row of its own
+     * the model falls to the catch-all, which is where it was before 13 ran.
+     *
+     * Only rows still holding exactly what 13 wrote are removed, on the same principle as
+     * 13 and 14: anything an administrator has touched is their answer, not ours.
+     */
+    const [cur] = d
+      .prepare("select value from settings where key = 'billing.currency'")
+      .all() as Array<{ value: string }>;
+    const currency = cur?.value ?? 'USD';
+    if (currency !== 'USD') {
+      const WROTE = [
+        { model: 'deepseek-flash', input: 150_000, output: 600_000 },
+        { model: 'deepseek-v4-pro', input: 660_000, output: 1_980_000 },
+        { model: 'deepseek-v4-flash', input: 150_000, output: 600_000 },
+      ];
+      let removed = 0;
+      for (const w of WROTE) {
+        removed += Number(
+          d
+            .prepare(
+              `delete from model_pricing
+               where model = ? and provider_id is null and currency = 'USD'
+                 and price_input = ? and price_output = ?`,
+            )
+            .run(w.model, w.input, w.output).changes,
+        );
+      }
+      if (removed) {
+        console.log(`[db] removed ${removed} USD price row(s) from a table billing in ${currency}`);
+        console.log('     DeepSeek is unpriced again and falls to the catch-all. Its published');
+        console.log('     rates per million tokens, in USD, to convert and enter yourself:');
+        console.log('       deepseek-flash    in 0.15  cache read 0.003  cache write 0.15  out 0.60');
+        console.log('       deepseek-v4-pro   in 0.66  cache read 0.022  cache write 0.66  out 1.98');
+        console.log("     Both double Mon–Fri 01:00–04:00 and 06:00–10:00 UTC — the console's");
+        console.log('     price form has a multiplier and a schedule for that.');
+      }
     }
   }
 

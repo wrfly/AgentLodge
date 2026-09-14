@@ -577,6 +577,7 @@ export const pt: Record<string, string> = {
   'Cache read': 'Leitura de cache',
   'Cache write': 'Escrita de cache',
   'Time of day': 'Faixa horária',
+  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'Esta tabela tem mais do que uma moeda ({list}) e os valores são somados. Até coincidirem, qualquer total não significa nada.',
   'in effect now': 'em vigor agora',
   'A price is a number written with a dot — 0.15, not 0,15': 'Um preço é um número escrito com ponto — 0.15, não 0,15',
   'in use since {when}': 'em uso desde {when}',

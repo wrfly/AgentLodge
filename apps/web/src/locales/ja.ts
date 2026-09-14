@@ -604,6 +604,7 @@ export const ja: Record<string, string> = {
   'Cache read': 'キャッシュ読取',
   'Cache write': 'キャッシュ書込',
   'Time of day': '時間帯',
+  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'この表に複数の通貨（{list}）が混在しており、金額はそのまま合算されます。統一するまで、どの合計も意味を持ちません。',
   'in effect now': '現在適用中',
   'A price is a number written with a dot — 0.15, not 0,15': '価格は小数点にピリオドを使った数字で入力してください（0,15 ではなく 0.15）',
   'in use since {when}': '{when} から適用',

@@ -578,6 +578,7 @@ export const zhHant: Record<string, string> = {
   'Cache read': '快取讀',
   'Cache write': '快取寫',
   'Time of day': '時段',
+  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': '這張表裡有不只一種貨幣（{list}），而金額是直接相加的。在它們統一之前，所有總計都沒有意義。',
   'in effect now': '目前生效',
   'A price is a number written with a dot — 0.15, not 0,15': '價格要寫成用點的數字 —— 0.15,不是 0,15',
   'in use since {when}': '自 {when} 起生效',
