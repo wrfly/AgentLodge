@@ -103,9 +103,10 @@ export function initDb(): DatabaseSync {
    * A file with no tables in it has nothing to repair. schema.sql builds it complete and
    * the call below only stamps the version, which is why that call stays where it is.
    */
-  if (hasTables(db)) migrate(db);
+  const existed = hasTables(db);
+  if (existed) migrate(db);
   db.exec(fs.readFileSync(schemaPath, 'utf8'));
-  migrate(db);
+  migrate(db, { fresh: !existed });
   console.log(`[db] ${file}`);
   return db;
 }
@@ -135,10 +136,29 @@ export function columns(d: DatabaseSync, table: string): Set<string> {
   );
 }
 
-function migrate(d: DatabaseSync): void {
+function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
   const [row] = d.prepare('pragma user_version').all() as Array<{ user_version: number }>;
   const from = row?.user_version ?? 0;
   if (from >= SCHEMA_VERSION) return;
+
+  /*
+   * A file schema.sql has just built is already current, and stamping it is the whole of
+   * what this call is for on that path — the comment above initDb's second migrate() says
+   * so, and every step below is written for a database that predates it.
+   *
+   * The schema steps would be harmless here: each one asks whether a column is missing and
+   * a new file has them all. A step that writes **data** is not, and one did. Migration 13
+   * prices DeepSeek, and on a new file it ran with nothing to repair, inserted its three
+   * rows into an empty table, and left seedDefaults() looking at a table that was no longer
+   * empty — so it returned without seeding, and the install came up with three DeepSeek
+   * prices, no Claude prices and no '*' catch-all. Nothing failed: costMicro simply returned
+   * 0 for every Claude model, and billable() fell through to the flat weights, which is the
+   * accounting this table exists to replace.
+   */
+  if (opts.fresh) {
+    d.exec(`pragma user_version = ${SCHEMA_VERSION}`);
+    return;
+  }
 
   if (from < 1) {
     /*
