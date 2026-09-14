@@ -645,6 +645,16 @@ export interface PricingRow {
   priceOutput: number;
   effectiveFrom: string;
   note?: string;
+  /** What the four prices are multiplied by inside the schedule below; 1 means no schedule */
+  peakMultiplier: number;
+  /**
+   * The schedule as a sentence — `Mon–Fri 01:00–04:00, 06:00–10:00 UTC` — and whether this
+   * instant is inside it. Both are rendered by the server, beside the code that evaluates
+   * the windows: a second copy here could describe a surcharge other than the one being
+   * charged.
+   */
+  peakLabel: string;
+  peakNow: boolean;
 }
 
 export interface AuditProxyConfig {
