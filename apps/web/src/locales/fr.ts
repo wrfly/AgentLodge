@@ -519,6 +519,8 @@ export const fr: Record<string, string> = {
   'None': 'Aucun',
   'Default model for Claude': 'Modèle par défaut pour Claude',
   'Default model for Codex': 'Modèle par défaut pour Codex',
+  'Model for titles and summaries': 'Modèle pour les titres et les résumés',
+  'Used for naming conversations, summarising them and writing the profile — never for a reply. A cheap model is the right choice here. Empty follows the main model.': 'Sert à nommer les conversations, à les résumer et à écrire le profil — jamais à répondre. Un modèle bon marché suffit ici. Vide suit le modèle principal.',
   'Empty leaves it to the CLI.': 'Vide laisse le choix à la CLI',
   'Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the manual "Pull from the upstream" button still works.': 'Interroge chaque amont une fois par heure et ajoute les noms manquants. Rien n\\\'est supprimé ni réordonné, et un modèle désactivé le reste. Le bouton « Charger depuis l\\\'amont » fonctionne toujours.',
   'How to reach each upstream: address, protocol, credential. Which one serves a request follows from the model it asks for — see Models below.': 'Comment joindre chaque amont : adresse, protocole, identifiant. Lequel traite une requête découle du modèle demandé — voir « Modèles » ci-dessous.',

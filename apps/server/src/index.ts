@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
@@ -27,16 +28,7 @@ import { gatewayEnabled } from './app/agents/provider.js';
 import * as containers from './app/containers.js';
 import { legacySendgrid } from './app/mail.js';
 import { getString } from './core/db/settings.js';
-
-/**
- * How many reverse-proxy hops to trust. A number is a hop count; an IP or CIDR string
- * works too (proxy-addr's syntax). 0 trusts nobody and falls back to the socket peer.
- */
-function trustProxyOption(): number | string {
-  const raw = process.env.TRUST_PROXY ?? '1';
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : raw;
-}
+import { trustProxyOption } from './core/trust-proxy.js';
 
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? 'warn' },
@@ -52,11 +44,9 @@ const app = Fastify({
    *                 password is checked, so even a correct login cannot clear the counter —
    *                 there is nothing to do but wait it out.
    *
-   * The value is **a hop count**, not `true`: Caddy's reverse_proxy **appends** to
-   * X-Forwarded-For rather than replacing it, so `true` — trust the whole chain — takes the
-   * leftmost entry, which the client wrote, handing the IP to an attacker to forge. `1`
-   * takes the entry Caddy appended, which is the peer it actually saw. Add a CDN in front
-   * and it becomes 2.
+   * **Not `true`**, which trusts the whole chain and so takes the leftmost X-Forwarded-For
+   * entry — the one the client wrote. Which proxies are named, and why it is no longer a
+   * hop count, is in core/trust-proxy.ts.
    *
    * Connected directly (npm run dev, no proxy) there is no XFF header and the socket peer is
    * used, which is unaffected.
@@ -257,6 +247,34 @@ const containerProbe = await containers.probe();
 console.log(
   `  container isolation ${containers.enabled() ? (containerProbe.ok ? '✓ ' : '✗ ') : '— '}${containerProbe.detail}`,
 );
+
+/*
+ * Whether this machine can hold the containers it is configured to create.
+ *
+ * The limit is per container and the containers are per user, so the number that matters
+ * is the product — and nothing in the configuration mentions the machine, so an allowance
+ * that is fine on paper and impossible in practice looks exactly like one that is fine.
+ * What it costs is not an error either: the kernel picks a process and kills it, and what
+ * gets killed is whatever was biggest at that moment, which is as likely to be the
+ * application as the agent that asked for the memory.
+ *
+ * Two is the smallest interesting number — one person working alone is not a deployment —
+ * and the services themselves need roughly 512 MB on top.
+ */
+if (runsApp && containers.enabled()) {
+  const totalMb = Math.round(os.totalmem() / 1024 / 1024);
+  const needed = config.containerMemoryMb * 2 + 512;
+  if (totalMb < needed) {
+    console.log(
+      `  ⚠️  ${totalMb} MB of memory, and two concurrent agents would ask for ${needed} MB`,
+    );
+    console.log(
+      `      CONTAINER_MEMORY_MB is ${config.containerMemoryMb}. Two people mid-turn at once`,
+    );
+    console.log('      is enough to have the kernel kill something — and what it kills may');
+    console.log(`      be this process. Lower it to about ${Math.floor((totalMb - 512) / 2)}, or give the machine more.`);
+  }
+}
 // What the engine still has from before this process started: containers to track, and
 // turns that were running when the previous process went away
 if (runsApp && containerProbe.ok) {

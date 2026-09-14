@@ -546,6 +546,8 @@ export const ru: Record<string, string> = {
   'None': 'Нет',
   'Default model for Claude': 'Модель по умолчанию для Claude',
   'Default model for Codex': 'Модель по умолчанию для Codex',
+  'Model for titles and summaries': 'Модель для заголовков и сводок',
+  'Used for naming conversations, summarising them and writing the profile — never for a reply. A cheap model is the right choice here. Empty follows the main model.': 'Используется для названий бесед, их сводок и портрета — никогда для ответа. Здесь подойдёт дешёвая модель. Пусто — следует основной модели.',
   'Empty leaves it to the CLI.': 'Пусто — решает CLI',
   'Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the manual "Pull from the upstream" button still works.': 'Раз в час спрашивает у каждого апстрима список моделей и добавляет недостающие названия. Ничего не удаляется и не переупорядочивается, отключённая модель остаётся отключённой. Кнопка «Загрузить из апстрима» работает в любом случае.',
   'How to reach each upstream: address, protocol, credential. Which one serves a request follows from the model it asks for — see Models below.': 'Как достучаться до каждого апстрима: адрес, протокол, учётные данные. Какой из них обслужит запрос, определяет запрошенная модель — см. «Модели» ниже.',

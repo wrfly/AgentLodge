@@ -201,6 +201,18 @@ export const formatMoney = (micro: number, currency = 'USD'): string =>
   `${currency === 'CNY' ? '¥' : '$'}${(micro / MICRO).toFixed(4)}`;
 
 /**
+ * What every DeepSeek row has to say, because the number in it is only true for part of
+ * the week. Shared so that correcting one row cannot leave another explaining itself
+ * differently.
+ */
+export const DEEPSEEK_OFF_PEAK =
+  'Off-peak. DeepSeek doubles this Mon–Fri 01:00–04:00 and 06:00–10:00 UTC.';
+
+/** The name outlived the model behind it, and the bill follows the model */
+export const DEEPSEEK_RETIRED =
+  `Retired 2026-09-10 — served by V4.1-Flash and billed at its price. ${DEEPSEEK_OFF_PEAK}`;
+
+/**
  * Seed DeepSeek's prices on first start.
  *
  * ⚠️ These numbers change. Check them against DeepSeek's own page and correct them in the
@@ -235,10 +247,17 @@ export function seedDefaults(): void {
    * exception spelled out: Claude Fable reads its cache at a fortieth. That exception is
    * the reason quota reads a table instead of a global weight, so the table has to hold it.
    */
-  const rate = (input: number, output: number, cacheRead = input / 10) => ({
+  const rate = (
+    input: number,
+    output: number,
+    cacheRead = input / 10,
+    // Anthropic charges a premium to write the cache. DeepSeek does not — a miss is simply
+    // the input price — so that one is a parameter rather than a constant.
+    cacheWrite = input * 1.25,
+  ) => ({
     priceInput: Math.round(input * 1_000_000),
     priceCacheRead: Math.round(cacheRead * 1_000_000),
-    priceCacheWrite: Math.round(input * 1.25 * 1_000_000),
+    priceCacheWrite: Math.round(cacheWrite * 1_000_000),
     priceOutput: Math.round(output * 1_000_000),
   });
   const seed: UpsertInput[] = [
@@ -253,8 +272,24 @@ export function seedDefaults(): void {
     { model: 'claude-sonnet-4-6', ...rate(3, 15) },
     { model: 'claude-sonnet-4-5', ...rate(3, 15) },
     { model: 'claude-haiku-4-5', ...rate(1, 5) },
-    { model: 'deepseek-v4-pro', ...rate(0.435, 0.87) },
-    { model: 'deepseek-v4-flash', ...rate(0.22, 0.66), note: 'Off-peak; DeepSeek doubles these 01:00–04:00 and 06:00–10:00 UTC' },
+    /*
+     * DeepSeek, as of 2026-09-10. Two things here are off the Anthropic pattern and both
+     * are spelled out rather than derived: a cache read is a fiftieth of the input price
+     * on flash and a thirtieth on pro, not the usual tenth; and a cache **write** costs
+     * nothing extra, because a miss is just the input price.
+     *
+     * The amounts are the off-peak ones. DeepSeek doubles everything Monday to Friday,
+     * 01:00–04:00 and 06:00–10:00 UTC, and a table row holds one number — so a deployment
+     * serving peak hours is undercharging by half until the price table grows a time
+     * dimension.
+     */
+    { model: 'deepseek-flash', ...rate(0.15, 0.6, 0.003, 0.15), note: DEEPSEEK_OFF_PEAK },
+    { model: 'deepseek-v4-pro', ...rate(0.66, 1.98, 0.022, 0.66), note: DEEPSEEK_OFF_PEAK },
+    // Retired on 2026-09-10. The name still resolves, and what answers is V4.1-Flash at
+    // the flash price — so the row that keeps the bill right is the flash row, not the one
+    // this model used to have. Written on one line like the rest because check-pricing.mjs
+    // reads this shape, and a row it cannot parse is a row it silently stops comparing.
+    { model: 'deepseek-v4-flash', ...rate(0.15, 0.6, 0.003, 0.15), note: DEEPSEEK_RETIRED },
     {
       // Also the unit quota is counted in: one billable token is one input token at this rate
       model: '*',

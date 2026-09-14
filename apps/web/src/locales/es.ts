@@ -519,6 +519,8 @@ export const es: Record<string, string> = {
   'None': 'Ninguna',
   'Default model for Claude': 'Modelo por defecto para Claude',
   'Default model for Codex': 'Modelo por defecto para Codex',
+  'Model for titles and summaries': 'Modelo para títulos y resúmenes',
+  'Used for naming conversations, summarising them and writing the profile — never for a reply. A cheap model is the right choice here. Empty follows the main model.': 'Se usa para nombrar conversaciones, resumirlas y escribir el perfil — nunca para responder. Aquí basta un modelo barato. Vacío sigue al modelo principal.',
   'Empty leaves it to the CLI.': 'Vacío lo deja a la CLI',
   'Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the manual "Pull from the upstream" button still works.': 'Pregunta cada hora a cada upstream qué modelos tiene y añade los nombres que falten. No se elimina ni reordena nada, y un modelo desactivado sigue desactivado. El botón «Cargar del upstream» sigue funcionando.',
   'How to reach each upstream: address, protocol, credential. Which one serves a request follows from the model it asks for — see Models below.': 'Cómo llegar a cada upstream: dirección, protocolo, credencial. Cuál atiende una petición se deduce del modelo que pide — mira «Modelos» abajo.',

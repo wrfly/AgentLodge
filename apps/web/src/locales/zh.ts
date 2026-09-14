@@ -546,6 +546,8 @@ export const zh: Record<string, string> = {
   'None': '无',
   'Default model for Claude': 'Claude 的默认模型',
   'Default model for Codex': 'Codex 的默认模型',
+  'Model for titles and summaries': '用于标题和摘要的模型',
+  'Used for naming conversations, summarising them and writing the profile — never for a reply. A cheap model is the right choice here. Empty follows the main model.': '用于给对话命名、生成摘要和画像，永远不用来回答。这里选便宜的模型就好。留空则跟随主模型。',
   'Empty leaves it to the CLI.': '留空交给 CLI 自己决定',
   'Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the manual "Pull from the upstream" button still works.': '每小时问一遍所有上游有哪些模型，把缺的名字加进来。不删、不重排，关掉的模型仍然是关的。手动的「从上游拉取」按钮不受影响。',
   'How to reach each upstream: address, protocol, credential. Which one serves a request follows from the model it asks for — see Models below.': '怎么连到每个上游：地址、协议、凭据。哪个上游服务一次请求，由请求要的模型决定，见下面的「模型」。',

@@ -5,10 +5,14 @@
  * nothing about a context window, a price or a benchmark — so the choice is a table like
  * this one or an empty column. A name with no entry simply shows nothing.
  *
- * Sources, read 2026-08-26:
+ * Sources:
  *   prices, context, max output   platform.claude.com/docs/en/about-claude/pricing
  *                                 platform.claude.com/docs/en/build-with-claude/context-windows
- *   deepseek                      api-docs.deepseek.com pricing, V4 preview announcement
+ *                                 read 2026-08-26
+ *   deepseek                      api-docs.deepseek.com/quick_start/pricing, read 2026-09-14
+ *                                 — the line-up changed on 09-10 and the aggregator sites
+ *                                 still carry the old numbers, so only the official page
+ *                                 counts here
  *   swe                           llm-stats.com/benchmarks/swe-bench-verified, updated 2026-08-25
  *
  * The prices are list prices for the vendor's own endpoint, per million tokens, and are
@@ -32,6 +36,9 @@ export interface ModelFacts {
 const M = 1_000_000;
 const K = 1_000;
 
+/** Every DeepSeek price is half the week's price; said once so three rows cannot disagree */
+const PEAK = 'off-peak; doubles Mon–Fri 01:00–04:00 and 06:00–10:00 UTC';
+
 /*
  * Keyed by the start of the name, so a dated snapshot — claude-opus-4-5-20251101 — finds
  * the entry for the model it is a snapshot of. The longest match wins.
@@ -48,17 +55,20 @@ const FACTS: Record<string, ModelFacts> = {
   'claude-sonnet-4-6': { context: M, maxOutput: 128 * K, inPrice: 3, outPrice: 15, swe: 79.6 },
   'claude-sonnet-4-5': { context: 200 * K, maxOutput: 64 * K, inPrice: 3, outPrice: 15 },
   'claude-haiku-4-5': { context: 200 * K, maxOutput: 64 * K, inPrice: 1, outPrice: 5, swe: 73.3 },
-  'deepseek-v4-pro': { context: M, maxOutput: 384 * K, inPrice: 0.435, outPrice: 0.87 },
+  // The prices below are the off-peak ones, which is exactly what `note` is for: a reader
+  // comparing $0.15 against Claude's $3 has to know the number is conditional, and a
+  // source comment tells nobody.
+  'deepseek-flash': { context: M, maxOutput: 384 * K, inPrice: 0.15, outPrice: 0.6, note: PEAK },
+  'deepseek-v4-pro': { context: M, maxOutput: 384 * K, inPrice: 0.66, outPrice: 1.98, note: PEAK },
+  // Retired 2026-09-10. The name still answers, but what answers is V4.1-Flash — so the
+  // price is that model's, and the 78.6 SWE-bench figure this entry used to carry is gone
+  // with the model that earned it rather than transplanted onto its replacement.
   'deepseek-v4-flash': {
     context: M,
     maxOutput: 384 * K,
-    inPrice: 0.22,
-    outPrice: 0.66,
-    swe: 78.6,
-    // The prices above are the off-peak ones, which is exactly what `note` is for: a
-    // reader comparing $0.22 against Claude's $3 has to know the number is conditional,
-    // and a source comment tells nobody.
-    note: 'off-peak; doubles 01:00–04:00 and 06:00–10:00 UTC',
+    inPrice: 0.15,
+    outPrice: 0.6,
+    note: `retired — served by V4.1-Flash; ${PEAK}`,
   },
 };
 

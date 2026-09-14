@@ -55,15 +55,30 @@ services:
       # shell's `date` picks it up and Node does not (DESIGN.md §16).
       TZ: ${TZ:-UTC}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
-      # Reverse-proxy hops in front of this process, counted from it outwards: the stack's
-      # own caddy is 1 (the default, and right as it ships), a CDN in front makes it 2, a CDN
-      # plus your own nginx makes it 3. Too low and every request is attributed to the
-      # nearest proxy — one address in the audit log and the session list, and the per-IP
-      # login lockout turns into a per-site one. Too high and a client forges its address by
-      # writing X-Forwarded-For.
-      TRUST_PROXY: ${TRUST_PROXY:-1}
+      # Which proxies in front of this process may speak for the client's address — a list
+      # of ranges, not a hop count (fastify 5.12.4 made numbers trust nothing, and the
+      # server now refuses to start on one). The default covers the stack's own caddy and a
+      # reverse proxy of your own on the host; both are private. A CDN's edge is public, so
+      # behind one add its ranges — `loopback,uniquelocal,173.245.48.0/20,…`. Get it wrong
+      # and every request is attributed to the nearest proxy: one address in the audit log
+      # and the session list, and the per-IP login lockout covering the whole site.
+      TRUST_PROXY: "${TRUST_PROXY:-loopback,uniquelocal}"
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
       DATA_DIR: /data
+      LOG_LEVEL: ${LOG_LEVEL:-warn}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Per agent container, and they are per user and concurrent: the machine needs this
+      # much times the people who might be mid-turn at once, plus room for the services.
+      CONTAINER_MEMORY_MB: ${CONTAINER_MEMORY_MB:-1024}
+      CONTAINER_CPUS: ${CONTAINER_CPUS:-1}
+      CONTAINER_IDLE_MS: ${CONTAINER_IDLE_MS:-1800000}
+      TURN_TIMEOUT_MS: ${TURN_TIMEOUT_MS:-600000}
+      ACCESS_TOKEN_TTL_MS: ${ACCESS_TOKEN_TTL_MS:-900000}
+      REFRESH_TOKEN_TTL_MS: ${REFRESH_TOKEN_TTL_MS:-2592000000}
+      STREAM_TICKET_TTL_MS: ${STREAM_TICKET_TTL_MS:-60000}
+      # Must match the gateway's
+      RUNTIME_TOKEN_TTL_MS: ${RUNTIME_TOKEN_TTL_MS:-1200000}
+      AUDIT_LOG_RETENTION_DAYS: ${AUDIT_LOG_RETENTION_DAYS:-365}
       USE_CONTAINERS: "true"
       AGENT_NETWORK: agentlodge-agent-net
       # Follows AGENTLODGE_TAG like the other four, so pinning a version is one setting
@@ -129,6 +144,15 @@ services:
       # a closed list: documented but unforwarded, they would look settable and do nothing.
       UPSTREAM_IDLE_TIMEOUT_MS: ${UPSTREAM_IDLE_TIMEOUT_MS:-330000}
       STREAM_KEEP_ALIVE_MS: ${STREAM_KEEP_ALIVE_MS:-15000}
+      UPSTREAM_HEADERS_TIMEOUT_MS: ${UPSTREAM_HEADERS_TIMEOUT_MS:-90000}
+      LOG_LEVEL: ${LOG_LEVEL:-warn}
+      # Must match app's
+      RUNTIME_TOKEN_TTL_MS: ${RUNTIME_TOKEN_TTL_MS:-1200000}
+      # The gate's shape below its two ceilings: queue depth, how long a request waits in
+      # it, and how long one slot may be held
+      MAX_QUEUE_DEPTH: ${MAX_QUEUE_DEPTH:-200}
+      QUEUE_TIMEOUT_MS: ${QUEUE_TIMEOUT_MS:-120000}
+      LEASE_MAX_MS: ${LEASE_MAX_MS:-600000}
       # Where upstream credentials live, when the credential-manager profile is running
       CREDENTIAL_MANAGER_SOCKET: /run/agentlodge/credential-manager.sock
     volumes:

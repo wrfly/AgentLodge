@@ -998,7 +998,12 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 | `TZ` | `UTC` | **部署机器的时区**。按时间分桶的东西都用它：用量记录算哪一天、配额窗口落在哪。启动横幅会打印实际解析到的时区，对不上就是没生效。取值 `cat /etc/timezone`。⚠️ 别用挂 `/etc/localtime` 代替：`date` 会显示对，Node 仍然是 UTC |
 | `JWT_SECRET` | 随机 | ⚠️ 不设置则每次重启换密钥，系统设置里的密文值解不开，需重填。上游凭据不在此列，它们在 credential-manager 里，用它自己的密钥 |
 | `SECURE_COOKIES` | `false` | 生产设 `true` |
-| `TRUST_PROXY` | `1` | 信任几跳反代。反代后面不设就等于**所有人共用一个 IP**：审计追不到来源，而且登录锁定按 IP 分桶会变成全站锁。别设 `true`（Caddy 是追加 XFF，信任整条链等于让客户端自己填 IP）|
+| `TRUST_PROXY` | `loopback,uniquelocal` | **哪些**机器可以替访客报地址，不是信任几跳。取值是地址段列表：`loopback`、`linklocal`、`uniquelocal` 三个名字，外加任意 CIDR。默认那条覆盖自带 caddy 和你自己架在宿主机上的反代（都走私有地址）；**CDN 不在其中** —— Cloudflare 的边缘是公网地址，所以 CDN 后面要把它的段追加进来（`cloudflare.com/ips`），否则记到的是 CDN 而不是访客。⚠️ 填数字会**拒绝启动**：fastify 5.12.4 起数字等于谁都不信任，与其悄悄把所有人记成同一个 IP，不如起不来。别设 `true`，那等于信任整条链、让客户端自己填 IP。设错的样子是：审计和「登录设备」里全是同一个地址（常见是 `172.x.0.1`），而且登录锁定按 IP 分桶会变成全站锁 |
+| `CONTAINER_MEMORY_MB` / `CONTAINER_CPUS` | `1024` / `1` | 每个 agent 容器的上限。**容器是按人并发的**，所以机器要备 `这个数 × 可能同时开工的人数`，再加服务自己的 ~512MB。不够的话内核会挑一个进程杀掉，被杀的未必是 agent。启动横幅在内存不够放下两个并发容器时会告警 |
+| `CONTAINER_IDLE_MS` | `1800000` | 容器在最后一轮之后活多久 |
+| `LOG_LEVEL` | `warn` | pino 的级别 |
+| `ACCESS_TOKEN_TTL_MS` / `REFRESH_TOKEN_TTL_MS` | 15 分钟 / 30 天 | 访问令牌只在浏览器内存里；refresh cookie 才是刷新页面之后还在的那个，调短等于让所有人更早重新登录 |
+| `RUNTIME_TOKEN_TTL_MS` | `1200000` | 容器那张票的寿命。**app 和 gateway 必须一致**：一边签、一边验 |
 | `CLAUDE_BIN` / `CODEX_BIN` | `claude` / `codex` | |
 | `ENABLED_AGENTS` | `claude,codex` | 这个部署对外提供哪几个 agent，逗号分隔。只是**初值** —— 后台改过之后以设置为准。跟「装没装 CLI」是两回事，见下 |
 | `PERMISSION_MODE` | `bypassPermissions` | Claude Code，⚠️ 见下 |

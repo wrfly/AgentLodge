@@ -34,6 +34,7 @@
     "test:profile": "tsx src/core/db/profile.test.ts",
     "test:recap": "tsx src/app/recap.test.ts",
     "reset-password": "tsx src/cli/reset-password.ts",
+    "backup-db": "tsx src/cli/backup-db.ts",
     "test:reset-password": "tsx src/cli/reset-password.test.ts",
     "test:containers": "tsx src/app/containers.test.ts",
     "test:mail": "tsx src/app/mail.test.ts",
@@ -52,7 +53,8 @@
     "test:admin-roles": "tsx src/app/routes/admin/users.test.ts",
     "test:buckets": "tsx src/core/db/buckets.test.ts",
     "test:settings": "tsx src/core/db/settings.test.ts",
-    "test:admin-overview": "tsx src/app/routes/admin/overview.test.ts"
+    "test:admin-overview": "tsx src/app/routes/admin/overview.test.ts",
+    "test:trust-proxy": "tsx src/core/trust-proxy.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

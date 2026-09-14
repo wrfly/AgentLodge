@@ -546,6 +546,8 @@ export const ja: Record<string, string> = {
   'None': 'なし',
   'Default model for Claude': 'Claude の既定モデル',
   'Default model for Codex': 'Codex の既定モデル',
+  'Model for titles and summaries': 'タイトルと要約に使うモデル',
+  'Used for naming conversations, summarising them and writing the profile — never for a reply. A cheap model is the right choice here. Empty follows the main model.': '会話の命名・要約・プロフィールの作成に使われ、返信には決して使われません。ここは安いモデルで十分です。空欄ならメインのモデルに従います。',
   'Empty leaves it to the CLI.': '空欄なら CLI に任せる',
   'Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the manual "Pull from the upstream" button still works.': '1 時間ごとに各アップストリームのモデル一覧を問い合わせ、足りない名前を追加します。削除も並べ替えもせず、無効にしたモデルは無効のままです。手動の「アップストリームから取得」ボタンはそのまま使えます。',
   'How to reach each upstream: address, protocol, credential. Which one serves a request follows from the model it asks for — see Models below.': '各アップストリームへの接続方法（アドレス・プロトコル・認証情報）。どれが処理するかは、リクエストが指定したモデルで決まります（下の「モデル」）。',

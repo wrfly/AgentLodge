@@ -127,7 +127,7 @@ function hasTables(d: DatabaseSync): boolean {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -390,6 +390,82 @@ function migrate(d: DatabaseSync): void {
     if (!columns(d, 'conversations').has('parent_id')) {
       d.exec('alter table conversations add column parent_id text references conversations(id) on delete cascade');
       d.exec('create index if not exists idx_conv_parent on conversations(parent_id)');
+    }
+  }
+
+  if (from < 13) {
+    /*
+     * DeepSeek changed its line-up on 2026-09-10 and the seeded prices predate it by five
+     * months. seedDefaults() only runs on an empty table, so correcting it there fixes
+     * nothing that already exists — and what already exists is costing `deepseek-flash`,
+     * which has no row at all, at the catch-all rate of Claude Opus 5. That is $5/MTok
+     * against a real $0.15: a bill thirty-three times too large, and a quota that refuses
+     * people thirty-three times too early.
+     *
+     * The amounts are written out rather than imported from pricing.ts. Partly because
+     * that module imports from this one, and mostly because a migration is a record of
+     * what was done on a particular day: it must not change when the constants it once
+     * agreed with are edited again.
+     *
+     * A row is only corrected if it still holds **exactly** what the old seed wrote. An
+     * administrator who has already put their own number in has answered this question,
+     * and a migration that overrides them would be a worse bug than the one it fixes.
+     *
+     * Correcting means adding a row, not rewriting one: `effective_from` is how this table
+     * keeps a bill costed at the price of its day, and rewriting history would re-price
+     * usage that was already charged.
+     */
+    const OFF_PEAK = 'Off-peak. DeepSeek doubles this Mon–Fri 01:00–04:00 and 06:00–10:00 UTC.';
+    const FLASH = { in: 150_000, cacheRead: 3_000, cacheWrite: 150_000, out: 600_000 };
+    const corrections = [
+      // Never had a row: the id did not exist when the table was seeded
+      { model: 'deepseek-flash', wasInput: null, ...FLASH, note: OFF_PEAK },
+      // Seeded at April's preview price, which was half of what it costs
+      {
+        model: 'deepseek-v4-pro',
+        wasInput: 435_000,
+        in: 660_000,
+        cacheRead: 22_000,
+        cacheWrite: 660_000,
+        out: 1_980_000,
+        note: OFF_PEAK,
+      },
+      // Retired. The name still answers, and V4.1-Flash is what answers it
+      {
+        model: 'deepseek-v4-flash',
+        wasInput: 220_000,
+        ...FLASH,
+        note: `Retired 2026-09-10 — served by V4.1-Flash and billed at its price. ${OFF_PEAK}`,
+      },
+    ];
+
+    const now = new Date().toISOString();
+    for (const c of corrections) {
+      const [row] = d
+        .prepare(
+          `select price_input as priceInput, currency from model_pricing
+           where model = ? and provider_id is null
+           order by effective_from desc limit 1`,
+        )
+        .all(c.model) as Array<{ priceInput: number; currency: string }>;
+
+      // Present and already edited by hand — their number, their decision
+      if (row && row.priceInput !== c.wasInput) continue;
+      /*
+       * Absent gets a row. A database seeded before these ids existed has no opinion about
+       * them — it has an old `deepseek` row that catches them by prefix at a price meant
+       * for a model two generations back. That legacy row is left alone: it is the
+       * administrator's data, and once the three current ids match exactly it only answers
+       * for names that are no longer served.
+       */
+
+      d.prepare(
+        `insert into model_pricing
+           (model, provider_id, currency, price_input, price_cache_read, price_cache_write,
+            price_output, effective_from, note, created_at)
+         values (?, null, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(c.model, row?.currency ?? 'USD', c.in, c.cacheRead, c.cacheWrite, c.out, now, c.note, now);
+      console.log(`[db] priced ${c.model} at DeepSeek's 2026-09-10 rates${row ? '' : ' (was missing)'}`);
     }
   }
 

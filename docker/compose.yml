@@ -73,20 +73,47 @@ services:
       # http origin, and what that looks like is a 200 from the login endpoint followed by a
       # request that is somehow signed out again. Production runs on https and leaves it true.
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
-      # How many reverse-proxy hops to believe when reading the client's address. Count the
-      # proxies in front of this process: the stack's own caddy is one, so `1` is right for
-      # the deployment as it ships; a CDN in front makes it 2; a CDN plus your own nginx
-      # makes it 3. Set it too low and every request is attributed to the nearest proxy —
-      # audit rows and the session list all show one address, and auth.ts's per-IP lockout
-      # becomes a per-site one. Too high and a client forges its own address by writing
-      # X-Forwarded-For. The reasoning is in apps/server/src/index.ts.
+      # **Which** proxies may speak for the client's address — not how many. A hop count is
+      # what this used to be, and fastify 5.12.4 stopped honouring it: a number now trusts
+      # nothing, so the server refuses to start rather than quietly attribute every request
+      # to the container next door. core/trust-proxy.ts has the reasoning.
+      #
+      # The default covers caddy reaching app over the compose network, and a reverse proxy
+      # of your own on the host, because both arrive from a private address. A CDN does not
+      # — its edge is public — so behind one, add its ranges:
+      #
+      #   TRUST_PROXY=loopback,uniquelocal,173.245.48.0/20,103.21.244.0/22,…
+      #
+      # Get wrong either way and it shows the same: audit rows and the signed-in-devices
+      # list all carrying one address, and auth.ts's per-IP lockout covering the whole site.
       #
       # Named here because the environment block is a closed list: read by the server but
-      # missing from this file, it looked settable in .env and did nothing, and a deployment
-      # behind Cloudflare logged every login from the docker bridge address.
-      TRUST_PROXY: ${TRUST_PROXY:-1}
+      # missing from this file, it looked settable in .env and did nothing.
+      TRUST_PROXY: "${TRUST_PROXY:-loopback,uniquelocal}"
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
       DATA_DIR: /data
+      LOG_LEVEL: ${LOG_LEVEL:-warn}
+      # Only for serving the interface from another origin. Empty is right for this stack,
+      # where caddy puts the interface and the API on one hostname.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Every agent container is allowed this much, and they are per user and concurrent —
+      # so the machine needs CONTAINER_MEMORY_MB × the people who might be mid-turn at once,
+      # plus room for the five services. A 2 GB host running the default is one simultaneous
+      # user away from the kernel picking a process to kill.
+      CONTAINER_MEMORY_MB: ${CONTAINER_MEMORY_MB:-1024}
+      CONTAINER_CPUS: ${CONTAINER_CPUS:-1}
+      # How long a container outlives its last turn before it is stopped
+      CONTAINER_IDLE_MS: ${CONTAINER_IDLE_MS:-1800000}
+      # A turn that produces nothing for this long is abandoned
+      TURN_TIMEOUT_MS: ${TURN_TIMEOUT_MS:-600000}
+      # Session lifetimes. The access token lives in memory in the browser; the refresh
+      # cookie is what survives a reload, and shortening it signs everybody out sooner.
+      ACCESS_TOKEN_TTL_MS: ${ACCESS_TOKEN_TTL_MS:-900000}
+      REFRESH_TOKEN_TTL_MS: ${REFRESH_TOKEN_TTL_MS:-2592000000}
+      STREAM_TICKET_TTL_MS: ${STREAM_TICKET_TTL_MS:-60000}
+      # Must match the gateway's: app signs these tickets and the gateway verifies them
+      RUNTIME_TOKEN_TTL_MS: ${RUNTIME_TOKEN_TTL_MS:-1200000}
+      AUDIT_LOG_RETENTION_DAYS: ${AUDIT_LOG_RETENTION_DAYS:-365}
       # What the console's "read the key from a file" field validates and lists against; see
       # the top of this file
       USE_CONTAINERS: "true"
@@ -193,6 +220,17 @@ services:
       # a closed list: documented but unforwarded, they would look settable and do nothing.
       UPSTREAM_IDLE_TIMEOUT_MS: ${UPSTREAM_IDLE_TIMEOUT_MS:-330000}
       STREAM_KEEP_ALIVE_MS: ${STREAM_KEEP_ALIVE_MS:-15000}
+      # How long the upstream has to send its first byte, as opposed to its next one
+      UPSTREAM_HEADERS_TIMEOUT_MS: ${UPSTREAM_HEADERS_TIMEOUT_MS:-90000}
+      LOG_LEVEL: ${LOG_LEVEL:-warn}
+      # Must match app's: app signs the runtime tickets and this process verifies them
+      RUNTIME_TOKEN_TTL_MS: ${RUNTIME_TOKEN_TTL_MS:-1200000}
+      # The gate's shape beyond its two ceilings: how deep the queue goes, how long a request
+      # waits in it, and how long one slot may be held.
+      # The two ceilings above decide who may go; these decide what happens under them.
+      MAX_QUEUE_DEPTH: ${MAX_QUEUE_DEPTH:-200}
+      QUEUE_TIMEOUT_MS: ${QUEUE_TIMEOUT_MS:-120000}
+      LEASE_MAX_MS: ${LEASE_MAX_MS:-600000}
       # Where upstream credentials live, when the credential-manager service is running.
       # Unset, the console offers only a key typed in or read from a file.
       CREDENTIAL_MANAGER_SOCKET: /run/agentlodge/credential-manager.sock
