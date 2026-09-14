@@ -87,6 +87,8 @@ export const zhHant: Record<string, string> = {
   'Stop generating': '停止產生',
   Send: '傳送',
   'Enter to send · Shift+Enter for a new line': 'Enter 傳送 · Shift+Enter 換行',
+  'About {n} more turns of your usual size before the {scope} quota': '按你最近的用量，{scope} 配額還夠大約 {n} 輪',
+  'A turn your usual size would not fit in what is left of the {scope} quota': '按你最近的用量，{scope} 配額剩下的不夠再跑一輪',
   'Email sent': '郵件已寄出',
   'If {email} is registered, a reset link is on its way. It is valid for 30 minutes.': '若 {email} 已註冊，重設連結正在寄出，30 分鐘內有效。',
   'Back to sign in': '回到登入',

@@ -93,6 +93,8 @@ export const ja: Record<string, string> = {
   'Stop generating': '生成を停止',
   Send: '送信',
   'Enter to send · Shift+Enter for a new line': 'Enter で送信 · Shift+Enter で改行',
+  'About {n} more turns of your usual size before the {scope} quota': '最近の使い方なら、{scope} のクォータはあと約 {n} ターン分です',
+  'A turn your usual size would not fit in what is left of the {scope} quota': '最近の使い方では、{scope} のクォータの残りでは 1 ターンに足りません',
 
   // Sign in and account settings
   'Email sent': 'メールを送信しました',

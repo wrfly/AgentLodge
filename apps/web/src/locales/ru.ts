@@ -93,6 +93,8 @@ export const ru: Record<string, string> = {
   'Stop generating': 'Остановить генерацию',
   Send: 'Отправить',
   'Enter to send · Shift+Enter for a new line': 'Enter — отправить · Shift+Enter — новая строка',
+  'About {n} more turns of your usual size before the {scope} quota': 'При недавнем расходе квоты {scope} хватит примерно на {n} ходов',
+  'A turn your usual size would not fit in what is left of the {scope} quota': 'Остатка квоты {scope} не хватит даже на один ход вашего обычного размера',
 
   // Sign in and account settings
   'Email sent': 'Письмо отправлено',

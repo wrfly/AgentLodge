@@ -92,6 +92,7 @@ function q(
     exceeded: false,
     warning: false,
     tightest: null,
+  typicalTurn: null,
     ...top,
   };
 }

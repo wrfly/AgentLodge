@@ -107,6 +107,22 @@ export function Composer({ agent }: { agent: AgentId }) {
   const quota = useQuota((s) => s.quota);
   const blocked = Boolean(quota?.exceeded && quota?.hardStop);
 
+  /**
+   * How many more turns of this person's usual size fit in what is left, when that is few
+   * enough to be worth saying. Null the rest of the time — a running count of a number
+   * nobody is near is noise, and it would push the keyboard hint off every screen.
+   *
+   * `tightest` rather than any window: it is the one that will refuse first, so it is the
+   * one whose remaining allowance is the real answer.
+   */
+  const runway = (() => {
+    if (!quota || quota.exceeded || !quota.typicalTurn || !quota.tightest) return null;
+    const w = quota.windows[quota.tightest];
+    if (w.limit === null || w.remaining === null) return null;
+    const turns = Math.floor(w.remaining / quota.typicalTurn);
+    return turns <= 5 ? { turns, scope: w.scope } : null;
+  })();
+
   const models = useAgents((s) => s.info(agent)?.models) ?? NO_MODELS;
   // vendor → family → version, so two upstreams' worth of names read as two rows
   const modelTree = useMemo(() => groupByVendor(models), [models]);
@@ -449,6 +465,38 @@ export function Composer({ agent }: { agent: AgentId }) {
           </div>
         ) : attachError ? (
           <div className="mt-1.5 text-center text-[11.5px] text-danger">{attachError}</div>
+        ) : runway ? (
+          /*
+           * The one place anything is said *before* a turn rather than after it.
+           *
+           * Everything else about quota is retrospective: the sidebar bar turns amber at
+           * 90%, an email goes out once the turn that crossed the line has already been
+           * paid for, and the composer only speaks up once the answer is 402. None of that
+           * helps the person about to send a long-context turn at max effort into the last
+           * of their month.
+           *
+           * It is said in turns because that is the unit the person is thinking in. The
+           * number of billable tokens left answers nothing on its own — the same figure is
+           * two turns for one person and forty for another — so it is divided by what their
+           * own recent turns have actually cost. Not an estimate of *this* turn: a turn's
+           * cost depends on how many upstream calls the agent decides to make, which nobody
+           * knows in advance, and a confident wrong number is worse than an honest rate.
+           */
+          <div
+            className={clsx(
+              'mt-1.5 text-center text-[11.5px]',
+              runway.turns === 0 ? 'text-danger' : runway.turns <= 2 ? 'text-amber-600 dark:text-amber-500' : 'text-faint',
+            )}
+          >
+            {runway.turns === 0
+              ? t('A turn your usual size would not fit in what is left of the {scope} quota', {
+                  scope: SCOPE_LABEL[runway.scope],
+                })
+              : t('About {n} more turns of your usual size before the {scope} quota', {
+                  n: runway.turns,
+                  scope: SCOPE_LABEL[runway.scope],
+                })}
+          </div>
         ) : (
           <div className="mt-1.5 text-center text-[11px] text-faint">
             {t('Enter to send · Shift+Enter for a new line')}

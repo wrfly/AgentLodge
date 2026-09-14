@@ -86,6 +86,8 @@ export const es: Record<string, string> = {
   'Stop generating': 'Detener la generación',
   Send: 'Enviar',
   'Enter to send · Shift+Enter for a new line': 'Intro para enviar · Mayús+Intro para una línea nueva',
+  'About {n} more turns of your usual size before the {scope} quota': 'A tu ritmo reciente, la cuota {scope} da para unos {n} turnos más',
+  'A turn your usual size would not fit in what is left of the {scope} quota': 'Lo que queda de la cuota {scope} no alcanza para un turno de tu tamaño habitual',
   'Email sent': 'Correo enviado',
   'If {email} is registered, a reset link is on its way. It is valid for 30 minutes.': 'Si {email} está registrada, el enlace de restablecimiento va en camino. Es válido 30 minutos.',
   'Back to sign in': 'Volver a iniciar sesión',

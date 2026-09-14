@@ -93,6 +93,8 @@ export const zh: Record<string, string> = {
   'Stop generating': '停止生成',
   Send: '发送',
   'Enter to send · Shift+Enter for a new line': 'Enter 发送 · Shift+Enter 换行',
+  'About {n} more turns of your usual size before the {scope} quota': '按你最近的用量，{scope} 配额还够大约 {n} 轮',
+  'A turn your usual size would not fit in what is left of the {scope} quota': '按你最近的用量，{scope} 配额剩下的不够再跑一轮',
 
   // Sign in and account settings
   'Email sent': '邮件已发出',

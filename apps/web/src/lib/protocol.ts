@@ -109,6 +109,15 @@ export interface QuotaStatus {
   warning: boolean;
   /** Whichever limited window is closest to refusing, or null when none is limited */
   tightest: QuotaScope | null;
+  /**
+   * What one of this user's own turns typically costs, in the unit above — the median of
+   * their recent ones, or null if they have not spent anything yet.
+   *
+   * So that a remaining allowance can be said in turns rather than in tokens. The same
+   * 1.2M billable tokens is two turns for one person and forty for another, and which of
+   * those they are is not something they can work out from the number.
+   */
+  typicalTurn: number | null;
 }
 
 

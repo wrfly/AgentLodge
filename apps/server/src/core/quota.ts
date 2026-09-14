@@ -156,6 +156,9 @@ export function status(userId: string, now = new Date()): QuotaStatus {
     exceeded: limited.some((w) => w.exceeded),
     warning: limited.some((w) => w.ratio >= 0.9),
     tightest,
+    // Only worth computing when something is actually capped: with no ceiling there is no
+    // remaining allowance to express in turns.
+    typicalTurn: limited.length ? usageRepo.typicalTurn(userId, q.limitKind) : null,
   };
 }
 

@@ -86,6 +86,8 @@ export const pt: Record<string, string> = {
   'Stop generating': 'Parar a geração',
   Send: 'Enviar',
   'Enter to send · Shift+Enter for a new line': 'Enter para enviar · Shift+Enter para uma linha nova',
+  'About {n} more turns of your usual size before the {scope} quota': 'Ao teu ritmo recente, a quota {scope} dá para cerca de mais {n} turnos',
+  'A turn your usual size would not fit in what is left of the {scope} quota': 'O que resta da quota {scope} não chega para um turno do teu tamanho habitual',
   'Email sent': 'E-mail enviado',
   'If {email} is registered, a reset link is on its way. It is valid for 30 minutes.': 'Se {email} estiver registado, a ligação de reposição vai a caminho. É válida durante 30 minutos.',
   'Back to sign in': 'Voltar ao início de sessão',
