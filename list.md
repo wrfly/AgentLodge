@@ -53,6 +53,19 @@
       既吃内存，又让「两个文件一条命令」的部署故事变复杂。DESIGN §1 说的是「多实例时要换」，
       而现在还不是多实例。等真要横向扩的时候再做。
 - [ ] **B8 清掉 `notes.md` 里的明文 key** — 已 gitignore，不会泄漏，纯洁癖。（粗估：5 分钟）
+- [ ] **B9 后台输入框禁止浏览器自动填充** ⭐ *(2026-09-14 新增，不在最初 41 条里)*
+      整个后台**零个** `autoComplete`：共享的 `Input`（`components/ui.tsx`）原样透传 props、没有默认值，
+      而全仓唯一用到 `autoComplete` 的是 `PublicPages.tsx` 的注册/重置表单 —— 那里是对的。
+      暴露面:`admin/Settings.tsx:315` 把每个 `secret` 设置渲染成裸的 `<input type="password">`
+      （`mail.apiKey`、`mail.smtpPassword`）；`admin/Credentials.tsx:297` 是**上游 API key** 框；
+      其余纯文本设置（base URL、模型名、配额数字）都能被表单自动填充。
+      最坏情况不是难看而是**存错东西**：浏览器把运维自己的登录密码塞进 SMTP 密码或上游 key 框，
+      点保存就加密进设置表 / 交给 credential-manager，全程不报错；反向则是密码管理器把上游 key
+      当站点密码存下来。
+      做法:给 `Input` 一个默认值（放在 `{...props}` **之前**，好让调用方能覆盖），密码类要用
+      `autoComplete="new-password"` —— Chrome 对 `off` 在密码框上基本无视。顺带把 `spellCheck={false}`
+      从 `Credentials.tsx` 里零散的几处提到组件默认。可选:`data-1p-ignore` / `data-lpignore`
+      挡掉 1Password、LastPass。（粗估：1 小时）
 
 ## C · 代码质量与性能
 
