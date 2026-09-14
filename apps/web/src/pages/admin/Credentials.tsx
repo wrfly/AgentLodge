@@ -224,7 +224,7 @@ function SignInPanel({ busy, run, onCancel }: PanelProps) {
             </Select>
           </Field>
           <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>
-            <Input value={id} onChange={(e) => setId(e.target.value)} spellCheck={false} />
+            <Input value={id} onChange={(e) => setId(e.target.value)} />
           </Field>
           <Field label={t('Note')}>
             <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('optional')} />
@@ -262,7 +262,7 @@ function SignInPanel({ busy, run, onCancel }: PanelProps) {
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="abc123#state"
-              spellCheck={false}
+             
               className="font-mono text-[12.5px]"
             />
           </Field>
@@ -291,10 +291,10 @@ function PasteKeyPanel({ busy, run, onCancel }: PanelProps) {
   return (
     <div className="mt-2 space-y-2 rounded-lg border border-line p-2.5">
       <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>
-        <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="deepseek" spellCheck={false} />
+        <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="deepseek" />
       </Field>
       <Field label="API Key">
-        <Input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="sk-…" spellCheck={false} />
+        <Input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="sk-…" />
       </Field>
       <Field label={t('Note')}>
         <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('optional')} />
@@ -356,7 +356,7 @@ function KeyFilePanel({ busy, run, onCancel }: PanelProps) {
   return (
     <div className="mt-2 space-y-2 rounded-lg border border-line p-2.5">
       <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>
-        <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="vault-upstream" spellCheck={false} />
+        <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="vault-upstream" />
       </Field>
       <Field
         label={t('Path')}
@@ -366,7 +366,7 @@ function KeyFilePanel({ busy, run, onCancel }: PanelProps) {
           value={path}
           onChange={(e) => setPath(e.target.value)}
           placeholder="/run/secrets/upstream.key"
-          spellCheck={false}
+         
           className="font-mono text-[12.5px]"
         />
       </Field>
@@ -443,7 +443,7 @@ function ImportPanel({ busy, run, onCancel }: PanelProps) {
         </Select>
       </Field>
       <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>
-        <Input value={id} onChange={(e) => setId(e.target.value)} spellCheck={false} />
+        <Input value={id} onChange={(e) => setId(e.target.value)} />
       </Field>
       <div className="flex gap-2">
         <Button
