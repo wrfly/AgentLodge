@@ -282,7 +282,16 @@ create table if not exists model_pricing (
   price_output      integer not null,
   effective_from    text not null,
   note              text,
-  created_at        text not null
+  created_at        text not null,
+  -- What the four prices above are multiplied by during the windows below. 1 is "this price
+  -- does not depend on the time of day", which is every row but DeepSeek's — it charges
+  -- double on weekday mornings and half the rest of the week.
+  peak_multiplier   real not null default 1,
+  -- {"days":[1,2,3,4,5],"hours":[[1,4],[6,10]]} — days are UTC, 0 is Sunday; hours are UTC
+  -- and half-open. **UTC, not the deployment's zone**: the vendor states the window in UTC
+  -- and everything else in this system cuts its boundaries locally, so the two must not be
+  -- confused (core/peak-hours.ts).
+  peak_windows      text
 );
 create index if not exists idx_pricing_model on model_pricing(model, provider_id, effective_from desc);
 

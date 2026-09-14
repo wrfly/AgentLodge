@@ -128,7 +128,7 @@ function hasTables(d: DatabaseSync): boolean {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -486,6 +486,51 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
          values (?, null, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(c.model, row?.currency ?? 'USD', c.in, c.cacheRead, c.cacheWrite, c.out, now, c.note, now);
       console.log(`[db] priced ${c.model} at DeepSeek's 2026-09-10 rates${row ? '' : ' (was missing)'}`);
+    }
+  }
+
+  if (from < 14) {
+    /*
+     * A price can now depend on the time of day, because one upstream's does: DeepSeek
+     * charges double Mon–Fri 01:00–04:00 and 06:00–10:00 UTC. Until this column existed the
+     * table held the off-peak number and a note saying it doubled, so a deployment serving
+     * those hours billed half of what it was charged — and quota, which counts what a turn
+     * cost, let everyone through at twice the intended rate for seven hours a day.
+     *
+     * Schema first, then the same data repair as migration 13 and on the same terms: only a
+     * row still holding exactly what the seed wrote is touched, and the correction is a new
+     * row rather than a rewrite. A fresh database never reaches here — see the guard at the
+     * top of this function, which is what migration 13 taught.
+     */
+    const have = columns(d, 'model_pricing');
+    if (!have.has('peak_multiplier')) {
+      d.exec('alter table model_pricing add column peak_multiplier real not null default 1');
+    }
+    if (!have.has('peak_windows')) {
+      d.exec('alter table model_pricing add column peak_windows text');
+    }
+
+    const WINDOWS = '{"days":[1,2,3,4,5],"hours":[[1,4],[6,10]]}';
+    // The off-peak figures migration 13 wrote, in micro-units per million tokens
+    const SEEDED = [
+      { model: 'deepseek-flash', input: 150_000 },
+      { model: 'deepseek-v4-pro', input: 660_000 },
+      { model: 'deepseek-v4-flash', input: 150_000 },
+    ];
+    for (const s of SEEDED) {
+      const [row] = d
+        .prepare(
+          `select id, price_input as priceInput, peak_multiplier as peak from model_pricing
+           where model = ? and provider_id is null
+           order by effective_from desc limit 1`,
+        )
+        .all(s.model) as Array<{ id: number; priceInput: number; peak: number }>;
+      // Absent, edited by hand, or already carrying a schedule — all three are somebody
+      // else's decision about this row
+      if (!row || row.priceInput !== s.input || row.peak !== 1) continue;
+      d.prepare('update model_pricing set peak_multiplier = 2, peak_windows = ? where id = ?')
+        .run(WINDOWS, row.id);
+      console.log(`[db] ${s.model} now doubles during DeepSeek's peak hours`);
     }
   }
 

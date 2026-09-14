@@ -56,7 +56,8 @@
     "test:admin-overview": "tsx src/app/routes/admin/overview.test.ts",
     "test:trust-proxy": "tsx src/core/trust-proxy.test.ts",
     "test:trust-proxy": "tsx src/core/trust-proxy.test.ts",
-    "test:seed": "tsx src/core/db/seed.test.ts"
+    "test:seed": "tsx src/core/db/seed.test.ts",
+    "test:peak-hours": "tsx src/core/peak-hours.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
