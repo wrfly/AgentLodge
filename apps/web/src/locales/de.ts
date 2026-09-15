@@ -630,4 +630,5 @@ export const de: Record<string, string> = {
   'Cache': 'Cache',
 
   'Priced from the model price table.': 'Berechnet nach der Modellpreistabelle.',
+  '{bucket} · from {time}': '{bucket} · ab {time}',
 };

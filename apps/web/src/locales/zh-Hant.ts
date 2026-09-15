@@ -631,4 +631,5 @@ export const zhHant: Record<string, string> = {
   'Cache': '快取',
 
   'Priced from the model price table.': '按模型價格表計算。',
+  '{bucket} · from {time}': '{bucket} · 自 {time} 起',
 };

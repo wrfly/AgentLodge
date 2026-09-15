@@ -657,4 +657,5 @@ export const ja: Record<string, string> = {
   'Cache': 'キャッシュ',
 
   'Priced from the model price table.': 'モデル価格表に基づく算出。',
+  '{bucket} · from {time}': '{bucket} · {time} から',
 };

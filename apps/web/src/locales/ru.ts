@@ -657,4 +657,5 @@ export const ru: Record<string, string> = {
   'Cache': 'Кэш',
 
   'Priced from the model price table.': 'Рассчитано по таблице цен на модели.',
+  '{bucket} · from {time}': '{bucket} · с {time}',
 };

@@ -657,4 +657,5 @@ export const zh: Record<string, string> = {
   'Cache': '缓存',
 
   'Priced from the model price table.': '按模型价格表计算。',
+  '{bucket} · from {time}': '{bucket} · 自 {time} 起',
 };
