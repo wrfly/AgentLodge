@@ -276,7 +276,7 @@ export type { QuotaScope, QuotaStatus, QuotaWindow, LimitKind, ThreadSummary } f
 import type { QuotaScope, QuotaStatus } from './protocol';
 
 export type RangePreset =
-  | 'window' | 'today' | 'yesterday' | 'week' | 'month'
+  | 'window' | 'today' | 'yesterday' | 'week' | 'weekWindow' | 'month'
   | 'last7' | 'last30' | 'quota' | 'all' | 'custom';
 
 export interface UsageTotals {
@@ -602,7 +602,7 @@ export interface AdminOverview {
   agents: AgentInfo[];
 }
 
-export type PlatformPreset = 'window' | 'today' | 'last7' | 'last30' | 'month' | 'all';
+export type PlatformPreset = 'window' | 'weekWindow' | 'today' | 'last7' | 'last30' | 'month' | 'all';
 
 export interface PlatformUsage {
   range: { from: string; to: string; label: string };

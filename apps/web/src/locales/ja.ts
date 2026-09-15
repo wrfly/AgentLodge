@@ -450,6 +450,7 @@ export const ja: Record<string, string> = {
   'Which window': '対象ウィンドウ',
   'This window': '現在のウィンドウ',
   'This 5-hour window': '現在の 5 時間ウィンドウ',
+  'This 7-day window': '現在の 7 日ウィンドウ',
   'Per 5 hours': '5 時間あたり',
   'empty = unlimited': '空欄 = 無制限',
   'Per week': '週あたり',
@@ -656,4 +657,5 @@ export const ja: Record<string, string> = {
   'Cache': 'キャッシュ',
 
   'Priced from the model price table.': 'モデル価格表に基づく算出。',
+  '{bucket} · from {time}': '{bucket} · {time} から',
 };

@@ -426,6 +426,7 @@ export const zhHant: Record<string, string> = {
   'Which window': '哪個視窗',
   'This window': '本視窗',
   'This 5-hour window': '這 5 小時視窗',
+  'This 7-day window': '目前 7 天視窗',
   'Per 5 hours': '每 5 小時',
   'empty = unlimited': '留空 = 不限',
   'Per week': '每週',
@@ -630,4 +631,5 @@ export const zhHant: Record<string, string> = {
   'Cache': '快取',
 
   'Priced from the model price table.': '按模型價格表計算。',
+  '{bucket} · from {time}': '{bucket} · 自 {time} 起',
 };

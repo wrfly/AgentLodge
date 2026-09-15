@@ -23,6 +23,10 @@ const PRESETS: Array<{ id: RangePreset; label: string }> = [
   { id: 'window', label: 'This 5-hour window' },
   { id: 'today', label: 'Today' },
   { id: 'yesterday', label: 'Yesterday' },
+  // The seven days the quota is counting, next to the seven the calendar is. They are
+  // different windows on a deployment whose upstream states its own cadence, and the card
+  // above this one is showing the first.
+  { id: 'weekWindow', label: 'This 7-day window' },
   { id: 'week', label: 'This week' },
   { id: 'month', label: 'This month' },
   { id: 'last7', label: 'Last 7 days' },
@@ -33,16 +37,33 @@ const PRESETS: Array<{ id: RangePreset; label: string }> = [
 
 
 /** A minimal bar chart — not worth a charting library for one trend line */
-function Chart({ data, unit }: { data: SeriesPoint[]; unit: 'day' | 'hour' }) {
+function Chart({ data, unit, from }: { data: SeriesPoint[]; unit: 'day' | 'hour'; from: string }) {
   const t = useT();
   if (!data.length) return <Empty text={t('No usage in this period')} />;
   const max = Math.max(...data.map((d) => d.billableTokens), 1);
   const short = (stamp: string) => (unit === 'hour' ? stamp.slice(11, 16) : stamp.slice(5));
 
+  /*
+   * When the range starts inside its first bucket, that bar is a slice of a day and says so.
+   *
+   * A window that opened at 20:00 gives a first bar holding four hours under a label naming
+   * the whole date — and the same date in "Last 7 days" holds all twenty-four, so the two
+   * read as a contradiction. Every range used to begin on a bucket boundary, which is why
+   * this could be left out; the quota's own week begins wherever the upstream's phase falls,
+   * so now it is the ordinary case rather than the exception.
+   */
+  const start = new Date(from);
+  const bucketStart = new Date(start);
+  if (unit === 'hour') bucketStart.setMinutes(0, 0, 0);
+  else bucketStart.setHours(0, 0, 0, 0);
+  const partial = start.getTime() > bucketStart.getTime()
+    ? `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`
+    : null;
+
   return (
     <div>
       <div className="flex h-32 items-end gap-[3px]">
-        {data.map((d) => (
+        {data.map((d, i) => (
           <div
             key={d.t}
             className={clsx(
@@ -54,7 +75,9 @@ function Chart({ data, unit }: { data: SeriesPoint[]; unit: 'day' | 'hour' }) {
             }}
           >
             <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 hidden -translate-x-1/2 rounded-md border border-line bg-surface px-2 py-1 text-[11px] whitespace-nowrap shadow-lg group-hover:block">
-              <div className="font-medium">{d.t}</div>
+              <div className="font-medium">
+                {i === 0 && partial ? t('{bucket} · from {time}', { bucket: d.t, time: partial }) : d.t}
+              </div>
               <div className="font-mono text-muted">
                 {t('{tokens} tokens · {turns} turns · {calls} calls', {
                   tokens: d.billableTokens.toLocaleString(),
@@ -81,9 +104,18 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
   const t = useT();
   const byCost = quota.limitKind === 'cost';
   const show = (v: number) => (byCost ? fmtMoney(v, quota.currency) : v.toLocaleString());
+  /*
+   * The same words the buttons below use, for the same ranges.
+   *
+   * `window` already matched its preset; `week` did not — it read "This week" while the
+   * preset under that name is the administrator's calendar week, which is a different
+   * instant the moment an upstream states its own cadence. So the card and the breakdown
+   * carried two numbers under one word, and the only way to tell them apart was to know
+   * which was which. This row is the quota's week, and so is the preset now named after it.
+   */
   const title: Record<QuotaScope, string> = {
     window: t('This 5-hour window'),
-    week: t('This week'),
+    week: t('This 7-day window'),
     month: t('This month'),
   };
 
@@ -320,7 +352,7 @@ export function UsagePage() {
               </span>
             </div>
 
-            <Chart data={data.series} unit={data.seriesUnit} />
+            <Chart data={data.series} unit={data.seriesUnit} from={data.range.from} />
           </Card>
 
           <Card title={`${t('By agent and model')} · ${t(data.range.label)}`}>

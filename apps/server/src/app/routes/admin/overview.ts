@@ -80,7 +80,7 @@ export function register(app: FastifyInstance): void {
   });
 }
 
-export type PlatformPreset = 'window' | 'today' | 'last7' | 'last30' | 'month' | 'all';
+export type PlatformPreset = 'window' | 'weekWindow' | 'today' | 'last7' | 'last30' | 'month' | 'all';
 
 function platformRange(preset: PlatformPreset): { from: string; to: string; label: string } {
   const now = new Date();
@@ -98,6 +98,20 @@ function platformRange(preset: PlatformPreset): { from: string; to: string; labe
     case 'window': {
       const w = quota.boundsOf('window', now);
       return { from: iso(w.start), to: iso(w.end), label: 'This window' };
+    }
+    /*
+     * The seven days the quota is counting, which are not the calendar's.
+     *
+     * From `boundsOf` rather than recomputed, for the same reason the five-hour window above
+     * is: once an upstream states its own weekly cadence the window phase-locks to it, so a
+     * week that opened at 20:00 on a Monday reopens at 20:00 on a Monday — and a console
+     * cutting it on the administrator's calendar would report a period the gate is not
+     * enforcing. No per-user reset here: `countsFrom` is one user's, and this card is
+     * everybody's.
+     */
+    case 'weekWindow': {
+      const w = quota.boundsOf('week', now);
+      return { from: iso(w.start), to: iso(w.end), label: 'This 7-day window' };
     }
     case 'last7':
       return { from: iso(new Date(today.getTime() - 6 * 86400_000)), to: endOfToday, label: 'Last 7 days' };

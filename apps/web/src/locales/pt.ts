@@ -425,6 +425,7 @@ export const pt: Record<string, string> = {
   'Which window': 'Que janela',
   'This window': 'Esta janela',
   'This 5-hour window': 'Esta janela de 5 horas',
+  'This 7-day window': 'Janela de 7 dias atual',
   'Per 5 hours': 'Por 5 horas',
   'empty = unlimited': 'vazio = sem limite',
   'Per week': 'Por semana',
@@ -629,4 +630,5 @@ export const pt: Record<string, string> = {
   'Cache': 'Cache',
 
   'Priced from the model price table.': 'Calculado pela tabela de preços dos modelos.',
+  '{bucket} · from {time}': '{bucket} · a partir das {time}',
 };

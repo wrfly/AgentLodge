@@ -425,6 +425,7 @@ export const de: Record<string, string> = {
   'Which window': 'Welches Fenster',
   'This window': 'Dieses Fenster',
   'This 5-hour window': 'Dieses 5-Stunden-Fenster',
+  'This 7-day window': 'Aktuelles 7-Tage-Fenster',
   'Per 5 hours': 'Pro 5 Stunden',
   'empty = unlimited': 'leer = unbegrenzt',
   'Per week': 'Pro Woche',
@@ -629,4 +630,5 @@ export const de: Record<string, string> = {
   'Cache': 'Cache',
 
   'Priced from the model price table.': 'Berechnet nach der Modellpreistabelle.',
+  '{bucket} · from {time}': '{bucket} · ab {time}',
 };

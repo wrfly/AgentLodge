@@ -450,6 +450,7 @@ export const ru: Record<string, string> = {
   'Which window': 'Какое окно',
   'This window': 'Текущее окно',
   'This 5-hour window': 'Текущее 5-часовое окно',
+  'This 7-day window': 'Текущее 7-дневное окно',
   'Per 5 hours': 'За 5 часов',
   'empty = unlimited': 'пусто = без ограничений',
   'Per week': 'За неделю',
@@ -656,4 +657,5 @@ export const ru: Record<string, string> = {
   'Cache': 'Кэш',
 
   'Priced from the model price table.': 'Рассчитано по таблице цен на модели.',
+  '{bucket} · from {time}': '{bucket} · с {time}',
 };
