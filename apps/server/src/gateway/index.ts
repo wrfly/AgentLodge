@@ -1103,6 +1103,19 @@ export function buildGateway(): FastifyInstance {
   });
 
   /**
+   * Look at the queues again.
+   *
+   * For a limit that changed with no slot freed behind it: the per-user cap is a setting,
+   * written in the app container, and raising it makes queued requests eligible without a
+   * release to notice. Nothing else in the gate runs on its own, so on a gate held by long
+   * streaming turns that eligibility would sit unused until the waiters timed out.
+   */
+  app.post('/gate/reschedule', adminOnly, async () => {
+    gate.reschedule();
+    return { pools: gate.stats() };
+  });
+
+  /**
    * Credentials, as the credential manager holds them. **The gateway decides**: its socket
    * is mounted into this container, because this is the process that needs a token when a
    * request is on its way out. One fewer process able to ask for one is better, so the

@@ -165,8 +165,15 @@ export const config = {
   maxQueueDepth: Number(process.env.MAX_QUEUE_DEPTH ?? 200),
   queueTimeoutMs: Number(process.env.QUEUE_TIMEOUT_MS ?? 120_000),
   leaseMaxMs: Number(process.env.LEASE_MAX_MS ?? 600_000),
-  /** How many slots one user may hold at once, so nobody monopolises them */
-  perUserInflightMax: Number(process.env.PER_USER_INFLIGHT_MAX ?? 2),
+  /**
+   * How many slots one user may hold at once, so nobody monopolises them.
+   *
+   * Only the fallback: the console writes `gateway.perUserInflightMax` and the gate reads
+   * that first. Clamped because nothing validates an environment variable, and the values
+   * somebody reaches for to mean "no limit" — `0`, `unlimited` — both made the admission
+   * test false for everyone and queued the whole deployment until it timed out.
+   */
+  perUserInflightMax: Math.max(1, Number(process.env.PER_USER_INFLIGHT_MAX) || 2),
 
   /**
    * How long the upstream may take to start answering, and how long a stream may then go

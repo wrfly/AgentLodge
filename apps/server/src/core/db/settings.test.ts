@@ -17,6 +17,9 @@ import path from 'node:path';
 const box = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-settings-')));
 process.env.DATA_DIR = box;
 process.env.JWT_SECRET = 'test-only-not-a-real-secret';
+// The variable under test is a fallback read from the ambient environment — and a machine
+// set up to run this deployment is exactly the machine that exports it. Owned here.
+delete process.env.PER_USER_INFLIGHT_MAX;
 
 const { initDb, run } = await import('./index.js');
 initDb();

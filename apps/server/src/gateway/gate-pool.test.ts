@@ -226,9 +226,6 @@ console.log('\n=== The per-user cap is whatever the console says now ===');
    * captured when the pool was constructed is whatever the environment said at boot, which is
    * not what a page offering to change it means — so the gate asks each time rather than
    * being told once.
-   *
-   * Asked once per admission pass, not once per waiter: a drain over a deep queue would
-   * otherwise be one database read per person standing in it.
    */
   let configured: number | undefined = 1;
   let reads = 0;
@@ -245,47 +242,91 @@ console.log('\n=== The per-user cap is whatever the console says now ===');
   const at = (t: string) => g.acquire({ userId: 'A', turnId: t, priority: 0 });
 
   const first = await at('one');
-  const secondP = at('two');
+  const queued = [at('two'), at('three'), at('four')];
   await new Promise((r) => setTimeout(r, 5));
-  ok('the console value wins over the configured one', g.stats().queued === 1, JSON.stringify(g.stats()));
+  ok('the console value wins over the configured one', g.stats().active === 1 && g.stats().queued === 3,
+    JSON.stringify(g.stats()));
 
   /*
-   * Raised while somebody is already queued. Nothing wakes the queue on its own — a drain
-   * runs when a slot is released — so the new value lands on the next pass, which in a
-   * running gateway is the next request to finish. A restart is never one of the steps.
+   * Raised with nothing released. On master this state could not exist — the cap was fixed
+   * for the life of the process — so the gate only ever looked at its queues when a slot came
+   * back. Now the eligibility itself changes, and a gate full of long streaming turns would
+   * sit on it until everybody waiting timed out.
    */
-  configured = 3;
-  first.release();
-  const second = await secondP;
-  ok('raising it admits the one already queued', g.stats().active === 1, JSON.stringify(g.stats()));
+  configured = 4;
+  const before = reads;
+  g.reschedule();
+  const [two, three, four] = await Promise.all(queued);
+  ok('raising it reaches the people already waiting, with nothing released',
+    g.stats().active === 4 && g.stats().queued === 0, JSON.stringify(g.stats()));
+  ok('one read for the whole drain, not one per waiter', reads - before === 1, String(reads - before));
 
-  const third = await at('three');
-  const fourth = await at('four');
   const fifthP = at('five');
   await new Promise((r) => setTimeout(r, 5));
-  ok('and three of them fit where one did before', g.stats().active === 3, JSON.stringify(g.stats()));
-  ok('the next one waits, because three is the cap', g.stats().queued === 1, JSON.stringify(g.stats()));
+  ok('and the next one waits, because four is the cap', g.stats().queued === 1, JSON.stringify(g.stats()));
 
-  const before = reads;
-  second.release();
+  first.release();
   const fifth = await fifthP;
-  ok('one read per admission pass, not one per waiter', reads - before <= 4, String(reads - before));
-
-  third.release();
-  fourth.release();
-  fifth.release();
+  for (const l of [two, three, four, fifth]) l?.release();
   await new Promise((r) => setTimeout(r, 5));
+}
+
+console.log('\n=== A raised cap does not let a newcomer step over the queue ===');
+{
+  /*
+   * The same raise, with nobody calling `reschedule`. The fast path in `acquire` grants
+   * whenever there is room, which was only ever safe because a free slot with an eligible
+   * waiter could not happen — a release drains before it returns. A cap that moves makes it
+   * happen, and the next request from that user was then granted straight past three of
+   * their own older ones, which went on waiting for a slot that had already been given away.
+   */
+  let configured: number | undefined = 1;
+  const pool = new GatePool({
+    ...cfg, maxConcurrency: 8, perUserInflightMax: 4, readPerUserInflightMax: () => configured,
+  });
+  const g = pool.for('provider-a');
+  const at = (t: string) => g.acquire({ userId: 'A', turnId: t, priority: 0 });
+
+  const first = await at('one');
+  const older = [at('two'), at('three'), at('four')];
+  await new Promise((r) => setTimeout(r, 5));
+  ok('three are waiting', g.stats().queued === 3, JSON.stringify(g.stats()));
+
+  configured = 4;
+  const newcomer = at('five');
+  await new Promise((r) => setTimeout(r, 5));
+  ok('the three older ones went first', g.stats().active === 4, JSON.stringify(g.stats()));
+  ok('and the newcomer is the one waiting', g.stats().queued === 1, JSON.stringify(g.stats()));
+
+  const got = await Promise.all(older);
+  first.release();
+  const last = await newcomer;
+  got.forEach((l) => l.release());
+  last.release();
+  await new Promise((r) => setTimeout(r, 5));
+}
+
+{
+  let configured: number | undefined = 4;
+  const pool = new GatePool({
+    ...cfg, maxConcurrency: 8, perUserInflightMax: 4, readPerUserInflightMax: () => configured,
+  });
+  const g = pool.for('provider-a');
+  const at = (t: string) => g.acquire({ userId: 'A', turnId: t, priority: 0 });
 
   /*
    * Nothing to say — no row, no environment variable, a database that will not answer — is
    * the configured value, which is a real limit. Refusing everything because a setting could
-   * not be read would not be.
+   * not be read would not be. Five against a fallback of four, so "cap 4" and "no cap at all"
+   * are different answers.
    */
   configured = undefined;
-  const four = await Promise.all([at('s1'), at('s2'), at('s3'), at('s4')]);
+  const five = [at('s1'), at('s2'), at('s3'), at('s4'), at('s5')];
   await new Promise((r) => setTimeout(r, 5));
   ok('silence falls back to the configured limit', g.stats().active === 4, JSON.stringify(g.stats()));
-  four.forEach((l) => l.release());
+  ok('and the fifth is held by it, not by the pool', g.stats().queued === 1 && g.stats().effectiveMax === 8,
+    JSON.stringify(g.stats()));
+  for (const p of five) (await p).release();
 }
 
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);

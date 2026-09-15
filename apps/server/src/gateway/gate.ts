@@ -120,6 +120,24 @@ export class UpstreamGate {
   acquire(req: AcquireRequest): Promise<Lease> {
     return new Promise<Lease>((resolve, reject) => {
       if (req.signal?.aborted) return reject(new AbortedError());
+
+      /*
+       * Anyone already waiting goes first, and before the depth check rather than after it.
+       *
+       * The fast path below used to be safe on its own: a free slot with an eligible waiter
+       * in the queue could not happen, because a release drains before it returns. Making
+       * the per-user cap changeable broke that — raising it makes waiters eligible with no
+       * release to notice, and the next request from the same user would then be granted
+       * straight past three of their own older ones, which went on waiting for a slot that
+       * had already been given away.
+       *
+       * Before the depth check because a drain is what makes room in the queue: turning
+       * somebody away as overloaded while the people ahead of them could have gone is the
+       * same mistake one line down. It costs nothing when the queue is empty, which is the
+       * ordinary case, and `schedule` returns at once when nothing can be granted.
+       */
+      if (this.queuedCount > 0) this.schedule();
+
       if (this.queuedCount >= this.cfg.maxQueueDepth) return reject(new OverloadedError());
 
       const w: Waiter = { ...req, enqueuedAt: Date.now(), resolve, reject, settled: false };
@@ -155,7 +173,15 @@ export class UpstreamGate {
    */
   private perUserMax(): number {
     const live = this.cfg.readPerUserInflightMax?.();
-    return live !== undefined && live > 0 ? live : this.cfg.perUserInflightMax;
+    if (live !== undefined && live > 0) return live;
+    /*
+     * A floor on the fallback, because it comes from an environment variable and nothing
+     * validates one. `PER_USER_INFLIGHT_MAX=0` — a reasonable-looking way to ask for "no
+     * per-user limit" — made `inflight < 0` false for everyone, so every request on every
+     * upstream queued and failed two minutes later. `unlimited` gave NaN and the same
+     * outage. Zero is not a limit anybody can mean here; one is the smallest that is.
+     */
+    return this.cfg.perUserInflightMax >= 1 ? this.cfg.perUserInflightMax : 1;
   }
 
   private canGrantNow(userId: string, perUserMax: number): boolean {
@@ -222,8 +248,12 @@ export class UpstreamGate {
 
   /** Priority 0 takes the fast lane; the rest go round-robin by user */
   private schedule(): void {
-    const perUserMax = this.perUserMax();
+    // Resolved on the first pass that could actually grant something. Above the loop it was
+    // a database read on every lease release, including the ones that find the gate still
+    // full or the queues empty.
+    let perUserMax = -1;
     while (this.active.size < this.effectiveMax && Date.now() >= this.cooldownUntil) {
+      if (perUserMax < 0) perUserMax = this.perUserMax();
       const w = this.takeHiPri(perUserMax) ?? this.takeRoundRobin(perUserMax);
       if (!w) break;
       this.queuedCount -= 1;
@@ -311,6 +341,11 @@ export class UpstreamGate {
     }
   }
 
+  /** See `GatePool.reschedule` */
+  reschedule(): void {
+    this.schedule();
+  }
+
   setMaxConcurrency(n: number): void {
     // The whole method. The effective limit is derived from this and the
     // throttle, so every case falls out on its own: a raise applies at once on
@@ -364,6 +399,18 @@ export class GatePool {
       this.gates.set(providerId, gate);
     }
     return gate;
+  }
+
+  /**
+   * Look at the queues again, for a change no release will announce.
+   *
+   * The per-user cap is a setting now, written in the app container. Raising it makes
+   * queued requests eligible without freeing a slot, and nothing else in here runs on its
+   * own — so on a gate that is full of long streaming turns the freed eligibility would sit
+   * unused until the waiters timed out. The console calls this after writing it.
+   */
+  reschedule(): void {
+    for (const gate of this.gates.values()) gate.reschedule();
   }
 
   /** Applies to every pool, including the ones that do not exist yet */
