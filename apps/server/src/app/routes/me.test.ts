@@ -174,6 +174,89 @@ console.log('\n=== Creating checks the name the same way ===');
   ok('a good name: 201', good.statusCode === 201, String(good.statusCode));
 }
 
+console.log('\n=== The seven days the quota is counting, not the seven the calendar is ===');
+{
+  /*
+   * Three different sevens, and the page offers all three because they answer different
+   * questions:
+   *
+   *   last7       the last seven calendar days, counted back from midnight
+   *   week        the administrator's week, cut at the configured day and hour
+   *   weekWindow  the window the quota is actually counting
+   *
+   * Once an upstream states its own weekly cadence, `weekBoundsAt` phase-locks to it — a
+   * window that opened at 20:00 on a Monday reopens at 20:00 on a Monday, on nobody's
+   * calendar. That is the one the quota card at the top of the page has always shown, and
+   * the one the breakdown below it could not be asked for, so the two numbers under the
+   * word "week" disagreed with no way to reconcile them.
+   */
+  const settings = await import('../../core/db/settings.js');
+  const usage = await import('../../core/db/usage.js');
+
+  // The most recent Monday at 20:00, local — the example the request was made with
+  const monday8pm = new Date();
+  monday8pm.setHours(20, 0, 0, 0);
+  const backToMonday = (monday8pm.getDay() + 6) % 7;
+  monday8pm.setDate(monday8pm.getDate() - backToMonday);
+  if (monday8pm.getTime() > Date.now()) monday8pm.setDate(monday8pm.getDate() - 7);
+
+  // What the gateway stores from the upstream: when the current window *ends*
+  settings.setSetting('quota.weekResetAt', new Date(monday8pm.getTime() + 7 * 86400_000).toISOString());
+
+  const spendAt = (at: Date, tokens: number) => {
+    const before = new Date().toISOString();
+    usage.record({
+      userId: alice.user.id, agent: 'claude', status: 'completed',
+      usage: { inputTokens: tokens, cacheReadTokens: 0, cacheCreationTokens: 0,
+               outputTokens: 0, costUsd: 0, durationMs: 1, numTurns: 1 },
+    });
+    const two = (n: number) => String(n).padStart(2, '0');
+    const day = `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}`;
+    db.run('update usage_records set created_at = ?, day = ? where user_id = ? and created_at >= ?',
+      at.toISOString(), day, alice.user.id, before);
+  };
+  // A minute either side of the boundary
+  spendAt(new Date(monday8pm.getTime() - 60_000), 1_000);
+  spendAt(new Date(monday8pm.getTime() + 60_000), 500);
+
+  const ask = async (preset: string) =>
+    (await app.inject({ method: 'GET', url: `/api/me/usage?preset=${preset}`, headers: alice.bearer }))
+      .json() as { range: { from: string; label: string }; totals: { inputTokens: number } };
+
+  const rolling = await ask('weekWindow');
+  ok('it starts where the window opened, not at midnight',
+    rolling.range.from === monday8pm.toISOString(), `${rolling.range.from} vs ${monday8pm.toISOString()}`);
+  ok('and says which window it is', rolling.range.label === 'This 7-day window', rolling.range.label);
+  ok('what fell before the boundary is not in it', rolling.totals.inputTokens === 500,
+    String(rolling.totals.inputTokens));
+
+  /*
+   * The calendar week cuts at the anchor — midnight by default — so it is a different
+   * instant by however far into the day the upstream's phase sits. Both are right answers to
+   * different questions; what matters is that asking for one does not silently give the
+   * other.
+   */
+  const calendar = await ask('week');
+  ok('the calendar week starts somewhere else', calendar.range.from !== rolling.range.from,
+    `${calendar.range.from} vs ${rolling.range.from}`);
+  ok('and it catches the earlier spend', calendar.totals.inputTokens === 1_500,
+    String(calendar.totals.inputTokens));
+
+  /*
+   * A manual reset moves the start forward inside a window already running, and the range
+   * follows it — `countsFrom`, not `startsAt`. Anything that re-derived the boundary here
+   * would drift from the number the gate enforces, and a report disagreeing with the gate
+   * about what somebody has spent is worse than no report.
+   */
+  const cutoff = new Date(monday8pm.getTime() + 2 * 60_000);
+  users.resetUsage(alice.user.id, cutoff.toISOString());
+  const afterReset = await ask('weekWindow');
+  ok('a reset part-way through moves the start with it',
+    afterReset.range.from === cutoff.toISOString(), `${afterReset.range.from} vs ${cutoff.toISOString()}`);
+  ok('and what it counts moves with it', afterReset.totals.inputTokens === 0,
+    String(afterReset.totals.inputTokens));
+}
+
 await app.close();
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);

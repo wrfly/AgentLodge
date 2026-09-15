@@ -23,6 +23,10 @@ const PRESETS: Array<{ id: RangePreset; label: string }> = [
   { id: 'window', label: 'This 5-hour window' },
   { id: 'today', label: 'Today' },
   { id: 'yesterday', label: 'Yesterday' },
+  // The seven days the quota is counting, next to the seven the calendar is. They are
+  // different windows on a deployment whose upstream states its own cadence, and the card
+  // above this one is showing the first.
+  { id: 'weekWindow', label: 'This 7-day window' },
   { id: 'week', label: 'This week' },
   { id: 'month', label: 'This month' },
   { id: 'last7', label: 'Last 7 days' },

@@ -425,6 +425,7 @@ export const fr: Record<string, string> = {
   'Which window': 'Quelle fenêtre',
   'This window': 'Cette fenêtre',
   'This 5-hour window': 'Cette fenêtre de 5 heures',
+  'This 7-day window': 'Fenêtre de 7 jours en cours',
   'Per 5 hours': 'Par 5 heures',
   'empty = unlimited': 'vide = sans limite',
   'Per week': 'Par semaine',

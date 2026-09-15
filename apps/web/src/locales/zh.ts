@@ -450,6 +450,7 @@ export const zh: Record<string, string> = {
   'Which window': '作用于哪个窗口',
   'This window': '本窗口',
   'This 5-hour window': '当前 5 小时窗口',
+  'This 7-day window': '当前 7 天窗口',
   'Per 5 hours': '每 5 小时',
   'empty = unlimited': '留空 = 不限',
   'Per week': '每周',

@@ -31,6 +31,7 @@ export type RangePreset =
   | 'today'
   | 'yesterday'
   | 'week'
+  | 'weekWindow'
   | 'month'
   | 'last7'
   | 'last30'
@@ -85,6 +86,23 @@ function resolveRange(
       };
     case 'week':
       return { from: usageRepo.periodStart('weekly'), to: endOfToday, label: 'This week' };
+    /*
+     * The seven days the quota is actually counting, which are not the calendar's.
+     *
+     * Once an upstream has stated its own weekly cadence the window phase-locks to it
+     * (`weekBoundsAt`), so a week that opened at 20:00 on a Monday reopens at 20:00 on a
+     * Monday — while `week` above cuts at the administrator's anchor and `last7` counts back
+     * from this moment. All three are reasonable questions and they give three different
+     * numbers; what was missing was the one the quota card at the top of the same page is
+     * showing, so the two could be read against each other.
+     *
+     * Built from the window rather than recomputed, exactly as the 5-hour one is: it counts
+     * from wherever the quota counts from, which a manual reset moves forward.
+     */
+    case 'weekWindow': {
+      const w = quotaStatus.windows.week;
+      return { from: w.countsFrom, to: w.endsAt, label: 'This 7-day window' };
+    }
     case 'month':
       return { from: usageRepo.periodStart('monthly'), to: endOfToday, label: 'This month' };
     case 'last7':
