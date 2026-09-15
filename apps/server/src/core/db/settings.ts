@@ -297,6 +297,19 @@ export const SETTING_SPECS: SettingSpec[] = [
     default: '2',
     envFallback: 'PER_USER_INFLIGHT_MAX',
     hint: 'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.',
+    /*
+     * Refused here rather than ignored later. The gate falls back to its configured value
+     * for anything it cannot use, so a zero typed into this box would be stored, silently
+     * overridden, and leave somebody looking at a saved setting that does nothing. Empty is
+     * allowed and means the same as never set: the environment variable, then the default.
+     */
+    validate: (v) => {
+      if (v.trim() === '') return undefined;
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 1 && n <= 64
+        ? undefined
+        : 'A whole number from 1 to 64. Empty uses the default.';
+    },
   },
   {
     /*
