@@ -103,9 +103,10 @@ export function initDb(): DatabaseSync {
    * A file with no tables in it has nothing to repair. schema.sql builds it complete and
    * the call below only stamps the version, which is why that call stays where it is.
    */
-  if (hasTables(db)) migrate(db);
+  const existed = hasTables(db);
+  if (existed) migrate(db);
   db.exec(fs.readFileSync(schemaPath, 'utf8'));
-  migrate(db);
+  migrate(db, { fresh: !existed });
   console.log(`[db] ${file}`);
   return db;
 }
@@ -127,7 +128,7 @@ function hasTables(d: DatabaseSync): boolean {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 16;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -135,10 +136,29 @@ export function columns(d: DatabaseSync, table: string): Set<string> {
   );
 }
 
-function migrate(d: DatabaseSync): void {
+function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
   const [row] = d.prepare('pragma user_version').all() as Array<{ user_version: number }>;
   const from = row?.user_version ?? 0;
   if (from >= SCHEMA_VERSION) return;
+
+  /*
+   * A file schema.sql has just built is already current, and stamping it is the whole of
+   * what this call is for on that path — the comment above initDb's second migrate() says
+   * so, and every step below is written for a database that predates it.
+   *
+   * The schema steps would be harmless here: each one asks whether a column is missing and
+   * a new file has them all. A step that writes **data** is not, and one did. Migration 13
+   * prices DeepSeek, and on a new file it ran with nothing to repair, inserted its three
+   * rows into an empty table, and left seedDefaults() looking at a table that was no longer
+   * empty — so it returned without seeding, and the install came up with three DeepSeek
+   * prices, no Claude prices and no '*' catch-all. Nothing failed: costMicro simply returned
+   * 0 for every Claude model, and billable() fell through to the flat weights, which is the
+   * accounting this table exists to replace.
+   */
+  if (opts.fresh) {
+    d.exec(`pragma user_version = ${SCHEMA_VERSION}`);
+    return;
+  }
 
   if (from < 1) {
     /*
@@ -391,6 +411,239 @@ function migrate(d: DatabaseSync): void {
       d.exec('alter table conversations add column parent_id text references conversations(id) on delete cascade');
       d.exec('create index if not exists idx_conv_parent on conversations(parent_id)');
     }
+  }
+
+  if (from < 13) {
+    /*
+     * DeepSeek changed its line-up on 2026-09-10 and the seeded prices predate it by five
+     * months. seedDefaults() only runs on an empty table, so correcting it there fixes
+     * nothing that already exists — and what already exists is costing `deepseek-flash`,
+     * which has no row at all, at the catch-all rate of Claude Opus 5. That is $5/MTok
+     * against a real $0.15: a bill thirty-three times too large, and a quota that refuses
+     * people thirty-three times too early.
+     *
+     * The amounts are written out rather than imported from pricing.ts. Partly because
+     * that module imports from this one, and mostly because a migration is a record of
+     * what was done on a particular day: it must not change when the constants it once
+     * agreed with are edited again.
+     *
+     * A row is only corrected if it still holds **exactly** what the old seed wrote. An
+     * administrator who has already put their own number in has answered this question,
+     * and a migration that overrides them would be a worse bug than the one it fixes.
+     *
+     * Correcting means adding a row, not rewriting one: `effective_from` is how this table
+     * keeps a bill costed at the price of its day, and rewriting history would re-price
+     * usage that was already charged.
+     */
+    const OFF_PEAK = 'Off-peak. DeepSeek doubles this Mon–Fri 01:00–04:00 and 06:00–10:00 UTC.';
+    const FLASH = { in: 150_000, cacheRead: 3_000, cacheWrite: 150_000, out: 600_000 };
+    const corrections = [
+      // Never had a row: the id did not exist when the table was seeded
+      { model: 'deepseek-flash', wasInput: null, ...FLASH, note: OFF_PEAK },
+      // Seeded at April's preview price, which was half of what it costs
+      {
+        model: 'deepseek-v4-pro',
+        wasInput: 435_000,
+        in: 660_000,
+        cacheRead: 22_000,
+        cacheWrite: 660_000,
+        out: 1_980_000,
+        note: OFF_PEAK,
+      },
+      // Retired. The name still answers, and V4.1-Flash is what answers it
+      {
+        model: 'deepseek-v4-flash',
+        wasInput: 220_000,
+        ...FLASH,
+        note: `Retired 2026-09-10 — served by V4.1-Flash and billed at its price. ${OFF_PEAK}`,
+      },
+    ];
+
+    const now = new Date().toISOString();
+    /*
+     * The published DeepSeek rates are in US dollars, and this table is summed as if every
+     * row were the same money — the seed says so in as many words. So on a deployment
+     * billing in anything else, writing these numbers in is not a correction: it is two
+     * currencies added together, which is a number with no meaning and no error attached.
+     *
+     * There is no conversion to make here either. A rate is a decision with a date on it
+     * and nobody in this process has one. So the prices are named in the log and left to
+     * the person who does.
+     */
+    const [cur] = d
+      .prepare("select value from settings where key = 'billing.currency'")
+      .all() as Array<{ value: string }>;
+    const currency = cur?.value ?? 'USD';
+    if (currency !== 'USD') {
+      console.log(`[db] DeepSeek's 2026-09-10 rates are in USD and this table bills in ${currency},`);
+      console.log('     so they have not been written in. Per million tokens, in USD:');
+      console.log('       deepseek-flash    in 0.15  cache read 0.003  cache write 0.15  out 0.60');
+      console.log('       deepseek-v4-pro   in 0.66  cache read 0.022  cache write 0.66  out 1.98');
+      console.log(`     Convert at your own rate and add them under Settings → Price table.`);
+    }
+
+    for (const c of currency === 'USD' ? corrections : []) {
+      const [row] = d
+        .prepare(
+          `select price_input as priceInput, currency from model_pricing
+           where model = ? and provider_id is null
+           order by effective_from desc limit 1`,
+        )
+        .all(c.model) as Array<{ priceInput: number; currency: string }>;
+
+      // Present and already edited by hand — their number, their decision
+      if (row && row.priceInput !== c.wasInput) continue;
+      /*
+       * Absent gets a row. A database seeded before these ids existed has no opinion about
+       * them — it has an old `deepseek` row that catches them by prefix at a price meant
+       * for a model two generations back. That legacy row is left alone: it is the
+       * administrator's data, and once the three current ids match exactly it only answers
+       * for names that are no longer served.
+       */
+
+      d.prepare(
+        `insert into model_pricing
+           (model, provider_id, currency, price_input, price_cache_read, price_cache_write,
+            price_output, effective_from, note, created_at)
+         values (?, null, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(c.model, currency, c.in, c.cacheRead, c.cacheWrite, c.out, now, c.note, now);
+      console.log(`[db] priced ${c.model} at DeepSeek's 2026-09-10 rates${row ? '' : ' (was missing)'}`);
+    }
+  }
+
+  if (from < 14) {
+    /*
+     * A price can now depend on the time of day, because one upstream's does: DeepSeek
+     * charges double Mon–Fri 01:00–04:00 and 06:00–10:00 UTC. Until this column existed the
+     * table held the off-peak number and a note saying it doubled, so a deployment serving
+     * those hours billed half of what it was charged — and quota, which counts what a turn
+     * cost, let everyone through at twice the intended rate for seven hours a day.
+     *
+     * Schema first, then the same data repair as migration 13 and on the same terms: only a
+     * row still holding exactly what the seed wrote is touched, and the correction is a new
+     * row rather than a rewrite. A fresh database never reaches here — see the guard at the
+     * top of this function, which is what migration 13 taught.
+     */
+    const have = columns(d, 'model_pricing');
+    if (!have.has('peak_multiplier')) {
+      d.exec('alter table model_pricing add column peak_multiplier real not null default 1');
+    }
+    if (!have.has('peak_windows')) {
+      d.exec('alter table model_pricing add column peak_windows text');
+    }
+
+    const WINDOWS = '{"days":[1,2,3,4,5],"hours":[[1,4],[6,10]]}';
+    // The off-peak figures migration 13 wrote, in micro-units per million tokens
+    const SEEDED = [
+      { model: 'deepseek-flash', input: 150_000 },
+      { model: 'deepseek-v4-pro', input: 660_000 },
+      { model: 'deepseek-v4-flash', input: 150_000 },
+    ];
+    for (const s of SEEDED) {
+      const [row] = d
+        .prepare(
+          `select id, price_input as priceInput, peak_multiplier as peak from model_pricing
+           where model = ? and provider_id is null
+           order by effective_from desc limit 1`,
+        )
+        .all(s.model) as Array<{ id: number; priceInput: number; peak: number }>;
+      // Absent, edited by hand, or already carrying a schedule — all three are somebody
+      // else's decision about this row
+      if (!row || row.priceInput !== s.input || row.peak !== 1) continue;
+      d.prepare('update model_pricing set peak_multiplier = 2, peak_windows = ? where id = ?')
+        .run(WINDOWS, row.id);
+      console.log(`[db] ${s.model} now doubles during DeepSeek's peak hours`);
+    }
+  }
+
+  if (from < 15) {
+    /*
+     * Undo the damage migration 13 did to a table that does not bill in dollars.
+     *
+     * It wrote DeepSeek's published USD rates in, taking the currency from whatever row it
+     * was correcting and falling back to 'USD' when there was none to correct — which for
+     * `deepseek-flash`, the row that had never existed, was always. On a deployment billing
+     * in CNY the result was three USD rows beside the yuan ones, and every consumer sums
+     * `cost_micro` across the lot: a bill that is two currencies added together, a quota
+     * counted in the same mixture, and nothing anywhere to say so.
+     *
+     * The repair is to take them back out, not to convert them — the rate is a decision
+     * with a date on it and this process has neither. One consistent currency, even without
+     * a DeepSeek price, beats a table whose total means nothing; without a row of its own
+     * the model falls to the catch-all, which is where it was before 13 ran.
+     *
+     * Only rows still holding exactly what 13 wrote are removed, on the same principle as
+     * 13 and 14: anything an administrator has touched is their answer, not ours.
+     */
+    const [cur] = d
+      .prepare("select value from settings where key = 'billing.currency'")
+      .all() as Array<{ value: string }>;
+    const currency = cur?.value ?? 'USD';
+    if (currency !== 'USD') {
+      const WROTE = [
+        { model: 'deepseek-flash', input: 150_000, output: 600_000 },
+        { model: 'deepseek-v4-pro', input: 660_000, output: 1_980_000 },
+        { model: 'deepseek-v4-flash', input: 150_000, output: 600_000 },
+      ];
+      let removed = 0;
+      for (const w of WROTE) {
+        removed += Number(
+          d
+            .prepare(
+              /*
+               * Matched on the amounts, not on the currency label.
+               *
+               * Migration 13 stamped these rows with `row?.currency ?? 'USD'` — the
+               * currency of whatever row it was correcting. So on a CNY table the model
+               * that already had a row (deepseek-v4-pro, at the old seeded 435000) got
+               * DeepSeek's dollar amounts under a CNY label, and only the one that had
+               * never existed got 'USD'. Constraining on 'USD' would leave the mislabelled
+               * one behind — and being labelled consistently, it is invisible to the
+               * mixed-currency banner too. This whole block only runs when the table does
+               * not bill in dollars, so these exact amounts are 13's work either way.
+               */
+              `delete from model_pricing
+               where model = ? and provider_id is null
+                 and price_input = ? and price_output = ?`,
+            )
+            .run(w.model, w.input, w.output).changes,
+        );
+      }
+      if (removed) {
+        console.log(`[db] removed ${removed} USD price row(s) from a table billing in ${currency}`);
+        console.log('     DeepSeek is unpriced again and falls to the catch-all. Its published');
+        console.log('     rates per million tokens, in USD, to convert and enter yourself:');
+        console.log('       deepseek-flash    in 0.15  cache read 0.003  cache write 0.15  out 0.60');
+        console.log('       deepseek-v4-pro   in 0.66  cache read 0.022  cache write 0.66  out 1.98');
+        console.log('     Both double Mon–Fri 01:00–04:00 and 06:00–10:00 UTC. The price form');
+        console.log('     cannot express that yet — it shows a schedule but does not set one —');
+        console.log('     so a row entered here bills the off-peak rate around the clock.');
+      }
+    }
+  }
+
+  if (from < 16) {
+    /*
+     * Being over the ceiling stops being a refusal and becomes a wait.
+     *
+     * Schema only — there is nothing to repair. Every refusal that has already happened is
+     * a `quota_refusals` row and a message the person retyped; this table only holds what
+     * arrives from here on.
+     */
+    d.exec(`
+      create table if not exists deferred_turns (
+        id              text primary key,
+        user_id         text not null references users(id) on delete cascade,
+        conversation_id text not null references conversations(id) on delete cascade,
+        body            text not null,
+        scope           text not null,
+        release_at      text not null,
+        created_at      text not null,
+        unique (conversation_id)
+      );
+      create index if not exists idx_deferred_release on deferred_turns(release_at);
+      create index if not exists idx_deferred_user on deferred_turns(user_id);
+    `);
   }
 
   d.exec(`pragma user_version = ${SCHEMA_VERSION}`);

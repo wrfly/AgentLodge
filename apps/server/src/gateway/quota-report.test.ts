@@ -66,6 +66,8 @@ function q(over: Partial<Record<QuotaScope, Partial<QuotaWindow>>> = {}, top: Pa
     exceeded: limited.some((w) => w.exceeded),
     warning: limited.some((w) => w.ratio >= 0.9),
     tightest: limited.length ? limited.reduce((a, b) => (b.ratio > a.ratio ? b : a)).scope : null,
+    // Not part of what this suite is about — the headers carry windows, not turn sizes
+    typicalTurn: null,
     ...top,
   };
 }

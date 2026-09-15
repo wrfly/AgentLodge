@@ -1,5 +1,6 @@
 import { all, get, nowIso, run } from './index.js';
 import { getString, setSetting } from './settings.js';
+import { isPeakAt, parsePeak, WEEKDAYS, type PeakWindows } from '../peak-hours.js';
 
 /**
  * The price table: turning tokens into money.
@@ -27,6 +28,18 @@ export interface Pricing {
   priceOutput: number;
   effectiveFrom: string;
   note?: string;
+  /**
+   * What the four prices are multiplied by inside the windows below. 1 means the row has no
+   * time of day — which is every row but DeepSeek's.
+   */
+  peakMultiplier: number;
+  peakWindows: PeakWindows | null;
+  /**
+   * Only set by resolve(), and only when the multiplier was actually applied to the numbers
+   * on this object. list() never sets it: what that returns is what is stored, which is
+   * what the console edits.
+   */
+  peakApplied?: boolean;
 }
 
 interface Row {
@@ -41,9 +54,14 @@ interface Row {
   effective_from: string;
   note: string | null;
   created_at: string;
+  peak_multiplier: number | null;
+  peak_windows: string | null;
 }
 
-const toPricing = (r: Row): Pricing => ({
+const toPricing = (r: Row): Pricing => {
+  let cached: PeakWindows | null = null;
+  let parsed = false;
+  return {
   id: r.id,
   model: r.model,
   currency: r.currency,
@@ -54,7 +72,48 @@ const toPricing = (r: Row): Pricing => ({
   priceOutput: r.price_output,
   effectiveFrom: r.effective_from,
   note: r.note ?? undefined,
-});
+  // A row written before the column existed reads as "no time of day", which it was
+  peakMultiplier: r.peak_multiplier ?? 1,
+  /*
+   * Parsed when somebody looks, not when the row is mapped.
+   *
+   * resolve() maps **every** row in the table — its query has no model predicate — and uses
+   * one of them, and record() resolves four times for every usage row the gateway writes.
+   * Parsing eagerly put a JSON.parse and a full validity walk on that path for each row
+   * that carries a schedule. A row without one costs nothing either way, since parsePeak
+   * returns on the empty string.
+   */
+  get peakWindows() {
+    if (!parsed) {
+      cached = parsePeak(r.peak_windows);
+      parsed = true;
+    }
+    return cached;
+  },
+  };
+};
+
+/**
+ * The same row with the time of day applied.
+ *
+ * Done here rather than at the call sites on purpose. There are four of them, they are the
+ * whole of how money and quota are counted, and a call site that forgot would not fail —
+ * it would bill the off-peak rate during peak hours and look exactly like one that
+ * remembered. So resolve() answers "what this costs at that moment" and there is no second
+ * function returning the other thing.
+ */
+function atMoment(p: Pricing, at: Date): Pricing {
+  if (p.peakMultiplier === 1 || !isPeakAt(p.peakWindows, at)) return p;
+  const x = p.peakMultiplier;
+  return {
+    ...p,
+    priceInput: p.priceInput * x,
+    priceCacheRead: p.priceCacheRead * x,
+    priceCacheWrite: p.priceCacheWrite * x,
+    priceOutput: p.priceOutput * x,
+    peakApplied: true,
+  };
+}
 
 export function list(): Pricing[] {
   return all<Row>('select * from model_pricing order by model, effective_from desc').map(toPricing);
@@ -71,6 +130,9 @@ export interface UpsertInput {
   priceOutput: number;
   effectiveFrom?: string;
   note?: string;
+  /** Left out means 1: the price does not depend on the time of day */
+  peakMultiplier?: number;
+  peakWindows?: PeakWindows | null;
 }
 
 /** A price change inserts a row; past bills keep the price of their time and are never rewritten */
@@ -78,8 +140,8 @@ export function add(input: UpsertInput): Pricing {
   const result = run(
     `insert into model_pricing
        (model, provider_id, currency, price_input, price_cache_read, price_cache_write, price_output,
-        effective_from, note, created_at)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        effective_from, note, created_at, peak_multiplier, peak_windows)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.model.trim(),
     (input.providerId ?? '').trim() || null,
     input.currency ?? getString('billing.currency', 'USD'),
@@ -90,6 +152,10 @@ export function add(input: UpsertInput): Pricing {
     input.effectiveFrom ?? nowIso(),
     input.note ?? null,
     nowIso(),
+    input.peakMultiplier ?? 1,
+    // A multiplier with no windows would never apply, and windows with no multiplier would
+    // apply nothing. Storing neither unless both are present keeps the two from drifting.
+    input.peakWindows && (input.peakMultiplier ?? 1) !== 1 ? JSON.stringify(input.peakWindows) : null,
   );
   // Return the row just written, not `list()[0]` — the list is ordered by
   // (model, effective_from), so its first row is arbitrary with respect to this
@@ -111,6 +177,12 @@ export function remove(id: number): boolean {
  *
  * Within each of those two passes: exact match, then longest prefix, then the '*'
  * catch-all — so a new model does not need a price before it can be used.
+ *
+ * What comes back is **what to charge at `at`**, with any time-of-day surcharge already in
+ * the four numbers and `peakApplied` set to say so. list() is the other view — the row as
+ * stored, which is what the console edits. Two things called `priceInput` that mean
+ * different numbers is a real hazard, and the way it is kept safe is that only one of them
+ * is ever used for billing.
  */
 export function resolve(
   model: string | null | undefined,
@@ -123,6 +195,14 @@ export function resolve(
     at,
   ).map(toPricing);
   if (!rows.length) return undefined;
+
+  /*
+   * `at` is an ISO-8601 string in UTC — nowIso() everywhere in production — so this is the
+   * same instant the row was selected by. Peak windows are stated in UTC by the vendor and
+   * read in UTC by isPeakAt; nothing here touches the server's local zone, which is a
+   * different clock entirely (DESIGN.md §16).
+   */
+  const moment = new Date(at);
 
   const pass = (candidates: Pricing[]): Pricing | undefined => {
     const exact = candidates.find((r) => r.model === m);
@@ -138,9 +218,10 @@ export function resolve(
   const provider = (providerId ?? '').trim();
   if (provider) {
     const mine = pass(rows.filter((r) => r.providerId === provider));
-    if (mine) return mine;
+    if (mine) return atMoment(mine, moment);
   }
-  return pass(rows.filter((r) => !r.providerId));
+  const global = pass(rows.filter((r) => !r.providerId));
+  return global && atMoment(global, moment);
 }
 
 export interface TokenCounts {
@@ -201,13 +282,66 @@ export const formatMoney = (micro: number, currency = 'USD'): string =>
   `${currency === 'CNY' ? '¥' : '$'}${(micro / MICRO).toFixed(4)}`;
 
 /**
+ * What every DeepSeek row has to say, because the number in it is only true for part of
+ * the week. Shared so that correcting one row cannot leave another explaining itself
+ * differently.
+ */
+export const DEEPSEEK_OFF_PEAK =
+  'Off-peak. DeepSeek doubles this Mon–Fri 01:00–04:00 and 06:00–10:00 UTC.';
+
+/**
+ * DeepSeek's own schedule, stored on every row it prices.
+ *
+ * The seeded amounts are the off-peak ones, so the multiplier goes up rather than down —
+ * which is also the safer direction to be wrong in: a row that lost its windows bills the
+ * cheaper number, and undercharging is visible in the vendor's invoice, where overcharging
+ * is only visible to the person who was overcharged.
+ */
+const PEAK = { peakMultiplier: 2, peakWindows: { days: WEEKDAYS, hours: [[1, 4], [6, 10]] as Array<[number, number]> } };
+
+/** The name outlived the model behind it, and the bill follows the model */
+export const DEEPSEEK_RETIRED =
+  `Retired 2026-09-10 — served by V4.1-Flash and billed at its price. ${DEEPSEEK_OFF_PEAK}`;
+
+/**
  * Seed DeepSeek's prices on first start.
  *
  * ⚠️ These numbers change. Check them against DeepSeek's own page and correct them in the
  * console before going live — the interface says so too.
  */
+/**
+ * The one row the table cannot be without.
+ *
+ * `billable()` divides a turn's cost by this to express quota in "one input token at the
+ * standard rate", and `resolve()` hands it to every model with no row of its own. Missing,
+ * both fail quietly: costMicro returns 0 and quota drops back to the flat weights.
+ *
+ * Checked separately from the seed because the seed's own question — "is the table empty" —
+ * is not this one. A data migration that writes a pricing row makes the table non-empty
+ * before seedDefaults() ever looks, and then it seeds nothing; that happened once already
+ * (migration 13), and the guard added for it protects a fresh file, not a file left
+ * half-built by a process that died between schema.sql and migrate().
+ */
+function ensureCatchAll(): void {
+  if (resolve('*')) return;
+  const rate = 5;
+  add({
+    model: '*',
+    priceInput: rate * MICRO,
+    priceCacheRead: (rate / 10) * MICRO,
+    priceCacheWrite: rate * 1.25 * MICRO,
+    priceOutput: rate * 5 * MICRO,
+    note: 'Restored: the table had no catch-all, which quota is counted in',
+  });
+  console.log("[pricing] no '*' catch-all in the price table — one was added, check the rate in the console");
+}
+
 export function seedDefaults(): void {
-  if (get('select 1 as x from model_pricing limit 1')) return;
+  if (get('select 1 as x from model_pricing limit 1')) {
+    // Non-empty is not the same as complete; see ensureCatchAll
+    ensureCatchAll();
+    return;
+  }
   const now = nowIso();
   /*
    * Units are micro-units per million tokens, so `$10 / MTok` is 10_000_000.
@@ -235,10 +369,17 @@ export function seedDefaults(): void {
    * exception spelled out: Claude Fable reads its cache at a fortieth. That exception is
    * the reason quota reads a table instead of a global weight, so the table has to hold it.
    */
-  const rate = (input: number, output: number, cacheRead = input / 10) => ({
+  const rate = (
+    input: number,
+    output: number,
+    cacheRead = input / 10,
+    // Anthropic charges a premium to write the cache. DeepSeek does not — a miss is simply
+    // the input price — so that one is a parameter rather than a constant.
+    cacheWrite = input * 1.25,
+  ) => ({
     priceInput: Math.round(input * 1_000_000),
     priceCacheRead: Math.round(cacheRead * 1_000_000),
-    priceCacheWrite: Math.round(input * 1.25 * 1_000_000),
+    priceCacheWrite: Math.round(cacheWrite * 1_000_000),
     priceOutput: Math.round(output * 1_000_000),
   });
   const seed: UpsertInput[] = [
@@ -253,8 +394,24 @@ export function seedDefaults(): void {
     { model: 'claude-sonnet-4-6', ...rate(3, 15) },
     { model: 'claude-sonnet-4-5', ...rate(3, 15) },
     { model: 'claude-haiku-4-5', ...rate(1, 5) },
-    { model: 'deepseek-v4-pro', ...rate(0.435, 0.87) },
-    { model: 'deepseek-v4-flash', ...rate(0.22, 0.66), note: 'Off-peak; DeepSeek doubles these 01:00–04:00 and 06:00–10:00 UTC' },
+    /*
+     * DeepSeek, as of 2026-09-10. Two things here are off the Anthropic pattern and both
+     * are spelled out rather than derived: a cache read is a fiftieth of the input price
+     * on flash and a thirtieth on pro, not the usual tenth; and a cache **write** costs
+     * nothing extra, because a miss is just the input price.
+     *
+     * The amounts are the off-peak ones. DeepSeek doubles everything Monday to Friday,
+     * 01:00–04:00 and 06:00–10:00 UTC, and a table row holds one number — so a deployment
+     * serving peak hours is undercharging by half until the price table grows a time
+     * dimension.
+     */
+    { model: 'deepseek-flash', ...rate(0.15, 0.6, 0.003, 0.15), ...PEAK, note: DEEPSEEK_OFF_PEAK },
+    { model: 'deepseek-v4-pro', ...rate(0.66, 1.98, 0.022, 0.66), ...PEAK, note: DEEPSEEK_OFF_PEAK },
+    // Retired on 2026-09-10. The name still resolves, and what answers is V4.1-Flash at
+    // the flash price — so the row that keeps the bill right is the flash row, not the one
+    // this model used to have. Written on one line like the rest because check-pricing.mjs
+    // reads this shape, and a row it cannot parse is a row it silently stops comparing.
+    { model: 'deepseek-v4-flash', ...rate(0.15, 0.6, 0.003, 0.15), ...PEAK, note: DEEPSEEK_RETIRED },
     {
       // Also the unit quota is counted in: one billable token is one input token at this rate
       model: '*',

@@ -137,9 +137,41 @@ export function Field({
   );
 }
 
+/**
+ * A text box that the browser does not try to fill in.
+ *
+ * The defaults sit **before** the spread, so a caller that wants autofill asks for it —
+ * which the sign-up and sign-in forms do, and should: `autoComplete="email"`,
+ * `"new-password"`, `"nickname"`. Everywhere else the browser guessing is at best noise and
+ * at worst a wrong value stored without a word.
+ *
+ * The console is the case that matters. Every `secret` setting renders as a password input
+ * — mail.apiKey, mail.smtpPassword — and so does the upstream API key field beside them. A
+ * browser offering the operator's own saved site password for one of those is offering to
+ * put it somewhere it will be encrypted into the settings row or handed to
+ * credential-manager, and nothing about that is an error. The same in reverse: a password
+ * manager offering to remember an upstream key as this site's password.
+ *
+ * `off` is not enough on a password field — Chrome has ignored it there for years — so a
+ * password input gets `new-password`, which is the value it does respect. The two
+ * `data-*` attributes are 1Password's and LastPass's own opt-outs, since neither reads the
+ * standard one; they are applied **only to fields that have not said what they are for**.
+ * A caller that writes `autoComplete="current-password"` has declared its purpose, and
+ * telling a password manager to ignore it anyway would break the thing it asked for.
+ *
+ * **Autofill only.** An earlier version of this also defaulted `spellCheck`, `autoCorrect`
+ * and `autoCapitalize` to off, which is a different argument that was never made: those
+ * decide how a *person* types, not what a browser fills in, and every free-text box in the
+ * application goes through here — a note, an invite message, a display name. On a phone
+ * `autoCapitalize="off"` means a sentence typed into one comes out lowercase. The fields
+ * that genuinely want no spellcheck are identifiers and keys, and they say so themselves.
+ */
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  const declared = props.autoComplete !== undefined;
   return (
     <input
+      autoComplete={props.type === 'password' ? 'new-password' : 'off'}
+      {...(declared ? {} : { 'data-1p-ignore': '', 'data-lpignore': 'true' })}
       {...props}
       className={clsx(
         'w-full rounded-lg border border-line bg-bg px-3 py-2 text-[14px] outline-none transition placeholder:text-faint focus:border-accent/60 disabled:opacity-50',

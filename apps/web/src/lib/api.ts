@@ -4,6 +4,7 @@ import type {
   AgentId,
   Conversation,
   ConversationSummary,
+  DeferredTurn,
   StoredMessage,
 } from './protocol';
 
@@ -191,7 +192,9 @@ export const api = {
     }),
 
   getConversation: (id: string) =>
-    request<Conversation & { busy: boolean }>(`/api/conversations/${id}`),
+    request<Conversation & { busy: boolean; deferred: DeferredTurn | null }>(
+      `/api/conversations/${id}`,
+    ),
 
   renameConversation: (id: string, title: string) =>
     request<Conversation>(`/api/conversations/${id}`, {
@@ -220,11 +223,25 @@ export const api = {
   deleteConversation: (id: string) =>
     request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
 
+  /**
+   * Both outcomes are a 202: the message was taken. `deferred` instead of `turnId` means
+   * it is over the ceiling and waiting for the window rather than going now. A 402 is still
+   * a 402 — that is the wait being too long to be worth calling one.
+   */
   sendMessage: (id: string, text: string) =>
-    request<{ turnId: string; userMessage: StoredMessage }>(
-      `/api/conversations/${id}/messages`,
-      { method: 'POST', body: JSON.stringify({ text }) },
-    ),
+    request<
+      | { turnId: string; userMessage: StoredMessage; deferred?: undefined }
+      | { deferred: DeferredTurn; quota: QuotaStatus; turnId?: undefined }
+    >(`/api/conversations/${id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
+  /** Take back a waiting question; the text comes back so the composer can have it */
+  cancelDeferred: (id: string) =>
+    request<{ ok: true; deferred: DeferredTurn }>(`/api/conversations/${id}/deferred`, {
+      method: 'DELETE',
+    }),
 
   /** Correct the newest question: its answer goes and the corrected question is re-asked */
   editMessage: (id: string, messageId: string, text: string) =>
@@ -272,7 +289,7 @@ export const api = {
 
 /* ---------------- Usage and memory ---------------- */
 
-export type { QuotaScope, QuotaStatus, QuotaWindow, LimitKind, ThreadSummary } from './protocol';
+export type { QuotaScope, QuotaStatus, QuotaWindow, LimitKind, ThreadSummary, DeferredTurn } from './protocol';
 import type { QuotaScope, QuotaStatus } from './protocol';
 
 export type RangePreset =
@@ -645,6 +662,16 @@ export interface PricingRow {
   priceOutput: number;
   effectiveFrom: string;
   note?: string;
+  /** What the four prices are multiplied by inside the schedule below; 1 means no schedule */
+  peakMultiplier: number;
+  /**
+   * The schedule as a sentence — `Mon–Fri 01:00–04:00, 06:00–10:00 UTC` — and whether this
+   * instant is inside it. Both are rendered by the server, beside the code that evaluates
+   * the windows: a second copy here could describe a surcharge other than the one being
+   * charged.
+   */
+  peakLabel: string;
+  peakNow: boolean;
 }
 
 export interface AuditProxyConfig {

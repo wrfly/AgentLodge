@@ -4,7 +4,7 @@ import * as convRepo from '../core/db/conversations.js';
 import * as profileRepo from '../core/db/profile.js';
 import type { StoredMessage } from '../core/protocol.js';
 import { config } from '../core/config.js';
-import { getStringFresh } from '../core/db/settings.js';
+import { getString, getStringFresh } from '../core/db/settings.js';
 import { signRuntimeToken } from '../core/runtime-token.js';
 import { gatewayEnabled, gatewayInternalUrl } from './agents/provider.js';
 
@@ -405,7 +405,14 @@ async function ask(userId: string, body: string, maxTokens: number): Promise<str
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({
-      model: config.model || 'claude-haiku-4-5',
+      /*
+       * The deployment's own model for this kind of work, if it has been given one. Naming
+       * a conversation and summarising it are the same job whatever model does it, and the
+       * bill is not the same: on DeepSeek's flash tier a summary costs about a fiftieth of
+       * what Claude Sonnet charges for it, which is the difference between "run this on
+       * every turn" and "run it when somebody opens the page".
+       */
+      model: getString('agents.toolModel') || config.model || 'claude-haiku-4-5',
       max_tokens: maxTokens,
       messages: [{ role: 'user', content: body }],
     }),

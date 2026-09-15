@@ -92,7 +92,7 @@ export function AuditProxyCard() {
   return (
     <Card
       title={t('Audit proxy')}
-      description={t('Everything outbound passes through it. Changes apply immediately and are persisted in the proxy\'s own volume, surviving restarts.')}
+      description={t('Everything outbound passes through it.')}
       actions={saved ? <span className="text-[12px] text-accent">{t('Saved')}</span> : null}
     >
       {err && <Banner tone="error">{err}</Banner>}

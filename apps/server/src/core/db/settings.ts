@@ -296,7 +296,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     type: 'number',
     default: '2',
     envFallback: 'PER_USER_INFLIGHT_MAX',
-    hint: 'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.',
+    hint: 'Per upstream, so a busy conversation cannot take the whole pool.',
     /*
      * Refused here rather than ignored later. The gate falls back to its configured value
      * for anything it cannot use, so a zero typed into this box would be stored, silently
@@ -404,6 +404,28 @@ export const SETTING_SPECS: SettingSpec[] = [
     type: 'string',
     default: '',
     hint: 'Empty leaves it to the CLI.',
+  },
+  {
+    /*
+     * What the service itself asks for, as opposed to what a user asks for: naming a
+     * conversation, summarising one, writing the portrait on the profile page.
+     *
+     * Its own setting because the two have nothing to do with each other. Those calls read
+     * a transcript and write a line or two — a job the cheapest model on the deployment
+     * does as well as the most expensive one, at a fiftieth of the price — and until now
+     * they went out on whatever the main model was, so a deployment on an expensive model
+     * paid that rate to produce a four-word title.
+     *
+     * It is the user's own quota either way. The setting decides what it costs them, not
+     * who pays.
+     */
+    key: 'agents.toolModel',
+    span: 3,
+    label: 'Model for titles and summaries',
+    group: 'agents',
+    type: 'string',
+    default: '',
+    hint: 'Used for naming conversations, summarising them and writing the profile — never for a reply. A cheap model is the right choice here. Empty follows the main model.',
   },
   {
     /*

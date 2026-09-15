@@ -6,6 +6,7 @@ import type {
   ThreadSummary,
   AgentId,
   ConversationSummary,
+  DeferredTurn,
   MessageBlock,
   ServerEvent,
   StoredMessage,
@@ -131,6 +132,14 @@ interface ChatState {
   filesVersion: number;
   messages: ChatMessage[];
   streaming: boolean;
+  /**
+   * A question this conversation is holding until the quota window turns over.
+   *
+   * Not a message: it has not been asked, and a transcript showing it would be showing the
+   * agent something it never received. It is a line above the composer, and it arrives both
+   * with the conversation and on its own event — it outlives the browser that typed it.
+   */
+  deferred: DeferredTurn | null;
   loading: boolean;
   connected: boolean;
   error: string | null;
@@ -212,6 +221,8 @@ interface ChatState {
   ensureConversation: () => Promise<string | null>;
   select: (id: string) => Promise<void>;
   send: (text: string) => Promise<void>;
+  /** Take back the held question. Its text returns to the composer. */
+  cancelDeferred: () => Promise<void>;
   /** Correct the newest question: its answer goes and the corrected question is re-asked */
   /** Resolves true when the edit landed. False means the text is still the caller's to keep. */
   editMessage: (messageId: string, text: string) => Promise<boolean>;
@@ -424,6 +435,7 @@ function applyEvents(
   queuePosition: number;
   title: string;
   conversations: ConversationSummary[];
+  deferred: DeferredTurn | null;
   },
 ): {
   messages: ChatMessage[];
@@ -431,12 +443,14 @@ function applyEvents(
   queuePosition: number;
   title: string;
   conversations: ConversationSummary[];
+  deferred: DeferredTurn | null;
 } {
   const messages = state.messages.slice();
     let streaming = state.streaming;
     let queuePosition = state.queuePosition;
     let title = state.title;
     let conversations = state.conversations;
+    let deferred = state.deferred;
 
     // Clone the trailing message once per frame, instead of allocating a new object per delta
     const cloned = new Set<number>();
@@ -573,12 +587,43 @@ function applyEvents(
           queuePosition = e.position;
           break;
 
+        case 'turn.deferred':
+          deferred = e.deferred;
+          break;
+
+        /*
+         * A held turn's window turned over and it went.
+         *
+         * The question is appended from the event because this browser never sent it: the
+         * ordinary path appends optimistically and swaps in the stored row, and there was
+         * no optimistic append hours ago — possibly in a different browser, possibly none.
+         * `streaming` goes on here rather than waiting for `turn.started`, so the composer
+         * does not flicker back to being sendable in between.
+         */
+        case 'turn.released':
+          /*
+           * Only if it is not already here.
+           *
+           * The event is buffered on its channel for reconnecting clients, so a browser
+           * that opens the conversation *after* the release fetches the question as part
+           * of the transcript and then replays the event that announced it — and appended
+           * it a second time. It is the stored row, so its id is the identity to compare;
+           * the optimistic path has no such id to collide with, because a released turn
+           * was never appended optimistically in the first place.
+           */
+          if (!messages.some((m) => m.id === e.userMessage.id)) {
+            messages.push(toChatMessage(e.userMessage));
+          }
+          deferred = null;
+          streaming = true;
+          break;
+
         case 'heartbeat':
           break;
       }
     }
 
-  return { messages, streaming, title, conversations, queuePosition };
+  return { messages, streaming, title, conversations, queuePosition, deferred };
 }
 
 /** Find a block by blockId in the most recent assistant message */
@@ -613,6 +658,7 @@ export const useChat = create<ChatState>((set, get) => ({
   filesVersion: 0,
   messages: [],
   streaming: false,
+  deferred: null,
   loading: false,
   connected: false,
   error: null,
@@ -651,6 +697,7 @@ export const useChat = create<ChatState>((set, get) => ({
       agent,
       conversations: [],
       messages: [],
+      deferred: null,
       activeId: null,
       title: '',
       model: '',
@@ -676,6 +723,7 @@ export const useChat = create<ChatState>((set, get) => ({
     set({
       conversations: [],
       messages: [],
+      deferred: null,
       activeId: null,
       title: '',
       model: '',
@@ -720,6 +768,7 @@ export const useChat = create<ChatState>((set, get) => ({
       title: '',
       messages: [],
       streaming: false,
+      deferred: null,
       loading: false,
       queuePosition: 0,
       error: null,
@@ -798,7 +847,7 @@ export const useChat = create<ChatState>((set, get) => ({
      * heard of, next to a header that already shows it.
      */
     void useQuota.getState().refresh();
-    set({ loading: true, activeId: id, messages: [], sidebarOpen: false, notice: null });
+    set({ loading: true, activeId: id, messages: [], deferred: null, sidebarOpen: false, notice: null });
     try {
       const conv = await api.getConversation(id);
       set({
@@ -808,6 +857,9 @@ export const useChat = create<ChatState>((set, get) => ({
         thinking: conv.thinking ?? true,
         messages: conv.messages.map(toChatMessage),
         streaming: conv.busy,
+        // Typed into this conversation at some point, possibly in another browser, and
+        // still waiting for the window
+        deferred: conv.deferred,
         loading: false,
       });
       openStream(id);
@@ -842,9 +894,29 @@ export const useChat = create<ChatState>((set, get) => ({
         }));
         return;
       }
-      const { userMessage } = await api.sendMessage(id, text);
+      const result = await api.sendMessage(id, text);
+      /*
+       * Taken, but over the ceiling and waiting for the window.
+       *
+       * The optimistic question comes back off the transcript: it has not been asked, and
+       * leaving it there would show the agent a message it never received. It reappears
+       * when the turn is actually released, from the `turn.released` event. `streaming`
+       * goes off because nothing is generating — the composer's held state is what stops a
+       * second send, and it is driven by `deferred`.
+       */
+      if (result.deferred) {
+        set((s) => ({
+          streaming: false,
+          deferred: result.deferred,
+          messages: s.messages.filter((m) => m.id !== optimistic.id),
+        }));
+        void useQuota.getState().refresh();
+        return;
+      }
       set((s) => ({
-        messages: s.messages.map((m) => (m.id === optimistic.id ? toChatMessage(userMessage) : m)),
+        messages: s.messages.map((m) =>
+          m.id === optimistic.id ? toChatMessage(result.userMessage) : m,
+        ),
       }));
     } catch (err) {
       // 402 = out of allowance. Refresh the quota while we are here, and the composer disables itself immediately.
@@ -934,6 +1006,28 @@ export const useChat = create<ChatState>((set, get) => ({
       // Nothing was running any more — the turn finished between the click and this call.
       // Not worth a banner, and `void abort()` has nowhere to put a rejection.
     }
+  },
+
+  /**
+   * Take the held question back.
+   *
+   * The text lands in the composer through `carried`, the same channel a thread's answer
+   * uses — cancelling should leave somebody holding what they wrote, not having to
+   * remember it. The state is cleared here rather than waiting for the event so the
+   * composer answers the click, and the event that follows sets it to the same null.
+   */
+  async cancelDeferred() {
+    const id = get().activeId;
+    const held = get().deferred;
+    if (!id || !held) return;
+    set({ deferred: null });
+    try {
+      await api.cancelDeferred(id);
+    } catch {
+      // Already gone — released while the click was in flight, or cancelled in another
+      // tab. Either way there is nothing waiting, which is what the state now says.
+    }
+    set((s) => ({ carried: { text: held.body, nonce: (s.carried?.nonce ?? 0) + 1 } }));
   },
 
   async rename(id, title) {
@@ -1144,10 +1238,14 @@ export const useChat = create<ChatState>((set, get) => ({
     };
     set((s) => ({ subMessages: [...s.subMessages, optimistic], subStreaming: true }));
     try {
-      const { userMessage } = await api.sendMessage(id, text);
+      // A thread is never held — the server refuses it over quota as it always did, because
+      // this panel has no line to say a turn is waiting and no way to take it back. The
+      // narrowing is still needed: both sides post to the same route.
+      const result = await api.sendMessage(id, text);
+      if (result.deferred) return;
       set((s) => ({
         subMessages: s.subMessages.map((m) =>
-          m.id === optimistic.id ? toChatMessage(userMessage) : m,
+          m.id === optimistic.id ? toChatMessage(result.userMessage) : m,
         ),
       }));
     } catch (err) {
@@ -1207,6 +1305,9 @@ export const useChat = create<ChatState>((set, get) => ({
         queuePosition: state.queuePosition,
         title: state.title,
         conversations: state.conversations,
+        // Threads are never held (see app/deferred.ts tryDefer), so there is no state here
+        // to carry and the folded value is discarded below
+        deferred: null,
       });
       return { subMessages: r.messages, subStreaming: r.streaming };
     });

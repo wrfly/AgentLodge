@@ -179,6 +179,39 @@ create table if not exists messages (
 );
 create index if not exists idx_msg_conv on messages(conversation_id, seq);
 
+/* ---------------- Turns held until the quota window turns over ---------------- */
+
+-- A message that arrived over the ceiling and is waiting rather than being refused.
+--
+-- **A row, not a held connection.** Waiting out a 5-hour window inside the request would
+-- mean an HTTP call and an idle agent container parked for hours against a client that
+-- gives up in minutes; the only thing worth keeping is the text and the intention, and
+-- both fit here. It therefore survives the browser closing and the server restarting,
+-- which a parked socket does not.
+--
+-- One per conversation, because a conversation can only be generating one turn anyway
+-- (turns.isBusy) and two queued questions to the same thread would arrive in an order
+-- nobody chose. The unique constraint is the enforcement, not a convention.
+create table if not exists deferred_turns (
+  id              text primary key,
+  user_id         text not null references users(id) on delete cascade,
+  conversation_id text not null references conversations(id) on delete cascade,
+  -- What the person typed. It lives here rather than in messages(): it has not been asked
+  -- yet, and a transcript that shows it would be showing a question the agent never got.
+  body            text not null,
+  -- Which window was over when it arrived — for what the interface says, not for the
+  -- release decision, which re-asks quota.check outright
+  scope           text not null,              -- window | week | month
+  -- When the blocking window turns over. Display, plus the horizon test; the sweeper does
+  -- not trust it, so a top-up releases the turn early and a second window still over holds
+  -- it past this instant.
+  release_at      text not null,
+  created_at      text not null,
+  unique (conversation_id)
+);
+create index if not exists idx_deferred_release on deferred_turns(release_at);
+create index if not exists idx_deferred_user on deferred_turns(user_id);
+
 /* ---------------- Message trims (edit / retry) ---------------- */
 
 -- An answer the user asked to replace. The CLI's own transcript keeps the discarded
@@ -282,7 +315,16 @@ create table if not exists model_pricing (
   price_output      integer not null,
   effective_from    text not null,
   note              text,
-  created_at        text not null
+  created_at        text not null,
+  -- What the four prices above are multiplied by during the windows below. 1 is "this price
+  -- does not depend on the time of day", which is every row but DeepSeek's — it charges
+  -- double on weekday mornings and half the rest of the week.
+  peak_multiplier   real not null default 1,
+  -- {"days":[1,2,3,4,5],"hours":[[1,4],[6,10]]} — days are UTC, 0 is Sunday; hours are UTC
+  -- and half-open. **UTC, not the deployment's zone**: the vendor states the window in UTC
+  -- and everything else in this system cuts its boundaries locally, so the two must not be
+  -- confused (core/peak-hours.ts).
+  peak_windows      text
 );
 create index if not exists idx_pricing_model on model_pricing(model, provider_id, effective_from desc);
 

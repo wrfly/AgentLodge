@@ -10,6 +10,7 @@ import * as containers from './containers.js';
 import { signRuntimeToken } from '../core/runtime-token.js';
 import type { RunningTurn, TurnResult } from './agents/types.js';
 import * as convRepo from '../core/db/conversations.js';
+import * as deferredRepo from '../core/db/deferred.js';
 import * as usageRepo from '../core/db/usage.js';
 import * as memory from './memory.js';
 import * as quota from '../core/quota.js';
@@ -246,6 +247,23 @@ export async function startTurn(
     throw new QuotaExceededError(verdict.reason!, verdict.status);
   }
 
+  /*
+   * Any question this conversation was holding is now stale.
+   *
+   * The allowance came back — a window turned over, or an administrator topped it up — and
+   * the person asked something. Sending what they typed hours ago as well would be a second
+   * turn they did not ask for, out of order, against a workspace the turn about to run is
+   * going to change.
+   *
+   * Here rather than in the route because **every** path that starts a turn makes it stale,
+   * not only the one that can create it: an edit, a retry or a thread all mean the person is
+   * back and has moved on. The sweeper deletes the row before it calls this, so releasing one
+   * finds nothing to clear. The repository is imported, not app/deferred.ts, which imports
+   * this module — check-layers.mjs would catch the cycle, but the shape is the reason.
+   */
+  const stale = deferredRepo.removeForConversation(conversationId, userId);
+  if (stale) publish(conversationId, { type: 'turn.deferred', deferred: null });
+
   const adapter = getAdapter(conv.agent);
   if (!adapter) throw new Error(`Unknown agent: ${conv.agent}`);
 
@@ -444,7 +462,7 @@ export async function startTurn(
       }
 
       // Usage changed, so push the current quota to refresh the usage bar
-      publish(conversationId, { type: 'quota.updated', quota: quota.status(userId) });
+      publish(conversationId, { type: 'quota.updated', quota: quota.status(userId, new Date(), { withTypicalTurn: true }) });
       void maybeWarnQuota(userId).catch(() => {});
 
       /*

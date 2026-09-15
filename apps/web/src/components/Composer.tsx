@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Brain, Gauge, Paperclip, Sparkle, Square } from 'lucide-react';
+import { ArrowUp, Brain, Clock, Gauge, Paperclip, Sparkle, Square } from 'lucide-react';
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
 import { groupByVendor } from '../lib/protocol';
@@ -105,7 +105,45 @@ export function Composer({ agent }: { agent: AgentId }) {
   const ensureConversation = useChat((s) => s.ensureConversation);
 
   const quota = useQuota((s) => s.quota);
+  const deferred = useChat((s) => s.deferred);
+  const cancelDeferred = useChat((s) => s.cancelDeferred);
+
+  /*
+   * Over the ceiling stops the box either way; which of the two it is decides what is said
+   * underneath, and `held` is checked first everywhere.
+   *
+   * They are both true at the same time, and have to be: a held turn exists *because* the
+   * quota is exhausted, so `blocked` is still what it always was. Showing the red "ask an
+   * administrator" line under a question that is already queued to send itself would be
+   * telling somebody to go and do something that has been done.
+   */
+  const held = Boolean(deferred);
   const blocked = Boolean(quota?.exceeded && quota?.hardStop);
+
+  /**
+   * How many more turns of this person's usual size fit in what is left, when that is few
+   * enough to be worth saying. Null the rest of the time — a running count of a number
+   * nobody is near is noise, and it would push the keyboard hint off every screen.
+   *
+   * **The fewest turns, across every capped window** — not `quota.tightest`, which was the
+   * first thing this used and was wrong. `tightest` is the highest *ratio*, and a ratio
+   * says nothing about how many turns fit: a 5-hour ceiling of 1M half spent leaves 500k,
+   * while a monthly ceiling of 100M three-fifths spent leaves 40M and the higher ratio. On
+   * turns of 250k that is two more against a hundred and sixty — and naming the month
+   * would have suppressed the warning exactly where it was needed. The two only agree when
+   * every ceiling is the same size.
+   */
+  const runway = (() => {
+    if (!quota || quota.exceeded || !quota.typicalTurn) return null;
+    const per = quota.typicalTurn;
+    let fewest: { turns: number; scope: QuotaScope } | null = null;
+    for (const w of Object.values(quota.windows)) {
+      if (w.limit === null || w.remaining === null) continue;
+      const turns = Math.floor(w.remaining / per);
+      if (!fewest || turns < fewest.turns) fewest = { turns, scope: w.scope };
+    }
+    return fewest && fewest.turns <= 5 ? fewest : null;
+  })();
 
   const models = useAgents((s) => s.info(agent)?.models) ?? NO_MODELS;
   // vendor → family → version, so two upstreams' worth of names read as two rows
@@ -226,7 +264,7 @@ export function Composer({ agent }: { agent: AgentId }) {
 
   const submit = () => {
     const text = value.trim();
-    if (streaming || blocked) return;
+    if (streaming || blocked || held) return;
     if (!text && !ready.length) return;
     /*
      * The names go into the message itself. There is no image block on this path — a turn
@@ -253,7 +291,7 @@ export function Composer({ agent }: { agent: AgentId }) {
     submit();
   };
 
-  const canSend = (value.trim().length > 0 || ready.length > 0) && !streaming && !blocked;
+  const canSend = (value.trim().length > 0 || ready.length > 0) && !streaming && !blocked && !held;
   const busyAttaching = attached.some((a) => a.status === 'uploading');
   /**
    * The controls under the box all change the next turn, so none of them moves during one.
@@ -305,9 +343,11 @@ export function Composer({ agent }: { agent: AgentId }) {
               e.preventDefault();
               void attach(list, true);
             }}
-            disabled={blocked}
+            disabled={blocked || held}
             placeholder={
-              blocked
+              held
+                ? t('Waiting for the quota window — your question will send itself')
+                : blocked
                 ? t('Quota is used up — you cannot start a new conversation')
                 : streaming
                   ? t('Generating…')
@@ -431,7 +471,37 @@ export function Composer({ agent }: { agent: AgentId }) {
           </div>
         </div>
 
-        {blocked ? (
+        {deferred ? (
+          /*
+           * A question that has been taken but has not gone.
+           *
+           * Amber rather than red: nothing has failed and nothing needs doing. It says the
+           * clock time rather than "in 4h 20m" because the person will not be watching
+           * this line when it happens — the time is something they can plan around, a
+           * countdown is only true while it is on screen.
+           *
+           * Cancel is beside it and not hidden behind anything. It is the only way back to
+           * a composer, and it hands the text over rather than discarding it.
+           */
+          <div className="mt-1.5 flex items-center justify-center gap-2 text-center text-[11.5px] text-amber-600 dark:text-amber-500">
+            <Clock size={12} className="shrink-0" />
+            <span>
+              {t('Waiting for the {scope} quota — sends at {time}', {
+                scope: SCOPE_LABEL[deferred.scope],
+                time: new Date(deferred.releaseAt).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                }),
+              })}
+            </span>
+            <button
+              onClick={() => void cancelDeferred()}
+              className="underline underline-offset-2 transition hover:text-ink"
+            >
+              {t('Cancel')}
+            </button>
+          </div>
+        ) : blocked ? (
           <div className="mt-1.5 text-center text-[11.5px] text-danger">
             {(() => {
               // The window that refused is the one to name — "used up" without saying which
@@ -449,6 +519,38 @@ export function Composer({ agent }: { agent: AgentId }) {
           </div>
         ) : attachError ? (
           <div className="mt-1.5 text-center text-[11.5px] text-danger">{attachError}</div>
+        ) : runway ? (
+          /*
+           * The one place anything is said *before* a turn rather than after it.
+           *
+           * Everything else about quota is retrospective: the sidebar bar turns amber at
+           * 90%, an email goes out once the turn that crossed the line has already been
+           * paid for, and the composer only speaks up once the answer is 402. None of that
+           * helps the person about to send a long-context turn at max effort into the last
+           * of their month.
+           *
+           * It is said in turns because that is the unit the person is thinking in. The
+           * number of billable tokens left answers nothing on its own — the same figure is
+           * two turns for one person and forty for another — so it is divided by what their
+           * own recent turns have actually cost. Not an estimate of *this* turn: a turn's
+           * cost depends on how many upstream calls the agent decides to make, which nobody
+           * knows in advance, and a confident wrong number is worse than an honest rate.
+           */
+          <div
+            className={clsx(
+              'mt-1.5 text-center text-[11.5px]',
+              runway.turns === 0 ? 'text-danger' : runway.turns <= 2 ? 'text-amber-600 dark:text-amber-500' : 'text-faint',
+            )}
+          >
+            {runway.turns === 0
+              ? t('A turn your usual size would not fit in what is left of the {scope} quota', {
+                  scope: SCOPE_LABEL[runway.scope],
+                })
+              : t('About {n} more turns of your usual size before the {scope} quota', {
+                  n: runway.turns,
+                  scope: SCOPE_LABEL[runway.scope],
+                })}
+          </div>
         ) : (
           <div className="mt-1.5 text-center text-[11px] text-faint">
             {t('Enter to send · Shift+Enter for a new line')}

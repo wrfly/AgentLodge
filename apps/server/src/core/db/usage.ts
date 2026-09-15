@@ -9,7 +9,7 @@ import {
 import * as pricing from './pricing.js';
 
 export type { QuotaPeriod };
-import type { AgentId, TurnUsage } from '../protocol.js';
+import type { AgentId, TurnUsage, LimitKind } from '../protocol.js';
 
 export type TurnStatus = 'completed' | 'error' | 'aborted';
 
@@ -258,6 +258,59 @@ export function firstRecordFor(userId: string): string | undefined {
     'select min(created_at) as first from usage_records where user_id = ?',
     userId,
   )?.first ?? undefined;
+}
+
+/**
+ * What one of this user's turns typically costs, in the unit their quota is counted in.
+ *
+ * For telling somebody how much room they have left in a unit that means something to
+ * them. "1.2M billable tokens remaining" answers nothing on its own — the same number is
+ * two turns for one person and forty for another, and which they are is not something they
+ * can work out. It is derived from what they have actually spent rather than estimated
+ * from the model and the context, because a turn's cost depends on how many upstream calls
+ * the agent makes, which nobody can know in advance.
+ *
+ * The median, not the mean: a single runaway turn is exactly the thing somebody wants to
+ * be warned about, and it is also the thing that would drag a mean far enough to stop the
+ * warning being useful for the other twenty.
+ *
+ * Zero-cost rows are left out. A failed turn still gets a row, for debugging, and counting
+ * those as cheap turns would say somebody has more room than they do.
+ *
+ * **Bounded to a window on purpose, and not called on the hot path.** `group by` defeats
+ * the (user_id, created_at) index, so without `since` this reads every row the user has
+ * ever produced and builds a temporary b-tree to sort it — and the gateway writes one row
+ * per upstream call, so "ever" grows without limit. It was briefly wired into
+ * `quota.status()`, which the gate calls on every single request and the admin user list
+ * calls once per user; node:sqlite is synchronous, so that is the event loop. It is asked
+ * for explicitly now, by the three surfaces that show it.
+ */
+export function typicalTurn(
+  userId: string,
+  kind: LimitKind,
+  sample = 20,
+  /** How far back to look. A month is long enough to have twenty turns in it and short
+   *  enough that the scan stays small — and recent turns are the ones that predict. */
+  since = new Date(Date.now() - 30 * 86_400_000).toISOString(),
+): number | null {
+  const column = kind === 'cost' ? 'cost_micro' : 'billable_tokens';
+  const rows = all<{ spent: number }>(
+    `select sum(${column}) as spent
+     from usage_records
+     where user_id = ? and created_at >= ?
+     group by coalesce(turn_id, 'row:' || id)
+     having spent > 0
+     order by max(created_at) desc
+     limit ?`,
+    userId,
+    since,
+    sample,
+  );
+  if (!rows.length) return null;
+  // The gateway writes a row per upstream call, so a turn is the group, not the row
+  const spent = rows.map((r) => r.spent).sort((a, b) => a - b);
+  const mid = Math.floor(spent.length / 2);
+  return spent.length % 2 ? spent[mid]! : Math.round((spent[mid - 1]! + spent[mid]!) / 2);
 }
 
 export function totalsAll(since?: string): Totals {

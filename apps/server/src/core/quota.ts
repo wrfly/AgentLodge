@@ -136,7 +136,19 @@ function windowStatus(
   };
 }
 
-export function status(userId: string, now = new Date()): QuotaStatus {
+/**
+ * `withTypicalTurn` is off by default, and that is not a performance nicety.
+ *
+ * This function is on the gate's path — `check()` calls it for every upstream request —
+ * and the admin user list calls it once per user. What it would compute is a grouped scan
+ * of that user's usage rows, synchronously, on the event loop. Only the three surfaces
+ * that actually show "about N more turns" ask for it.
+ */
+export function status(
+  userId: string,
+  now = new Date(),
+  opts: { withTypicalTurn?: boolean } = {},
+): QuotaStatus {
   const q = usersRepo.getQuota(userId);
   const windows = Object.fromEntries(
     SCOPES.map((scope) => [scope, windowStatus(userId, q, scope, now)]),
@@ -156,6 +168,10 @@ export function status(userId: string, now = new Date()): QuotaStatus {
     exceeded: limited.some((w) => w.exceeded),
     warning: limited.some((w) => w.ratio >= 0.9),
     tightest,
+    // Null both when nobody asked and when there is nothing to say — the one consumer
+    // treats either as "no line to show", which is the same answer.
+    typicalTurn:
+      opts.withTypicalTurn && limited.length ? usageRepo.typicalTurn(userId, q.limitKind) : null,
   };
 }
 
@@ -163,6 +179,26 @@ export interface Verdict {
   allow: boolean;
   reason?: string;
   status: QuotaStatus;
+}
+
+/**
+ * When every window that is over its ceiling will have turned over — the earliest instant
+ * this user could be let through again.
+ *
+ * The **latest** of the exceeded windows, not the first. `check()` names the first one it
+ * finds, which is the right thing to tell somebody; how long the wait is, is a different
+ * question, and answering it with that same window is wrong whenever two are over. A turn
+ * held until the 5-hour window resets at two o'clock, on a month that is also exhausted,
+ * comes back at two and is refused again — having waited for nothing.
+ *
+ * Null when nothing is over, and null on a soft quota, which refuses nobody and so has
+ * nobody waiting.
+ */
+export function clearsAt(s: QuotaStatus): Date | null {
+  if (!s.exceeded || !s.hardStop) return null;
+  const over = SCOPES.map((scope) => s.windows[scope]).filter((w) => w.exceeded);
+  if (!over.length) return null;
+  return new Date(Math.max(...over.map((w) => new Date(w.endsAt).getTime())));
 }
 
 /**

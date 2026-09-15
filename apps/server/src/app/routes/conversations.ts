@@ -9,6 +9,7 @@ import { getString } from '../../core/db/settings.js';
 import * as usageRepo from '../../core/db/usage.js';
 import * as trimsRepo from '../../core/db/trims.js';
 import * as turns from '../turns.js';
+import * as deferred from '../deferred.js';
 import * as quota from '../../core/quota.js';
 import { requireUser } from '../../core/auth/guard.js';
 import { consumeStreamTicket } from '../../core/auth/tokens.js';
@@ -49,7 +50,13 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const conv = convRepo.full(id, req.user!.id);
     if (!conv) return reply.code(404).send({ error: tr(req, 'No such conversation') });
-    return { ...conv, busy: turns.isBusy(id) };
+    // A held turn outlives the browser that typed it, so it arrives with the conversation
+    // rather than only on the event that created it
+    return {
+      ...conv,
+      busy: turns.isBusy(id),
+      deferred: deferred.forConversation(id, req.user!.id) ?? null,
+    };
   });
 
   app.patch('/api/conversations/:id', guard, async (req, reply) => {
@@ -121,10 +128,38 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       return { turnId, userMessage };
     } catch (err) {
       if (err instanceof turns.QuotaExceededError) {
+        /*
+         * Over the ceiling waits instead of being refused — when the wait is short enough
+         * to be a wait. Held is a 202 like any other accepted message: it has been taken,
+         * it just has not gone yet. Beyond the horizon it is the 402 it always was.
+         *
+         * Only this route. Edit, retry and the thread routes cut messages out of the record
+         * before they start their turn, so holding one would leave the conversation with a
+         * question removed and nothing yet in its place — a different feature, and one that
+         * has to answer what the transcript looks like in the meantime.
+         */
+        const held = deferred.tryDefer({
+          conversationId: id,
+          userId: req.user!.id,
+          body: text,
+          status: err.status,
+        });
+        if (held) {
+          reply.code(202);
+          return { deferred: held, quota: err.status };
+        }
         return reply.code(402).send({ error: err.message, quota: err.status });
       }
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  /** Take back a question that was waiting for the window. The text comes back with it. */
+  app.delete('/api/conversations/:id/deferred', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const gone = deferred.cancel(id, req.user!.id);
+    if (!gone) return reply.code(404).send({ error: tr(req, 'Nothing is waiting in this conversation') });
+    return { ok: true, deferred: gone };
   });
 
   /**

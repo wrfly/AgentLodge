@@ -206,7 +206,8 @@ export function registerMeRoutes(app: FastifyInstance): void {
   });
 
   /** All the sidebar's usage bar needs, on an endpoint of its own */
-  app.get('/api/me/quota', guard, async (req) => quota.status(req.user!.id));
+  // The composer's "about N more turns" line reads this; see status()'s note on the flag
+  app.get('/api/me/quota', guard, async (req) => quota.status(req.user!.id, new Date(), { withTypicalTurn: true }));
 
   /* ---------------- How this person works ---------------- */
 
