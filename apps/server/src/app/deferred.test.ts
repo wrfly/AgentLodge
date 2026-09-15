@@ -235,6 +235,80 @@ const conv = convRepo.create({ userId: alice, agent: 'claude', title: 'held' });
     'and puts the question back rather than losing it',
     repo.forConversation(conv.id, alice)?.body === 'mine',
   );
+
+  /*
+   * And does not try again straight away.
+   *
+   * A conversation whose agent an administrator has turned off fails every time, and the
+   * engine being down fails *every* held row at once. Retried each pass, that is a
+   * container start and a log line every twenty seconds until the day is up. The proof is
+   * that the row is untouched rather than re-added: `add` writes a new id, so an id that
+   * has not changed is an attempt that did not happen.
+   */
+  const after = repo.forConversation(conv.id, alice);
+  await deferred.sweep();
+  ok(
+    'a failed release is left alone on the next pass',
+    repo.forConversation(conv.id, alice)?.id === after?.id,
+  );
+  // Far enough ahead that the back-off has lapsed; it tries again and fails again, which is
+  // a new row — the back-off delays retries, it does not end them.
+  await deferred.sweep(new Date(Date.now() + 5 * 60_000));
+  ok(
+    'and is tried again once the back-off lapses',
+    repo.forConversation(conv.id, alice)?.id !== after?.id,
+  );
+  run('update conversations set agent = ? where id = ?', 'claude', conv.id);
+}
+
+/* ---------------- the banner names the window it is actually waiting for ---------------- */
+{
+  /*
+   * With two windows over, `tightest` and the window being waited for are different
+   * answers, and the sweeper used to reschedule with the first while displaying the
+   * second's time — a banner reading "waiting for the 5h quota" beside a month's date.
+   */
+  users.clearBoost(alice);
+  users.setQuota(alice, { window: 2_000_000, month: 1_000_000, hardStop: true });
+  const s = quota.status(alice);
+  ok('the tightest window is not the one that clears last', s.tightest === 'window');
+
+  const held = deferred.tryDefer({
+    conversationId: conv.id,
+    userId: alice,
+    body: 'two windows over',
+    status: s,
+    // Inside the horizon of the month's own reset, so it is held rather than refused
+    now: new Date(new Date(s.windows.month.endsAt).getTime() - 60_000),
+  });
+  ok('it is held', held !== null);
+  ok('and it names the month, which is what it waits for', held?.scope === 'month');
+  ok('with the month\'s instant', held?.releaseAt === s.windows.month.endsAt);
+
+  /*
+   * The same question of the sweeper, which is where this was wrong.
+   *
+   * `tryDefer` matched the instant from the start; the *reschedule* branch — a turn still
+   * blocked when the thing it was waiting for has moved — reached for `tightest` instead,
+   * so a hold that outlived one window ended up labelled with the window furthest along
+   * rather than the one whose date was printed next to it. Putting a stale instant on the
+   * row is what makes the sweeper take that branch.
+   */
+  repo.reschedule(held!.id, s.windows.window.endsAt, 'window');
+  // Past the back-off the failing release above left on this conversation — without that
+  // the sweep skips the row and this asserts nothing, which is how it first went green
+  await deferred.sweep(new Date(Date.now() + 10 * 60_000));
+  const fixed = repo.forConversation(conv.id, alice);
+  ok('the sweeper corrects a stale instant', fixed?.releaseAt === s.windows.month.endsAt);
+  ok(
+    'and labels it with the window that clears last, not the tightest',
+    fixed?.scope === 'month',
+    `got ${fixed?.scope}, tightest is ${s.tightest}`,
+  );
+
+  deferred.cancel(conv.id, alice);
+  // Back to one window over, which is what the block below assumes
+  users.setQuota(alice, { window: 2_000_000, month: null });
 }
 
 /* ---------------- a deleted conversation takes its held turn with it ---------------- */

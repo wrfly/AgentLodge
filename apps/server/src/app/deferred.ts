@@ -18,7 +18,7 @@ import * as quota from '../core/quota.js';
 import * as turns from './turns.js';
 import { WINDOW_MS } from '../core/db/period.js';
 import { publish } from '../core/events.js';
-import type { DeferredTurn, QuotaStatus } from '../core/protocol.js';
+import type { DeferredTurn, QuotaScope, QuotaStatus } from '../core/protocol.js';
 
 /**
  * How far ahead a turn will wait.
@@ -63,6 +63,37 @@ export const RELEASE_PER_SWEEP = 3;
 const GIVE_UP_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * How long a conversation whose release just failed is left alone.
+ *
+ * Without it a permanently broken one is retried every SWEEP_MS until GIVE_UP_MS — four
+ * thousand container starts and four thousand identical log lines over a day. The realistic
+ * causes are not rare either: an administrator turning off the agent a held conversation
+ * uses, or the container engine being down, which fails *every* held row at once.
+ */
+const RETRY_AFTER_FAIL_MS = 2 * 60_000;
+
+/** conversationId → the instant before which trying again is pointless. In memory: a restart is a fresh start, and the rows outlive it. */
+const failedAt = new Map<string, number>();
+
+/**
+ * Which window the wait is for.
+ *
+ * The one whose reset is `clears`, found by matching the instant — **not** `tightest`,
+ * which is the window furthest along as a fraction and says nothing about when it turns
+ * over. Naming that one puts a label on the banner that disagrees with the time beside it,
+ * and it is the same confusion `clearsAt` exists to avoid. Both the admission and the
+ * reschedule go through here so they cannot drift apart.
+ */
+function scopeClearingAt(status: QuotaStatus, clears: Date): QuotaScope {
+  const at = clears.toISOString();
+  return (
+    (['window', 'week', 'month'] as const).find(
+      (s) => status.windows[s].exceeded && status.windows[s].endsAt === at,
+    ) ?? status.tightest ?? 'window'
+  );
+}
+
+/**
  * Hold this question, or say it cannot be held.
  *
  * Returns the row when the wait is inside the horizon, and null when the caller should
@@ -97,11 +128,12 @@ export function tryDefer(input: {
   // Which window to name. The one whose reset is being waited for, which is the one
   // clearsAt picked — not `tightest`, which is the furthest along and may already have
   // turned over by then.
-  const scope =
-    (['window', 'week', 'month'] as const).find(
-      (s) => input.status.windows[s].exceeded && input.status.windows[s].endsAt === clears.toISOString(),
-    ) ?? input.status.tightest ?? 'window';
+  const scope = scopeClearingAt(input.status, clears);
 
+  // A new question is a fresh start: whatever made the last release attempt on this
+  // conversation throw has nothing to say about this one, and leaving the mark would hold
+  // it back for up to RETRY_AFTER_FAIL_MS for no reason.
+  failedAt.delete(input.conversationId);
   const held = deferredRepo.add({
     userId: input.userId,
     conversationId: input.conversationId,
@@ -116,6 +148,7 @@ export function tryDefer(input: {
 /** Cancel, and hand back what it was holding so the composer can have the text again */
 export function cancel(conversationId: string, userId: string): DeferredTurn | undefined {
   const gone = deferredRepo.removeForConversation(conversationId, userId);
+  failedAt.delete(conversationId);
   if (gone) publish(conversationId, { type: 'turn.deferred', deferred: null });
   return gone;
 }
@@ -141,8 +174,11 @@ export async function sweep(now = new Date()): Promise<number> {
     const conv = convRepo.meta(held.conversationId, held.userId);
     if (!conv) {
       deferredRepo.remove(held.id);
+      failedAt.delete(held.conversationId);
       continue;
     }
+    // Its last release attempt threw and the cause is unlikely to have changed yet
+    if ((failedAt.get(held.conversationId) ?? 0) > now.getTime()) continue;
     // Something is already generating in this thread — a held turn from another
     // conversation in the same family, or the person came back and asked directly. Next pass.
     if (turns.isBusy(held.conversationId)) continue;
@@ -151,6 +187,7 @@ export async function sweep(now = new Date()): Promise<number> {
     if (!verdict.allow) {
       if (now.getTime() - new Date(held.createdAt).getTime() > GIVE_UP_MS) {
         deferredRepo.remove(held.id);
+        failedAt.delete(held.conversationId);
         publish(held.conversationId, { type: 'turn.deferred', deferred: null });
         continue;
       }
@@ -158,11 +195,20 @@ export async function sweep(now = new Date()): Promise<number> {
       // another has not. Say so rather than showing an instant that has passed.
       const clears = quota.clearsAt(verdict.status);
       if (clears && clears.toISOString() !== held.releaseAt) {
-        const scope = verdict.status.tightest ?? held.scope;
+        const scope = scopeClearingAt(verdict.status, clears);
         deferredRepo.reschedule(held.id, clears.toISOString(), scope);
+        // `held` carries the user id, which the published shape does not; naming the
+        // fields keeps what goes to the browser the same as what the type promises
         publish(held.conversationId, {
           type: 'turn.deferred',
-          deferred: { ...held, releaseAt: clears.toISOString(), scope },
+          deferred: {
+            id: held.id,
+            conversationId: held.conversationId,
+            body: held.body,
+            createdAt: held.createdAt,
+            releaseAt: clears.toISOString(),
+            scope,
+          },
         });
       }
       continue;
@@ -185,6 +231,7 @@ export async function sweep(now = new Date()): Promise<number> {
       );
       publish(held.conversationId, { type: 'turn.deferred', deferred: null });
       publish(held.conversationId, { type: 'turn.released', turnId, userMessage });
+      failedAt.delete(held.conversationId);
       released += 1;
     } catch (err) {
       // Put it back. Whatever refused it — the container engine, a quota that moved
@@ -197,8 +244,10 @@ export async function sweep(now = new Date()): Promise<number> {
         scope: held.scope,
         releaseAt: held.releaseAt,
       });
+      failedAt.set(held.conversationId, now.getTime() + RETRY_AFTER_FAIL_MS);
       console.error(
-        `[deferred] ${held.conversationId} could not be released: `
+        `[deferred] ${held.conversationId} could not be released, waiting `
+          + `${RETRY_AFTER_FAIL_MS / 60_000}m before trying again: `
           + (err instanceof Error ? err.message : String(err)),
       );
     }
@@ -206,9 +255,27 @@ export async function sweep(now = new Date()): Promise<number> {
   return released;
 }
 
+/**
+ * One pass at a time.
+ *
+ * A pass awaits `startTurn`, which pulls up a container and can take longer than the
+ * interval between passes — so without this the timer starts a second pass over a set the
+ * first is still working through. The row is deleted before the await, so the same question
+ * cannot be started twice; what overlapping passes *do* defeat is RELEASE_PER_SWEEP, which
+ * exists to keep a window's worth of held turns from arriving at the concurrency gate all
+ * at once. Two passes make it six, and a slow engine makes it more.
+ */
+let sweeping = false;
+
 /** Called once at start-up on the app side; the gateway has no part in this */
 export function startSweeping(): NodeJS.Timeout {
   return setInterval(() => {
-    void sweep().catch((err) => console.error('[deferred] sweep failed:', err));
+    if (sweeping) return;
+    sweeping = true;
+    void sweep()
+      .catch((err) => console.error('[deferred] sweep failed:', err))
+      .finally(() => {
+        sweeping = false;
+      });
   }, SWEEP_MS).unref();
 }
