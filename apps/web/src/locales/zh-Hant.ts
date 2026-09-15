@@ -632,4 +632,9 @@ export const zhHant: Record<string, string> = {
 
   'Priced from the model price table.': '按模型價格表計算。',
   '{bucket} · from {time}': '{bucket} · 自 {time} 起',
+  'By upstream': '按上游',
+  'Not through the gateway': '未經閘道',
+  'Everything else on this page counts this upstream only. Click the row again for all of them.': '本頁其餘部分只統計這個上游。再點這一列可恢復全部。',
+  'Click a row to count only that upstream everywhere else on this page.': '點某一列，本頁其餘部分只統計那個上游。',
+  'All upstreams': '全部上游',
 };

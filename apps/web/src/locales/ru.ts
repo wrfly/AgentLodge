@@ -658,4 +658,9 @@ export const ru: Record<string, string> = {
 
   'Priced from the model price table.': 'Рассчитано по таблице цен на модели.',
   '{bucket} · from {time}': '{bucket} · с {time}',
+  'By upstream': 'По апстримам',
+  'Not through the gateway': 'Мимо шлюза',
+  'Everything else on this page counts this upstream only. Click the row again for all of them.': 'Всё остальное на этой странице считает только этот апстрим. Нажмите строку ещё раз, чтобы вернуть все.',
+  'Click a row to count only that upstream everywhere else on this page.': 'Нажмите строку, чтобы всё остальное на странице считало только этот апстрим.',
+  'All upstreams': 'Все апстримы',
 };

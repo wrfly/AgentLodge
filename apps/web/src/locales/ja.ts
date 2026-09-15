@@ -658,4 +658,9 @@ export const ja: Record<string, string> = {
 
   'Priced from the model price table.': 'モデル価格表に基づく算出。',
   '{bucket} · from {time}': '{bucket} · {time} から',
+  'By upstream': 'アップストリーム別',
+  'Not through the gateway': 'ゲートウェイ経由でない',
+  'Everything else on this page counts this upstream only. Click the row again for all of them.': 'このページの他の部分はこのアップストリームだけを数えます。もう一度クリックすると全体に戻ります。',
+  'Click a row to count only that upstream everywhere else on this page.': '行をクリックすると、このページの他の部分はそのアップストリームだけを数えます。',
+  'All upstreams': 'すべてのアップストリーム',
 };
