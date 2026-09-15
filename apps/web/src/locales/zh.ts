@@ -658,4 +658,11 @@ export const zh: Record<string, string> = {
 
   'Priced from the model price table.': '按模型价格表计算。',
   '{bucket} · from {time}': '{bucket} · 自 {time} 起',
+  'By upstream': '按上游',
+  'Not through the gateway': '未经网关',
+  'Everything else on this page counts this upstream only. Click the row again for all of them.': '本页其余部分只统计这个上游。再点这一行可恢复全部。',
+  'Click a row to count only that upstream everywhere else on this page.': '点某一行，本页其余部分只统计那个上游。',
+  'All upstreams': '全部上游',
+  'Everything else in this card counts this upstream only. Click the row again for all of them.': '本卡其余部分只统计这个上游。再点这一行可恢复全部。',
+  'Click a row to count only that upstream everywhere else in this card.': '点某一行，本卡其余部分只统计那个上游。',
 };

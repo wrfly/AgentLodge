@@ -281,6 +281,88 @@ console.log('\n=== What falls either side of the boundary ===');
     String(afterReset.totals.inputTokens));
 }
 
+console.log('\n=== Which upstream it went out through, and on whose credential ===');
+{
+  /*
+   * `provider_id` is written by the gateway, which knows which upstream it chose. The CLI
+   * books its own total only when the gateway was *not* in the path (`turns.ts`), and those
+   * rows have no upstream at all — as do any written before the column existed. That is real
+   * spend, so it is a row in the breakdown rather than a gap: a table whose rows do not add
+   * up to the figure beside it is the thing this page keeps being reported for.
+   */
+  const usage = await import('../../core/db/usage.js');
+  const providers = await import('../../core/db/providers.js');
+  const dave = await signedIn('d@example.com', 'dave');
+
+  const ark = providers.create({ name: 'Ark', kind: 'openai-chat', baseUrl: 'https://ark.example.com/api/v3', credentialId: 'ark-key' });
+  const deep = providers.create({ name: 'DeepSeek', kind: 'anthropic-native', baseUrl: 'https://api.deepseek.com/anthropic', credentialId: 'ds-key' });
+
+  const spend = (providerId: string | undefined, tokens: number, turnId: string) =>
+    usage.record({
+      userId: dave.user.id, agent: 'claude', model: 'sonnet', turnId, providerId,
+      conversationId: undefined, status: 'completed',
+      usage: { inputTokens: tokens, cacheReadTokens: 0, cacheCreationTokens: 0,
+               outputTokens: 0, costUsd: 0, durationMs: 1, numTurns: 1 },
+    });
+  spend(ark.id, 1_000, 't1');
+  spend(ark.id, 500, 't2');
+  spend(deep.id, 300, 't3');
+  spend(undefined, 200, 't4');   // the gateway was not in the path
+
+  const ask = async (upstream?: string) =>
+    (await app.inject({
+      method: 'GET',
+      url: `/api/me/usage?preset=all${upstream ? `&upstream=${upstream}` : ''}`,
+      headers: dave.bearer,
+    })).json() as {
+      upstream: string | null;
+      totals: { inputTokens: number };
+      series: Array<{ inputTokens: number }>;
+      byAgent: Array<{ inputTokens: number }>;
+      byUpstream: Array<{ providerId: string; name: string; kind: string; credentialId: string; inputTokens: number }>;
+    };
+  const sum = (rows: Array<{ inputTokens: number }>) => rows.reduce((n, r) => n + r.inputTokens, 0);
+
+  const all = await ask();
+  ok('one row per upstream, plus the one with none', all.byUpstream.length === 3,
+    JSON.stringify(all.byUpstream.map((r) => r.name)));
+  ok('and they add up to the total beside them', sum(all.byUpstream) === all.totals.inputTokens,
+    `${sum(all.byUpstream)} vs ${all.totals.inputTokens}`);
+
+  const arkRow = all.byUpstream.find((r) => r.providerId === ark.id);
+  ok('each row names its kind', arkRow?.kind === 'openai-chat', String(arkRow?.kind));
+  ok('and the credential it authenticated on', arkRow?.credentialId === 'ark-key', String(arkRow?.credentialId));
+  const orphan = all.byUpstream.find((r) => r.providerId === '');
+  ok('what never went through the gateway is a row of its own',
+    orphan?.inputTokens === 200, JSON.stringify(orphan));
+
+  /*
+   * Narrowing has to reach every query the report makes, or the chart disagrees with the
+   * figure printed above it — which is the same defect in a different place.
+   */
+  const only = await ask(ark.id);
+  ok('the report says which upstream it is narrowed to', only.upstream === ark.id, String(only.upstream));
+  ok('the total counts that upstream alone', only.totals.inputTokens === 1_500, String(only.totals.inputTokens));
+  ok('and so does the chart', sum(only.series) === 1_500, String(sum(only.series)));
+  ok('and the model breakdown', sum(only.byAgent) === 1_500, String(sum(only.byAgent)));
+  /*
+   * Except the upstream breakdown itself, which is the list being chosen from: narrowing it
+   * to the chosen row would leave nothing to click to get back.
+   */
+  ok('the list to choose from is not narrowed', only.byUpstream.length === 3,
+    JSON.stringify(only.byUpstream.map((r) => r.name)));
+
+  const none = await ask('none');
+  ok('and the rows with no upstream can be asked for', none.totals.inputTokens === 200,
+    String(none.totals.inputTokens));
+  ok('with the chart agreeing there too', sum(none.series) === 200, String(sum(none.series)));
+
+  // An upstream this user never used is empty rather than everything
+  const empty = await ask('no-such-provider');
+  ok('an upstream with nothing on it is empty, not unfiltered', empty.totals.inputTokens === 0,
+    String(empty.totals.inputTokens));
+}
+
 await app.close();
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);

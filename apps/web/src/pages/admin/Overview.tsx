@@ -139,6 +139,8 @@ const PLATFORM_PRESETS: Array<{ id: PlatformPreset; label: string }> = [
 function PlatformUsageCard() {
   const t = useT();
   const [preset, setPreset] = useState<PlatformPreset>('today');
+  /** Which upstream everything is narrowed to; null is all of them, 'none' the ones with none */
+  const [upstream, setUpstream] = useState<string | null>(null);
   const [data, setData] = useState<PlatformUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -147,11 +149,11 @@ function PlatformUsageCard() {
     setData(null);
     setError(null);
     void admin
-      .platformUsage(preset)
+      .platformUsage(preset, upstream)
       .then((d) => { if (live) setData(d); })
       .catch((e) => { if (live) setError(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
-  }, [preset]);
+  }, [preset, upstream]);
 
   // Already padded with empty buckets by the server, which is the only place that knows
   // which timezone its own bucket keys were cut in
@@ -216,6 +218,61 @@ function PlatformUsageCard() {
               </div>
             </>
           )}
+
+          {/*
+            Which upstream carried it, above the people who spent it — an operator asking
+            "what is this credential costing us" is asking about the upstream first and about
+            who used it second. Clicking a row narrows the figures, the chart and the list
+            below to that upstream.
+          */}
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[420px] text-[13px]">
+              <thead>
+                <tr className="border-b border-line text-left text-faint">
+                  <th className="pb-1.5 font-medium">{t('Upstream')}</th>
+                  <th className="pb-1.5 font-medium">{t('Credential')}</th>
+                  <th className="pb-1.5 text-right font-medium">{t('Billable tokens')}</th>
+                  <th className="pb-1.5 text-right font-medium">{t('Cost')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.byUpstream.map((r) => {
+                  const id = r.providerId || 'none';
+                  const chosen = data.upstream === id;
+                  return (
+                    <tr
+                      key={id}
+                      onClick={() => setUpstream(chosen ? null : id)}
+                      className={clsx(
+                        'cursor-pointer border-b border-line last:border-0 hover:bg-bubble',
+                        chosen && 'bg-bubble',
+                      )}
+                    >
+                      {/* Spend the CLI booked itself, which happens only when the gateway was
+                          not in the path, plus anything written before the column existed. A
+                          row, because it is the difference between this table and the total. */}
+                      <td className="py-1.5">
+                        {r.name || t('Not through the gateway')}
+                        {r.kind && <span className="ml-2 font-mono text-[11px] text-faint">{r.kind}</span>}
+                      </td>
+                      <td className="py-1.5 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">
+                        {fmtTokens(r.billableTokens)}
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums text-muted">
+                        {fmtMoney(r.costMicro, data.currency)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p className="mt-1.5 text-[11.5px] text-faint">
+              {data.upstream
+                ? t('Everything else in this card counts this upstream only. Click the row again for all of them.')
+                : t('Click a row to count only that upstream everywhere else in this card.')}
+            </p>
+          </div>
 
           <div className="mt-4 space-y-1">
             {data.topUsers.length === 0 ? (

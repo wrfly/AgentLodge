@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, X } from 'lucide-react';
 import clsx from 'clsx';
 import { fmtMoney, me, type QuotaScope, type RangePreset, type SeriesPoint, type UsageReport } from '../lib/api';
 import { navigate } from '../lib/route';
@@ -218,12 +218,14 @@ export function UsagePage() {
   const [preset, setPreset] = useState<RangePreset>('quota');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  /** Which upstream everything is narrowed to; null is all of them, 'none' the ones with none */
+  const [upstream, setUpstream] = useState<string | null>(null);
 
-  const load = async (p: RangePreset = preset, f = from, t = to) => {
+  const load = async (p: RangePreset = preset, f = from, t = to, u = upstream) => {
     setBusy(true);
     const since = useQuota.getState().seq;
     try {
-      const report = await me.usage(p, f || undefined, t || undefined);
+      const report = await me.usage(p, f || undefined, t || undefined, u);
       setData(report);
       /*
        * The sidebar's bar reads the same figure from a store that only a `quota.updated`
@@ -252,6 +254,21 @@ export function UsagePage() {
     setPreset(p);
     void load(p);
   };
+
+  /*
+   * Narrowing keeps the range: somebody looking at this quota month and wanting to know what
+   * went through one upstream is asking about this quota month, not about whatever the page
+   * would reset to.
+   */
+  const narrow = (u: string | null) => {
+    setUpstream(u);
+    void load(preset, from, to, u);
+  };
+
+  /** The row the report says it is narrowed to, read back from the report rather than the draft */
+  const chosenUpstream = data?.upstream
+    ? data.byUpstream.find((r) => (r.providerId || 'none') === data.upstream)
+    : undefined;
 
   const applyCustom = () => {
     if (!from) return;
@@ -297,7 +314,26 @@ export function UsagePage() {
             />
           </div>
 
-          <Card title={t('By period')}>
+          {/*
+            The heading carries the filter, because the figure under it is the one somebody
+            reads first and it is narrowed — a big number with nothing beside it saying "Ark
+            only" is the same trap as two cards labelled "This week".
+          */}
+          <Card
+            title={
+              chosenUpstream
+                ? `${t('By period')} · ${chosenUpstream.name || t('Not through the gateway')}`
+                : t('By period')
+            }
+            actions={
+              chosenUpstream ? (
+                <Button variant="ghost" onClick={() => narrow(null)}>
+                  <X size={13} />
+                  {t('All upstreams')}
+                </Button>
+              ) : undefined
+            }
+          >
             <div className="mb-3 flex flex-wrap gap-1.5">
               {PRESETS.map((p) => (
                 <button
@@ -353,6 +389,71 @@ export function UsagePage() {
             </div>
 
             <Chart data={data.series} unit={data.seriesUnit} from={data.range.from} />
+          </Card>
+
+          {/*
+            Above the model breakdown, because which upstream a token went out through is the
+            coarser question — and it is the one the model table cannot answer: the same model
+            name can be served by two upstreams on two credentials at two prices.
+          */}
+          <Card title={`${t('By upstream')} · ${t(data.range.label)}`}>
+            {data.byUpstream.length === 0 ? (
+              <Empty text={t('No usage in this period')} />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[460px] text-[13px]">
+                  <thead>
+                    <tr className="border-b border-line text-left text-faint">
+                      <th className="pb-2 font-medium">{t('Upstream')}</th>
+                      <th className="pb-2 font-medium">{t('Kind')}</th>
+                      {/* Which credential it went out on, as the credential manager knows it */}
+                      <th className="pb-2 font-medium">{t('Credential')}</th>
+                      <th className="pb-2 text-right font-medium">{t('Turns')}</th>
+                      <th className="pb-2 text-right font-medium">{t('Billable tokens')}</th>
+                      <th className="pb-2 text-right font-medium">{t('Cost')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.byUpstream.map((r) => {
+                      const id = r.providerId || 'none';
+                      const chosen = data.upstream === id;
+                      return (
+                        <tr
+                          key={id}
+                          onClick={() => narrow(chosen ? null : id)}
+                          className={clsx(
+                            'cursor-pointer border-b border-line last:border-0 hover:bg-bubble',
+                            chosen && 'bg-bubble',
+                          )}
+                        >
+                          {/*
+                            A row with no upstream is spend the CLI booked itself, which only
+                            happens when the gateway was not in the path — and rows written
+                            before the column existed. Named rather than left blank: it is real
+                            spend, and it is the difference between this table and the total.
+                          */}
+                          <td className="py-2">{r.name || t('Not through the gateway')}</td>
+                          <td className="py-2 font-mono text-[12px] text-muted">{r.kind || '—'}</td>
+                          <td className="py-2 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
+                          <td className="py-2 text-right tabular-nums">{r.turns}</td>
+                          <td className="py-2 text-right font-mono tabular-nums">
+                            {r.billableTokens.toLocaleString()}
+                          </td>
+                          <td className="py-2 text-right font-mono tabular-nums">
+                            {fmtMoney(r.costMicro, data.quota.currency)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-[11.5px] text-faint">
+                  {data.upstream
+                    ? t('Everything else on this page counts this upstream only. Click the row again for all of them.')
+                    : t('Click a row to count only that upstream everywhere else on this page.')}
+                </p>
+              </div>
+            )}
           </Card>
 
           <Card title={`${t('By agent and model')} · ${t(data.range.label)}`}>

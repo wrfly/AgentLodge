@@ -301,13 +301,26 @@ export interface SeriesPoint extends UsageTotals {
   t: string;
 }
 
+/** One upstream's share of a range, with the credential it authenticated on */
+export interface UpstreamUsage extends UsageTotals {
+  /** Empty when the gateway was not in the path, so there is no upstream of ours to name */
+  providerId: string;
+  name: string;
+  kind: string;
+  credentialId: string;
+}
+
 export interface UsageReport {
   quota: QuotaStatus;
   range: { from: string; to: string; label: string; preset: RangePreset };
+  /** The upstream everything but `byUpstream` is narrowed to, or null for all of them */
+  upstream: string | null;
   totals: UsageTotals;
   series: SeriesPoint[];
   seriesUnit: 'day' | 'hour';
   byAgent: Array<UsageTotals & { agent: string; model: string | null }>;
+  /** Every upstream over the range, never narrowed — this is the list being chosen from */
+  byUpstream: UpstreamUsage[];
   byConversation: Array<
     UsageTotals & { conversationId: string; title: string; agent: string; updatedAt: string }
   >;
@@ -430,10 +443,12 @@ export interface ApiKeyRow {
 }
 
 export const me = {
-  usage: (preset: RangePreset = 'quota', from?: string, to?: string) => {
+  /** `upstream` narrows everything but the upstream breakdown; 'none' is the rows with no upstream */
+  usage: (preset: RangePreset = 'quota', from?: string, to?: string, upstream?: string | null) => {
     const q = new URLSearchParams({ preset });
     if (from) q.set('from', from);
     if (to) q.set('to', to);
+    if (upstream) q.set('upstream', upstream);
     return request<UsageReport>(`/api/me/usage?${q}`);
   },
   quota: () => request<QuotaStatus>('/api/me/quota'),
@@ -607,10 +622,14 @@ export type PlatformPreset = 'window' | 'weekWindow' | 'today' | 'last7' | 'last
 export interface PlatformUsage {
   range: { from: string; to: string; label: string };
   currency: string;
+  /** The upstream everything but `byUpstream` is narrowed to, or null for all of them */
+  upstream: string | null;
   totals: UsageTotals;
   series: SeriesPoint[];
   seriesUnit: 'hour' | 'day';
   topUsers: Array<UsageTotals & { userId: string; username: string; email: string }>;
+  /** Every upstream over the range, never narrowed — the list being chosen from */
+  byUpstream: UpstreamUsage[];
 }
 
 export interface PricingRow {
@@ -916,8 +935,9 @@ export interface AuditEntry {
 
 export const admin = {
   overview: () => request<AdminOverview>('/api/admin/overview'),
-  platformUsage: (preset: PlatformPreset) =>
-    request<PlatformUsage>(`/api/admin/usage?preset=${preset}`),
+  /** `upstream` narrows everything but the upstream breakdown; 'none' is the rows with no upstream */
+  platformUsage: (preset: PlatformPreset, upstream?: string | null) =>
+    request<PlatformUsage>(`/api/admin/usage?preset=${preset}${upstream ? `&upstream=${encodeURIComponent(upstream)}` : ''}`),
   users: () => request<AdminUser[]>('/api/admin/users'),
   updateUser: (
     id: string,
