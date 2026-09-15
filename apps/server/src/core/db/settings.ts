@@ -296,7 +296,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     type: 'number',
     default: '2',
     envFallback: 'PER_USER_INFLIGHT_MAX',
-    hint: 'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.',
+    hint: 'Per upstream, so a busy conversation cannot take the whole pool.',
     /*
      * Refused here rather than ignored later. The gate falls back to its configured value
      * for anything it cannot use, so a zero typed into this box would be stored, silently
