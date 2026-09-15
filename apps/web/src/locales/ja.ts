@@ -656,4 +656,7 @@ export const ja: Record<string, string> = {
   'Cache': 'キャッシュ',
 
   'Priced from the model price table.': 'モデル価格表に基づく算出。',
+  'Gateway': 'ゲートウェイ',
+  'Slots one user may hold': '1 ユーザーが同時に使えるスロット数',
+  'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.': 'アップストリームごとの上限。混み合った会話がプール全体を占有できなくなります。次のリクエストから有効で、再起動は不要です。',
 };

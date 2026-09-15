@@ -15,6 +15,15 @@ export interface GateConfig {
   queueTimeoutMs: number;
   leaseMaxMs: number;
   perUserInflightMax: number;
+  /**
+   * The console's value for the above, asked for rather than passed in.
+   *
+   * The gate runs in the gateway container and the setting is written from the app one, so
+   * a value captured at construction is a restart behind whatever the page says. Returning
+   * undefined — no row, no environment variable, a database that will not answer — falls
+   * back to `perUserInflightMax`, which is what every test and the bare-process path use.
+   */
+  readPerUserInflightMax?: () => number | undefined;
 }
 
 export interface Lease {
@@ -115,7 +124,7 @@ export class UpstreamGate {
 
       const w: Waiter = { ...req, enqueuedAt: Date.now(), resolve, reject, settled: false };
 
-      if (this.canGrantNow(req.userId)) return this.grant(w);
+      if (this.canGrantNow(req.userId, this.perUserMax())) return this.grant(w);
 
       (req.priority === 0 ? this.hiPri : this.queueFor(req.userId)).push(w);
       this.queuedCount += 1;
@@ -138,11 +147,22 @@ export class UpstreamGate {
     return q;
   }
 
-  private canGrantNow(userId: string): boolean {
+  /**
+   * What the console says, or the configured value when it says nothing.
+   *
+   * Resolved once per admission pass and handed down, not read per waiter: a drain over a
+   * deep queue would otherwise be one database read per person in it.
+   */
+  private perUserMax(): number {
+    const live = this.cfg.readPerUserInflightMax?.();
+    return live !== undefined && live > 0 ? live : this.cfg.perUserInflightMax;
+  }
+
+  private canGrantNow(userId: string, perUserMax: number): boolean {
     if (Date.now() < this.cooldownUntil) return false;
     return (
       this.active.size < this.effectiveMax &&
-      (this.userInflight.get(userId) ?? 0) < this.cfg.perUserInflightMax
+      (this.userInflight.get(userId) ?? 0) < perUserMax
     );
   }
 
@@ -202,8 +222,9 @@ export class UpstreamGate {
 
   /** Priority 0 takes the fast lane; the rest go round-robin by user */
   private schedule(): void {
+    const perUserMax = this.perUserMax();
     while (this.active.size < this.effectiveMax && Date.now() >= this.cooldownUntil) {
-      const w = this.takeHiPri() ?? this.takeRoundRobin();
+      const w = this.takeHiPri(perUserMax) ?? this.takeRoundRobin(perUserMax);
       if (!w) break;
       this.queuedCount -= 1;
       this.grant(w);
@@ -221,7 +242,7 @@ export class UpstreamGate {
    * isBackground in index.ts), so this lane, not the round robin below, is what decides
    * who waits.
    */
-  private takeHiPri(): Waiter | undefined {
+  private takeHiPri(perUserMax: number): Waiter | undefined {
     for (let i = 0; i < this.hiPri.length; i++) {
       const w = this.hiPri[i]!;
       if (w.settled) {
@@ -229,7 +250,7 @@ export class UpstreamGate {
         i -= 1;
         continue;
       }
-      if ((this.userInflight.get(w.userId) ?? 0) >= this.cfg.perUserInflightMax) continue;
+      if ((this.userInflight.get(w.userId) ?? 0) >= perUserMax) continue;
       this.hiPri.splice(i, 1);
       return w;
     }
@@ -242,12 +263,12 @@ export class UpstreamGate {
    * An agent loop fires several calls in quick succession, and under FIFO one user on a
    * long task would sit at the head of the queue indefinitely while nobody else got in.
    */
-  private takeRoundRobin(): Waiter | undefined {
+  private takeRoundRobin(perUserMax: number): Waiter | undefined {
     const users = [...this.queues.keys()];
     if (!users.length) return undefined;
     for (let i = 0; i < users.length; i++) {
       const u = users[(this.cursor + i) % users.length]!;
-      if ((this.userInflight.get(u) ?? 0) >= this.cfg.perUserInflightMax) continue;
+      if ((this.userInflight.get(u) ?? 0) >= perUserMax) continue;
       const q = this.queues.get(u);
       if (!q?.length) continue;
       const w = q.shift()!;

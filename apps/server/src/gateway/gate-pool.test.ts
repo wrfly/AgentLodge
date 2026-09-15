@@ -219,5 +219,74 @@ console.log('\n=== A capped user does not hold the lane for everybody behind the
   a3.release();
 }
 
+console.log('\n=== The per-user cap is whatever the console says now ===');
+{
+  /*
+   * The gate runs in the gateway container; the setting is written from the app one. A value
+   * captured when the pool was constructed is whatever the environment said at boot, which is
+   * not what a page offering to change it means — so the gate asks each time rather than
+   * being told once.
+   *
+   * Asked once per admission pass, not once per waiter: a drain over a deep queue would
+   * otherwise be one database read per person standing in it.
+   */
+  let configured: number | undefined = 1;
+  let reads = 0;
+  const pool = new GatePool({
+    ...cfg,
+    maxConcurrency: 8,
+    perUserInflightMax: 4,
+    readPerUserInflightMax: () => {
+      reads += 1;
+      return configured;
+    },
+  });
+  const g = pool.for('provider-a');
+  const at = (t: string) => g.acquire({ userId: 'A', turnId: t, priority: 0 });
+
+  const first = await at('one');
+  const secondP = at('two');
+  await new Promise((r) => setTimeout(r, 5));
+  ok('the console value wins over the configured one', g.stats().queued === 1, JSON.stringify(g.stats()));
+
+  /*
+   * Raised while somebody is already queued. Nothing wakes the queue on its own — a drain
+   * runs when a slot is released — so the new value lands on the next pass, which in a
+   * running gateway is the next request to finish. A restart is never one of the steps.
+   */
+  configured = 3;
+  first.release();
+  const second = await secondP;
+  ok('raising it admits the one already queued', g.stats().active === 1, JSON.stringify(g.stats()));
+
+  const third = await at('three');
+  const fourth = await at('four');
+  const fifthP = at('five');
+  await new Promise((r) => setTimeout(r, 5));
+  ok('and three of them fit where one did before', g.stats().active === 3, JSON.stringify(g.stats()));
+  ok('the next one waits, because three is the cap', g.stats().queued === 1, JSON.stringify(g.stats()));
+
+  const before = reads;
+  second.release();
+  const fifth = await fifthP;
+  ok('one read per admission pass, not one per waiter', reads - before <= 4, String(reads - before));
+
+  third.release();
+  fourth.release();
+  fifth.release();
+  await new Promise((r) => setTimeout(r, 5));
+
+  /*
+   * Nothing to say — no row, no environment variable, a database that will not answer — is
+   * the configured value, which is a real limit. Refusing everything because a setting could
+   * not be read would not be.
+   */
+  configured = undefined;
+  const four = await Promise.all([at('s1'), at('s2'), at('s3'), at('s4')]);
+  await new Promise((r) => setTimeout(r, 5));
+  ok('silence falls back to the configured limit', g.stats().active === 4, JSON.stringify(g.stats()));
+  four.forEach((l) => l.release());
+}
+
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

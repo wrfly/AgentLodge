@@ -552,7 +552,7 @@ export interface InviteCode {
 export interface SettingView {
   key: string;
   label: string;
-  group: 'mail' | 'quota' | 'agents';
+  group: 'mail' | 'quota' | 'agents' | 'gateway';
   type: 'string' | 'secret' | 'number' | 'boolean' | 'list' | 'select';
   hint?: string;
   /** The values a `select` takes, shown as written and in this order */

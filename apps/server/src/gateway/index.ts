@@ -61,6 +61,7 @@ import * as modelsRepo from '../core/db/models.js';
 import * as providersRepo from '../core/db/providers.js';
 import * as trimsRepo from '../core/db/trims.js';
 import { trimRedoAnswers } from './redo-trim.js';
+import { getNumberFresh } from '../core/db/settings.js';
 
 /**
  * The metering gateway.
@@ -79,6 +80,20 @@ export const gate = new GatePool({
   queueTimeoutMs: config.queueTimeoutMs,
   leaseMaxMs: config.leaseMaxMs,
   perUserInflightMax: config.perUserInflightMax,
+  /*
+   * Fresh on every admission pass rather than captured here. The console writes it from the
+   * app container; a value read once at construction would be whatever the environment said
+   * when this process started, which is not what a page that offers to change it means.
+   */
+  readPerUserInflightMax: () => {
+    try {
+      return getNumberFresh('gateway.perUserInflightMax');
+    } catch {
+      // Before initDb, or a database that will not answer. The configured value is a real
+      // limit; refusing everything because a setting could not be read is not.
+      return undefined;
+    }
+  },
 });
 
 /* ---------------- Error shapes ---------------- */

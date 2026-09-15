@@ -656,4 +656,7 @@ export const zh: Record<string, string> = {
   'Cache': '缓存',
 
   'Priced from the model price table.': '按模型价格表计算。',
+  'Gateway': '网关',
+  'Slots one user may hold': '单用户同时占用槽位上限',
+  'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.': '按每条上游计算，一个忙碌的会话吃不掉整个池子。下一个请求即生效，无需重启。',
 };

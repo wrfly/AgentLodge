@@ -656,4 +656,7 @@ export const ru: Record<string, string> = {
   'Cache': 'Кэш',
 
   'Priced from the model price table.': 'Рассчитано по таблице цен на модели.',
+  'Gateway': 'Шлюз',
+  'Slots one user may hold': 'Слотов на одного пользователя',
+  'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.': 'Для каждого апстрима отдельно, чтобы активный диалог не занял весь пул. Действует со следующего запроса, перезапуск не нужен.',
 };
