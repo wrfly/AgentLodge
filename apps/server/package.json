@@ -50,7 +50,8 @@
     "test:conversation-routes": "tsx src/app/routes/conversations.test.ts",
     "test:me-routes": "tsx src/app/routes/me.test.ts",
     "test:admin-roles": "tsx src/app/routes/admin/users.test.ts",
-    "test:buckets": "tsx src/core/db/buckets.test.ts"
+    "test:buckets": "tsx src/core/db/buckets.test.ts",
+    "test:admin-overview": "tsx src/app/routes/admin/overview.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
