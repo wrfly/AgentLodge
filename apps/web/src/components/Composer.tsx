@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Brain, Gauge, Paperclip, Sparkle, Square } from 'lucide-react';
+import { ArrowUp, Brain, Clock, Gauge, Paperclip, Sparkle, Square } from 'lucide-react';
 import clsx from 'clsx';
 import { useT } from '../lib/i18n';
 import { groupByVendor } from '../lib/protocol';
@@ -105,6 +105,19 @@ export function Composer({ agent }: { agent: AgentId }) {
   const ensureConversation = useChat((s) => s.ensureConversation);
 
   const quota = useQuota((s) => s.quota);
+  const deferred = useChat((s) => s.deferred);
+  const cancelDeferred = useChat((s) => s.cancelDeferred);
+
+  /*
+   * Over the ceiling stops the box either way; which of the two it is decides what is said
+   * underneath, and `held` is checked first everywhere.
+   *
+   * They are both true at the same time, and have to be: a held turn exists *because* the
+   * quota is exhausted, so `blocked` is still what it always was. Showing the red "ask an
+   * administrator" line under a question that is already queued to send itself would be
+   * telling somebody to go and do something that has been done.
+   */
+  const held = Boolean(deferred);
   const blocked = Boolean(quota?.exceeded && quota?.hardStop);
 
   /**
@@ -251,7 +264,7 @@ export function Composer({ agent }: { agent: AgentId }) {
 
   const submit = () => {
     const text = value.trim();
-    if (streaming || blocked) return;
+    if (streaming || blocked || held) return;
     if (!text && !ready.length) return;
     /*
      * The names go into the message itself. There is no image block on this path — a turn
@@ -278,7 +291,7 @@ export function Composer({ agent }: { agent: AgentId }) {
     submit();
   };
 
-  const canSend = (value.trim().length > 0 || ready.length > 0) && !streaming && !blocked;
+  const canSend = (value.trim().length > 0 || ready.length > 0) && !streaming && !blocked && !held;
   const busyAttaching = attached.some((a) => a.status === 'uploading');
   /**
    * The controls under the box all change the next turn, so none of them moves during one.
@@ -330,9 +343,11 @@ export function Composer({ agent }: { agent: AgentId }) {
               e.preventDefault();
               void attach(list, true);
             }}
-            disabled={blocked}
+            disabled={blocked || held}
             placeholder={
-              blocked
+              held
+                ? t('Waiting for the quota window — your question will send itself')
+                : blocked
                 ? t('Quota is used up — you cannot start a new conversation')
                 : streaming
                   ? t('Generating…')
@@ -456,7 +471,37 @@ export function Composer({ agent }: { agent: AgentId }) {
           </div>
         </div>
 
-        {blocked ? (
+        {deferred ? (
+          /*
+           * A question that has been taken but has not gone.
+           *
+           * Amber rather than red: nothing has failed and nothing needs doing. It says the
+           * clock time rather than "in 4h 20m" because the person will not be watching
+           * this line when it happens — the time is something they can plan around, a
+           * countdown is only true while it is on screen.
+           *
+           * Cancel is beside it and not hidden behind anything. It is the only way back to
+           * a composer, and it hands the text over rather than discarding it.
+           */
+          <div className="mt-1.5 flex items-center justify-center gap-2 text-center text-[11.5px] text-amber-600 dark:text-amber-500">
+            <Clock size={12} className="shrink-0" />
+            <span>
+              {t('Waiting for the {scope} quota — sends at {time}', {
+                scope: SCOPE_LABEL[deferred.scope],
+                time: new Date(deferred.releaseAt).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                }),
+              })}
+            </span>
+            <button
+              onClick={() => void cancelDeferred()}
+              className="underline underline-offset-2 transition hover:text-ink"
+            >
+              {t('Cancel')}
+            </button>
+          </div>
+        ) : blocked ? (
           <div className="mt-1.5 text-center text-[11.5px] text-danger">
             {(() => {
               // The window that refused is the one to name — "used up" without saying which

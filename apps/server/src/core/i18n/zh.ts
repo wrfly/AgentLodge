@@ -48,6 +48,7 @@ export const zh: Record<string, string> = {
   'That reset link is invalid or has expired': '重置链接无效或已过期',
   'That reset link is invalid': '重置链接无效',
   'No such device': '设备不存在',
+  'Nothing is waiting in this conversation': '这个会话没有待发送的问题',
   'No such conversation': '会话不存在',
   'The message is empty': '消息为空',
   'This conversation is already generating': '该会话正在生成中',

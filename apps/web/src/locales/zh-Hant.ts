@@ -75,6 +75,8 @@ export const zhHant: Record<string, string> = {
   Reconnecting: '重新連線中',
   'Loading…': '載入中…',
   'Back to bottom': '回到底部',
+  'Waiting for the quota window — your question will send itself': '等待額度視窗重置 — 你的問題會自動發送',
+  'Waiting for the {scope} quota — sends at {time}': '等待 {scope} 額度 — {time} 自動發送',
   'Quota is used up — you cannot start a new conversation': '配額已用完——無法開始新對話',
   'Generating…': '產生中…',
   'Message {agent}': '傳訊息給 {agent}',

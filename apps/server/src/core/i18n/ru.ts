@@ -48,6 +48,7 @@ export const ru: Record<string, string> = {
   'That reset link is invalid or has expired': 'Ссылка для сброса недействительна или истекла',
   'That reset link is invalid': 'Ссылка для сброса недействительна',
   'No such device': 'Такого устройства нет',
+  'Nothing is waiting in this conversation': 'В этом разговоре ничего не ожидает отправки',
   'No such conversation': 'Такой беседы нет',
   'The message is empty': 'Сообщение пустое',
   'This conversation is already generating': 'В этой беседе уже идёт генерация',

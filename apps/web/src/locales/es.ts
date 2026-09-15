@@ -74,6 +74,8 @@ export const es: Record<string, string> = {
   Reconnecting: 'Reconectando',
   'Loading…': 'Cargando…',
   'Back to bottom': 'Volver abajo',
+  'Waiting for the quota window — your question will send itself': 'Esperando la ventana de cuota — tu pregunta se enviará sola',
+  'Waiting for the {scope} quota — sends at {time}': 'Esperando la cuota {scope} — se envía a las {time}',
   'Quota is used up — you cannot start a new conversation': 'La cuota está agotada — no puedes iniciar una conversación nueva',
   'Generating…': 'Generando…',
   'Message {agent}': 'Mensaje para {agent}',

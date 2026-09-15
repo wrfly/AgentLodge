@@ -74,6 +74,8 @@ export const de: Record<string, string> = {
   Reconnecting: 'Verbindung wird wiederhergestellt',
   'Loading…': 'Wird geladen …',
   'Back to bottom': 'Zurück nach unten',
+  'Waiting for the quota window — your question will send itself': 'Warten auf das Kontingentfenster — Ihre Frage sendet sich selbst',
+  'Waiting for the {scope} quota — sends at {time}': 'Wartet auf das {scope}-Kontingent — sendet um {time}',
   'Quota is used up — you cannot start a new conversation': 'Das Kontingent ist aufgebraucht — Sie können keine neue Unterhaltung beginnen',
   'Generating…': 'Wird erzeugt …',
   'Message {agent}': 'Nachricht an {agent}',

@@ -128,7 +128,7 @@ function hasTables(d: DatabaseSync): boolean {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -620,6 +620,30 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         console.log('     so a row entered here bills the off-peak rate around the clock.');
       }
     }
+  }
+
+  if (from < 16) {
+    /*
+     * Being over the ceiling stops being a refusal and becomes a wait.
+     *
+     * Schema only — there is nothing to repair. Every refusal that has already happened is
+     * a `quota_refusals` row and a message the person retyped; this table only holds what
+     * arrives from here on.
+     */
+    d.exec(`
+      create table if not exists deferred_turns (
+        id              text primary key,
+        user_id         text not null references users(id) on delete cascade,
+        conversation_id text not null references conversations(id) on delete cascade,
+        body            text not null,
+        scope           text not null,
+        release_at      text not null,
+        created_at      text not null,
+        unique (conversation_id)
+      );
+      create index if not exists idx_deferred_release on deferred_turns(release_at);
+      create index if not exists idx_deferred_user on deferred_turns(user_id);
+    `);
   }
 
   d.exec(`pragma user_version = ${SCHEMA_VERSION}`);

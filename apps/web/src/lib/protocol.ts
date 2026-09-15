@@ -38,7 +38,37 @@ export type ServerEvent =
   | { type: 'quota.updated'; quota: QuotaStatus }
   /** Pushed while queued at the gateway's concurrency gate, so the interface can say how many are ahead */
   | { type: 'queue.waiting'; turnId: string; position: number }
+  /**
+   * This conversation's held turn changed. Null means there no longer is one — cancelled,
+   * released, or given up on — and the composer goes back to being a composer.
+   */
+  | { type: 'turn.deferred'; deferred: DeferredTurn | null }
+  /**
+   * A held turn's window turned over and it went. The message comes with it because this
+   * browser never sent it: the ordinary path appends the question optimistically and
+   * swaps in the stored row, and there was no optimistic append for a turn that left
+   * hours after it was typed — possibly into a different browser.
+   */
+  | { type: 'turn.released'; turnId: string; userMessage: StoredMessage }
   | { type: 'heartbeat'; ts: number };
+
+/**
+ * A question waiting for the quota window to turn over.
+ *
+ * `releaseAt` is what the interface says and nothing more. The decision to let it go is
+ * `quota.check` asked afresh, so a top-up releases it before this instant and a second
+ * window still over its ceiling holds it past one.
+ */
+export interface DeferredTurn {
+  id: string;
+  conversationId: string;
+  /** What was typed. Returned on cancel so the composer gets it back. */
+  body: string;
+  /** Which window was over when it arrived */
+  scope: QuotaScope;
+  releaseAt: string;
+  createdAt: string;
+}
 
 /**
  * The platform's three windows.

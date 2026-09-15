@@ -48,6 +48,7 @@ export const ja: Record<string, string> = {
   'That reset link is invalid or has expired': '再設定リンクが無効か、有効期限が切れています',
   'That reset link is invalid': '再設定リンクが無効です',
   'No such device': 'そのような端末はありません',
+  'Nothing is waiting in this conversation': 'この会話に待機中の質問はありません',
   'No such conversation': 'そのような会話はありません',
   'The message is empty': 'メッセージが空です',
   'This conversation is already generating': 'この会話はすでに生成中です',

@@ -26,6 +26,7 @@ import { buildGateway, gate, startModelAutoRefresh } from './gateway/index.js';
 import { drainLegacyProviderKeys } from './gateway/legacy-keys.js';
 import { gatewayEnabled } from './app/agents/provider.js';
 import * as containers from './app/containers.js';
+import * as deferred from './app/deferred.js';
 import { legacySendgrid } from './app/mail.js';
 import { getString } from './core/db/settings.js';
 import { trustProxyOption } from './core/trust-proxy.js';
@@ -179,6 +180,10 @@ if (config.role !== 'gateway') {
   setInterval(() => void sessionsRepo.pruneExpired(), 3600_000).unref();
   setInterval(() => void audit.prune(config.auditLogRetentionDays), 3600_000).unref();
   setInterval(() => void containers.reapIdle(), 5 * 60_000).unref();
+  // Questions that arrived over the ceiling and are waiting for the window to turn over.
+  // Here for the same reason as the others: one process owns it, and it is the one that
+  // can start a turn.
+  deferred.startSweeping();
 }
 
 // The gateway is a Fastify app of its own that happens to share this process by default,

@@ -182,6 +182,26 @@ export interface Verdict {
 }
 
 /**
+ * When every window that is over its ceiling will have turned over — the earliest instant
+ * this user could be let through again.
+ *
+ * The **latest** of the exceeded windows, not the first. `check()` names the first one it
+ * finds, which is the right thing to tell somebody; how long the wait is, is a different
+ * question, and answering it with that same window is wrong whenever two are over. A turn
+ * held until the 5-hour window resets at two o'clock, on a month that is also exhausted,
+ * comes back at two and is refused again — having waited for nothing.
+ *
+ * Null when nothing is over, and null on a soft quota, which refuses nobody and so has
+ * nobody waiting.
+ */
+export function clearsAt(s: QuotaStatus): Date | null {
+  if (!s.exceeded || !s.hardStop) return null;
+  const over = SCOPES.map((scope) => s.windows[scope]).filter((w) => w.exceeded);
+  if (!over.length) return null;
+  return new Date(Math.max(...over.map((w) => new Date(w.endsAt).getTime())));
+}
+
+/**
  * The gate. Any window over its ceiling refuses, and the message names which one.
  *
  * A soft quota reports the same status and allows the request: an administrator who wants

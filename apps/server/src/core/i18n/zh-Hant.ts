@@ -52,6 +52,7 @@ export const zhHant: Record<string, string> = {
   'That reset link is invalid or has expired': '重設連結無效或已過期',
   'That reset link is invalid': '重設連結無效',
   'No such device': '裝置不存在',
+  'Nothing is waiting in this conversation': '這個對話沒有待發送的問題',
   'No such conversation': '對話不存在',
   'The message is empty': '訊息是空的',
   'This conversation is already generating': '這個對話正在產生回覆',

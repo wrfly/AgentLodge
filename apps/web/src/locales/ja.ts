@@ -81,6 +81,8 @@ export const ja: Record<string, string> = {
   Reconnecting: '再接続中',
   'Loading…': '読み込み中…',
   'Back to bottom': '最下部へ戻る',
+  'Waiting for the quota window — your question will send itself': 'クォータのリセット待ち — 質問は自動で送信されます',
+  'Waiting for the {scope} quota — sends at {time}': '{scope} クォータ待ち — {time} に送信',
   'Quota is used up — you cannot start a new conversation': '利用枠を使い切りました。新しい会話は開始できません',
   'Generating…': '生成中…',
   'Message {agent}': '{agent} にメッセージを送る',

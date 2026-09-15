@@ -48,6 +48,7 @@ export const fr: Record<string, string> = {
   'That reset link is invalid or has expired': 'Ce lien de réinitialisation est invalide ou a expiré',
   'That reset link is invalid': 'Ce lien de réinitialisation est invalide',
   'No such device': 'Cet appareil n\'existe pas',
+  'Nothing is waiting in this conversation': 'Rien n\'est en attente dans cette conversation',
   'No such conversation': 'Cette conversation n\'existe pas',
   'The message is empty': 'Le message est vide',
   'This conversation is already generating': 'Cette conversation génère déjà une réponse',

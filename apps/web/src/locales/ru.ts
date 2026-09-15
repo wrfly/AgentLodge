@@ -81,6 +81,8 @@ export const ru: Record<string, string> = {
   Reconnecting: 'Переподключение',
   'Loading…': 'Загрузка…',
   'Back to bottom': 'Вниз',
+  'Waiting for the quota window — your question will send itself': 'Ожидание сброса квоты — вопрос отправится сам',
+  'Waiting for the {scope} quota — sends at {time}': 'Ожидание квоты {scope} — отправка в {time}',
   'Quota is used up — you cannot start a new conversation': 'Квота исчерпана — новую беседу начать нельзя',
   'Generating…': 'Генерация…',
   'Message {agent}': 'Написать {agent}',

@@ -81,6 +81,8 @@ export const zh: Record<string, string> = {
   Reconnecting: '重连中',
   'Loading…': '载入中…',
   'Back to bottom': '回到底部',
+  'Waiting for the quota window — your question will send itself': '等待额度窗口重置 — 你的问题会自动发送',
+  'Waiting for the {scope} quota — sends at {time}': '等待 {scope} 额度 — {time} 自动发送',
   'Quota is used up — you cannot start a new conversation': '额度已用尽，无法发起新对话',
   'Generating…': '正在生成…',
   'Message {agent}': '给 {agent} 发消息',
