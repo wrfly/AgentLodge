@@ -118,6 +118,9 @@ const PLATFORM_PRESETS: Array<{ id: PlatformPreset; label: string }> = [
   // First, and the shortest span offered: it is the window that refuses first, so "who is
   // burning it right now" is the question this card gets asked in anger
   { id: 'window', label: 'This window' },
+  // Next, because it is the other window the gate enforces — and the one the calendar-week
+  // reading beside it disagrees with the moment an upstream states its own cadence
+  { id: 'weekWindow', label: 'This 7-day window' },
   { id: 'today', label: 'Today' },
   { id: 'last7', label: 'Last 7 days' },
   { id: 'last30', label: 'Last 30 days' },
