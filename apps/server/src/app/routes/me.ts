@@ -31,6 +31,7 @@ export type RangePreset =
   | 'today'
   | 'yesterday'
   | 'week'
+  | 'weekWindow'
   | 'month'
   | 'last7'
   | 'last30'
@@ -85,6 +86,23 @@ function resolveRange(
       };
     case 'week':
       return { from: usageRepo.periodStart('weekly'), to: endOfToday, label: 'This week' };
+    /*
+     * The seven days the quota is actually counting, which are not the calendar's.
+     *
+     * Once an upstream has stated its own weekly cadence the window phase-locks to it
+     * (`weekBoundsAt`), so a week that opened at 20:00 on a Monday reopens at 20:00 on a
+     * Monday — while `week` above cuts at the administrator's anchor and `last7` counts back
+     * from this moment. All three are reasonable questions and they give three different
+     * numbers; what was missing was the one the quota card at the top of the same page is
+     * showing, so the two could be read against each other.
+     *
+     * Built from the window rather than recomputed, exactly as the 5-hour one is: it counts
+     * from wherever the quota counts from, which a manual reset moves forward.
+     */
+    case 'weekWindow': {
+      const w = quotaStatus.windows.week;
+      return { from: w.countsFrom, to: w.endsAt, label: 'This 7-day window' };
+    }
     case 'month':
       return { from: usageRepo.periodStart('monthly'), to: endOfToday, label: 'This month' };
     case 'last7':
@@ -142,7 +160,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
    */
   app.get('/api/me/usage', guard, async (req) => {
     const userId = req.user!.id;
-    const q = req.query as { preset?: RangePreset; from?: string; to?: string };
+    const q = req.query as { preset?: RangePreset; from?: string; to?: string; upstream?: string };
     const quotaStatus = quota.status(userId);
 
     const range = resolveRange(userId, q.preset ?? 'quota', quotaStatus, q.from, q.to);
@@ -152,15 +170,32 @@ export function registerMeRoutes(app: FastifyInstance): void {
     const spanMs = new Date(range.to).getTime() - new Date(range.from).getTime();
     const byHour = spanMs <= 2 * 86400_000;
 
+    /*
+     * Which upstream to count, if the reader picked one. Absent is all of them; `none` is the
+     * rows with no upstream of ours — what the CLI booked itself, which happens only when the
+     * gateway was not in the path, and anything written before that column existed.
+     *
+     * `byUpstream` is deliberately *not* filtered: it is the list being chosen from, and a
+     * list that hid every option but the chosen one would leave no way back.
+     */
+    const only: usageRepo.UpstreamFilter =
+      q.upstream === undefined || q.upstream === '' ? undefined
+        : q.upstream === 'none' ? null
+          : q.upstream;
+
     return {
       quota: quotaStatus,
       range: { ...range, preset: q.preset ?? 'quota' },
-      totals: usageRepo.totalsForUser(userId, window),
+      /** Which upstream the figures below are narrowed to, echoed so the page can say so */
+      upstream: q.upstream === undefined || q.upstream === '' ? null : q.upstream,
+      totals: usageRepo.totalsForUser(userId, window, only),
       /** Chart data: hourly over a short span, daily over a long one, empty buckets included */
-      series: usageRepo.seriesForUserInRange(userId, window, byHour ? 'hour' : 'day'),
+      series: usageRepo.seriesForUserInRange(userId, window, byHour ? 'hour' : 'day', only),
       seriesUnit: byHour ? ('hour' as const) : ('day' as const),
-      byAgent: usageRepo.byAgentForUser(userId, window),
-      byConversation: usageRepo.byConversationForUser(userId, 10, window),
+      byAgent: usageRepo.byAgentForUser(userId, window, only),
+      /** Every upstream over this range, unfiltered — this is the list being chosen from */
+      byUpstream: usageRepo.byUpstreamForUser(userId, window),
+      byConversation: usageRepo.byConversationForUser(userId, 10, window, only),
       /** A few figures people look at often, so the frontend does not fire several requests */
       quick: {
         today: usageRepo.totalsForUser(userId, resolveRange(userId, 'today', quotaStatus)),

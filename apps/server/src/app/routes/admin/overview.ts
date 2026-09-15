@@ -62,25 +62,43 @@ export function register(app: FastifyInstance): void {
    * month" wants one control, not four lists to read side by side.
    */
   app.get('/api/admin/usage', guard, async (req) => {
-    const q = req.query as { preset?: PlatformPreset };
+    const q = req.query as { preset?: PlatformPreset; upstream?: string };
     const range = platformRange(q.preset ?? 'today');
     const spanMs = new Date(range.to).getTime() - new Date(range.from).getTime();
     // Two days or less is shown hourly, longer spans daily — the same rule as /api/me/usage
     const byHour = spanMs <= 2 * 86400_000;
+
+    /*
+     * Which upstream to count, if the operator picked one. The same three-way reading as
+     * /api/me/usage: absent is all of them, `none` is the rows with no upstream of ours —
+     * what the CLI booked itself, which happens only when the gateway was not in the path.
+     *
+     * The question this answers is the one the console could not: what is each upstream, and
+     * each credential behind it, costing the platform — and who is spending it there.
+     */
+    const only: usageRepo.UpstreamFilter =
+      q.upstream === undefined || q.upstream === '' ? undefined
+        : q.upstream === 'none' ? null
+          : q.upstream;
+
     return {
       range,
       currency: getString('billing.currency', 'USD'),
-      totals: usageRepo.totalsAllInRange(range),
+      /** Echoed so the page can say which upstream the figures are narrowed to */
+      upstream: q.upstream === undefined || q.upstream === '' ? null : q.upstream,
+      totals: usageRepo.totalsAllInRange(range, only),
       // Padded here: the bucket keys are the server's local time, and a client rebuilding
       // them from its own clock matches nothing
-      series: usageRepo.seriesAllInRange(range, byHour ? 'hour' : 'day'),
+      series: usageRepo.seriesAllInRange(range, byHour ? 'hour' : 'day', only),
       seriesUnit: byHour ? ('hour' as const) : ('day' as const),
-      topUsers: usageRepo.topUsers(range, 10),
+      topUsers: usageRepo.topUsers(range, 10, only),
+      /** Never narrowed: this is the list being chosen from */
+      byUpstream: usageRepo.byUpstreamAll(range),
     };
   });
 }
 
-export type PlatformPreset = 'window' | 'today' | 'last7' | 'last30' | 'month' | 'all';
+export type PlatformPreset = 'window' | 'weekWindow' | 'today' | 'last7' | 'last30' | 'month' | 'all';
 
 function platformRange(preset: PlatformPreset): { from: string; to: string; label: string } {
   const now = new Date();
@@ -98,6 +116,20 @@ function platformRange(preset: PlatformPreset): { from: string; to: string; labe
     case 'window': {
       const w = quota.boundsOf('window', now);
       return { from: iso(w.start), to: iso(w.end), label: 'This window' };
+    }
+    /*
+     * The seven days the quota is counting, which are not the calendar's.
+     *
+     * From `boundsOf` rather than recomputed, for the same reason the five-hour window above
+     * is: once an upstream states its own weekly cadence the window phase-locks to it, so a
+     * week that opened at 20:00 on a Monday reopens at 20:00 on a Monday — and a console
+     * cutting it on the administrator's calendar would report a period the gate is not
+     * enforcing. No per-user reset here: `countsFrom` is one user's, and this card is
+     * everybody's.
+     */
+    case 'weekWindow': {
+      const w = quota.boundsOf('week', now);
+      return { from: iso(w.start), to: iso(w.end), label: 'This 7-day window' };
     }
     case 'last7':
       return { from: iso(new Date(today.getTime() - 6 * 86400_000)), to: endOfToday, label: 'Last 7 days' };
