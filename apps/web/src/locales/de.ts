@@ -630,6 +630,9 @@ export const de: Record<string, string> = {
   'Cache': 'Cache',
 
   'Priced from the model price table.': 'Berechnet nach der Modellpreistabelle.',
+  'Gateway': 'Gateway',
+  'Slots one user may hold': 'Slots pro Benutzer',
+  'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.': 'Je Upstream, damit eine ausgelastete Unterhaltung nicht den ganzen Pool belegt. Gilt ab der nächsten Anfrage, ohne Neustart.',
   '{bucket} · from {time}': '{bucket} · ab {time}',
   'By upstream': 'Nach Upstream',
   'Not through the gateway': 'Nicht über das Gateway',

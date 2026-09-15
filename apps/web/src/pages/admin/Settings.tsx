@@ -59,7 +59,9 @@ const GROUP_LABELS: Record<SettingView['group'], string> = {
   quota: 'Quota',
   // Never rendered from here — the agents setting is hidden and has its own
   // card. The entry exists so the map stays total over the group union.
-  agents: 'Agents'
+  agents: 'Agents',
+  // Next to the gate card above it, which shows what these limits are doing
+  gateway: 'Gateway',
 };
 
 /**

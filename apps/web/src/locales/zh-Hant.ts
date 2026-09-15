@@ -631,6 +631,9 @@ export const zhHant: Record<string, string> = {
   'Cache': '快取',
 
   'Priced from the model price table.': '按模型價格表計算。',
+  'Gateway': '閘道',
+  'Slots one user may hold': '單一使用者同時佔用槽位上限',
+  'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.': '按每條上游計算，一個忙碌的對話吃不掉整個池子。下一個請求即生效，無需重啟。',
   '{bucket} · from {time}': '{bucket} · 自 {time} 起',
   'By upstream': '按上游',
   'Not through the gateway': '未經閘道',

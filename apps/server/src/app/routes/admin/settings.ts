@@ -5,7 +5,7 @@ import * as audit from '../../../core/db/audit.js';
 import { listSettings, setSetting } from '../../../core/db/settings.js';
 import { fetchBalance } from '../../agents/provider.js';
 import * as mail from '../../mail.js';
-import { guard } from './shared.js';
+import { callGateway, guard } from './shared.js';
 import { tr } from '../../../core/i18n/locale.js';
 
 export function register(app: FastifyInstance): void {
@@ -24,6 +24,20 @@ export function register(app: FastifyInstance): void {
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
+    /*
+     * A gateway setting is read in the gateway process, and one of them decides who waits.
+     * Raising the per-user cap makes queued requests eligible without freeing a slot, and
+     * the gate only looks at its queues when one is released — so without this, a raise on a
+     * busy gate does nothing until the people already waiting time out.
+     *
+     * Best effort on purpose: the setting is saved either way, and every later admission
+     * reads it fresh. This only decides whether the ones already in the queue wait for the
+     * next release or go now.
+     */
+    if (changed.some((k) => k.startsWith('gateway.'))) {
+      void callGateway('POST', '/gate/reschedule', req.headers.authorization).catch(() => {});
+    }
+
     audit.log({
       actorId: req.user!.id,
       action: 'admin.settings.update',

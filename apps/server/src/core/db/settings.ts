@@ -64,7 +64,7 @@ export type SettingSpan = 1 | 2 | 3 | 4 | 6;
 export interface SettingSpec {
   key: string;
   label: string;
-  group: 'mail' | 'quota' | 'agents';
+  group: 'mail' | 'quota' | 'agents' | 'gateway';
   type: 'string' | 'secret' | 'number' | 'boolean' | 'list' | 'select';
   hint?: string;
   /**
@@ -274,6 +274,42 @@ export const SETTING_SPECS: SettingSpec[] = [
     type: 'number',
     default: '0',
     hint: '0–23, server time.',
+  },
+  {
+    /*
+     * The second of the gate's two limits, and the one that does the work.
+     *
+     * The pool's ceiling is per upstream; this is per user per upstream, and an agent loop
+     * fires several calls in a burst — so without it one person's conversation takes every
+     * slot and everybody else queues behind it. Which also makes it the limit that is
+     * usually binding: a pool of twenty with two in flight and eight queued is not a
+     * contradiction, it is one user at their own cap of two.
+     *
+     * Read fresh on each admission pass, because the gate lives in the gateway container
+     * and this is written from the console in the app one. The environment variable stays
+     * as the fallback for a deployment that never opens the page.
+     */
+    key: 'gateway.perUserInflightMax',
+    span: 2,
+    label: 'Slots one user may hold',
+    group: 'gateway',
+    type: 'number',
+    default: '2',
+    envFallback: 'PER_USER_INFLIGHT_MAX',
+    hint: 'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.',
+    /*
+     * Refused here rather than ignored later. The gate falls back to its configured value
+     * for anything it cannot use, so a zero typed into this box would be stored, silently
+     * overridden, and leave somebody looking at a saved setting that does nothing. Empty is
+     * allowed and means the same as never set: the environment variable, then the default.
+     */
+    validate: (v) => {
+      if (v.trim() === '') return undefined;
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 1 && n <= 64
+        ? undefined
+        : 'A whole number from 1 to 64. Empty uses the default.';
+    },
   },
   {
     /*
@@ -502,6 +538,25 @@ export function getStringFresh(key: string): string | undefined {
     if (v) return v;
   }
   return SPEC_BY_KEY.get(key)?.default;
+}
+
+/**
+ * A number read past the cache, for the same reason as the two above: the gateway is
+ * another container, and a value it only re-reads on restart is not a setting.
+ *
+ * No `scale`: the console multiplies a scaled field before it sends it, so what is stored
+ * is already in base units — the same reason `getNumber` does not apply it either.
+ */
+export function getNumberFresh(key: string): number | undefined {
+  const spec = SPEC_BY_KEY.get(key);
+  const row = get<{ value: string }>('select value from settings where key = ?', key);
+  const stored = row?.value ? decrypt(row.value) : undefined;
+  const raw = stored
+    || (spec?.envFallback ? process.env[spec.envFallback] : undefined)
+    || spec?.default;
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 export function getBoolFresh(key: string): boolean {

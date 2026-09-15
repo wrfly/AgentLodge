@@ -15,6 +15,15 @@ export interface GateConfig {
   queueTimeoutMs: number;
   leaseMaxMs: number;
   perUserInflightMax: number;
+  /**
+   * The console's value for the above, asked for rather than passed in.
+   *
+   * The gate runs in the gateway container and the setting is written from the app one, so
+   * a value captured at construction is a restart behind whatever the page says. Returning
+   * undefined — no row, no environment variable, a database that will not answer — falls
+   * back to `perUserInflightMax`, which is what every test and the bare-process path use.
+   */
+  readPerUserInflightMax?: () => number | undefined;
 }
 
 export interface Lease {
@@ -111,11 +120,29 @@ export class UpstreamGate {
   acquire(req: AcquireRequest): Promise<Lease> {
     return new Promise<Lease>((resolve, reject) => {
       if (req.signal?.aborted) return reject(new AbortedError());
+
+      /*
+       * Anyone already waiting goes first, and before the depth check rather than after it.
+       *
+       * The fast path below used to be safe on its own: a free slot with an eligible waiter
+       * in the queue could not happen, because a release drains before it returns. Making
+       * the per-user cap changeable broke that — raising it makes waiters eligible with no
+       * release to notice, and the next request from the same user would then be granted
+       * straight past three of their own older ones, which went on waiting for a slot that
+       * had already been given away.
+       *
+       * Before the depth check because a drain is what makes room in the queue: turning
+       * somebody away as overloaded while the people ahead of them could have gone is the
+       * same mistake one line down. It costs nothing when the queue is empty, which is the
+       * ordinary case, and `schedule` returns at once when nothing can be granted.
+       */
+      if (this.queuedCount > 0) this.schedule();
+
       if (this.queuedCount >= this.cfg.maxQueueDepth) return reject(new OverloadedError());
 
       const w: Waiter = { ...req, enqueuedAt: Date.now(), resolve, reject, settled: false };
 
-      if (this.canGrantNow(req.userId)) return this.grant(w);
+      if (this.canGrantNow(req.userId, this.perUserMax())) return this.grant(w);
 
       (req.priority === 0 ? this.hiPri : this.queueFor(req.userId)).push(w);
       this.queuedCount += 1;
@@ -138,11 +165,30 @@ export class UpstreamGate {
     return q;
   }
 
-  private canGrantNow(userId: string): boolean {
+  /**
+   * What the console says, or the configured value when it says nothing.
+   *
+   * Resolved once per admission pass and handed down, not read per waiter: a drain over a
+   * deep queue would otherwise be one database read per person in it.
+   */
+  private perUserMax(): number {
+    const live = this.cfg.readPerUserInflightMax?.();
+    if (live !== undefined && live > 0) return live;
+    /*
+     * A floor on the fallback, because it comes from an environment variable and nothing
+     * validates one. `PER_USER_INFLIGHT_MAX=0` — a reasonable-looking way to ask for "no
+     * per-user limit" — made `inflight < 0` false for everyone, so every request on every
+     * upstream queued and failed two minutes later. `unlimited` gave NaN and the same
+     * outage. Zero is not a limit anybody can mean here; one is the smallest that is.
+     */
+    return this.cfg.perUserInflightMax >= 1 ? this.cfg.perUserInflightMax : 1;
+  }
+
+  private canGrantNow(userId: string, perUserMax: number): boolean {
     if (Date.now() < this.cooldownUntil) return false;
     return (
       this.active.size < this.effectiveMax &&
-      (this.userInflight.get(userId) ?? 0) < this.cfg.perUserInflightMax
+      (this.userInflight.get(userId) ?? 0) < perUserMax
     );
   }
 
@@ -202,8 +248,13 @@ export class UpstreamGate {
 
   /** Priority 0 takes the fast lane; the rest go round-robin by user */
   private schedule(): void {
+    // Resolved on the first pass that could actually grant something. Above the loop it was
+    // a database read on every lease release, including the ones that find the gate still
+    // full or the queues empty.
+    let perUserMax = -1;
     while (this.active.size < this.effectiveMax && Date.now() >= this.cooldownUntil) {
-      const w = this.takeHiPri() ?? this.takeRoundRobin();
+      if (perUserMax < 0) perUserMax = this.perUserMax();
+      const w = this.takeHiPri(perUserMax) ?? this.takeRoundRobin(perUserMax);
       if (!w) break;
       this.queuedCount -= 1;
       this.grant(w);
@@ -221,7 +272,7 @@ export class UpstreamGate {
    * isBackground in index.ts), so this lane, not the round robin below, is what decides
    * who waits.
    */
-  private takeHiPri(): Waiter | undefined {
+  private takeHiPri(perUserMax: number): Waiter | undefined {
     for (let i = 0; i < this.hiPri.length; i++) {
       const w = this.hiPri[i]!;
       if (w.settled) {
@@ -229,7 +280,7 @@ export class UpstreamGate {
         i -= 1;
         continue;
       }
-      if ((this.userInflight.get(w.userId) ?? 0) >= this.cfg.perUserInflightMax) continue;
+      if ((this.userInflight.get(w.userId) ?? 0) >= perUserMax) continue;
       this.hiPri.splice(i, 1);
       return w;
     }
@@ -242,12 +293,12 @@ export class UpstreamGate {
    * An agent loop fires several calls in quick succession, and under FIFO one user on a
    * long task would sit at the head of the queue indefinitely while nobody else got in.
    */
-  private takeRoundRobin(): Waiter | undefined {
+  private takeRoundRobin(perUserMax: number): Waiter | undefined {
     const users = [...this.queues.keys()];
     if (!users.length) return undefined;
     for (let i = 0; i < users.length; i++) {
       const u = users[(this.cursor + i) % users.length]!;
-      if ((this.userInflight.get(u) ?? 0) >= this.cfg.perUserInflightMax) continue;
+      if ((this.userInflight.get(u) ?? 0) >= perUserMax) continue;
       const q = this.queues.get(u);
       if (!q?.length) continue;
       const w = q.shift()!;
@@ -288,6 +339,11 @@ export class UpstreamGate {
         this.schedule();
       }
     }
+  }
+
+  /** See `GatePool.reschedule` */
+  reschedule(): void {
+    this.schedule();
   }
 
   setMaxConcurrency(n: number): void {
@@ -343,6 +399,18 @@ export class GatePool {
       this.gates.set(providerId, gate);
     }
     return gate;
+  }
+
+  /**
+   * Look at the queues again, for a change no release will announce.
+   *
+   * The per-user cap is a setting now, written in the app container. Raising it makes
+   * queued requests eligible without freeing a slot, and nothing else in here runs on its
+   * own — so on a gate that is full of long streaming turns the freed eligibility would sit
+   * unused until the waiters timed out. The console calls this after writing it.
+   */
+  reschedule(): void {
+    for (const gate of this.gates.values()) gate.reschedule();
   }
 
   /** Applies to every pool, including the ones that do not exist yet */

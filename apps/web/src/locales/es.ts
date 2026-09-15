@@ -630,6 +630,9 @@ export const es: Record<string, string> = {
   'Cache': 'Caché',
 
   'Priced from the model price table.': 'Calculado con la tabla de precios de los modelos.',
+  'Gateway': 'Pasarela',
+  'Slots one user may hold': 'Ranuras por usuario',
+  'Per upstream, so a busy conversation cannot take the whole pool. Applies to the next request; nothing restarts.': 'Por cada proveedor, para que una conversación intensa no ocupe todo el grupo. Se aplica en la siguiente petición, sin reiniciar.',
   '{bucket} · from {time}': '{bucket} · desde {time}',
   'By upstream': 'Por proveedor',
   'Not through the gateway': 'Sin pasar por la pasarela',

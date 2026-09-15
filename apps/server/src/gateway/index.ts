@@ -61,6 +61,7 @@ import * as modelsRepo from '../core/db/models.js';
 import * as providersRepo from '../core/db/providers.js';
 import * as trimsRepo from '../core/db/trims.js';
 import { trimRedoAnswers } from './redo-trim.js';
+import { getNumberFresh } from '../core/db/settings.js';
 
 /**
  * The metering gateway.
@@ -79,6 +80,20 @@ export const gate = new GatePool({
   queueTimeoutMs: config.queueTimeoutMs,
   leaseMaxMs: config.leaseMaxMs,
   perUserInflightMax: config.perUserInflightMax,
+  /*
+   * Fresh on every admission pass rather than captured here. The console writes it from the
+   * app container; a value read once at construction would be whatever the environment said
+   * when this process started, which is not what a page that offers to change it means.
+   */
+  readPerUserInflightMax: () => {
+    try {
+      return getNumberFresh('gateway.perUserInflightMax');
+    } catch {
+      // Before initDb, or a database that will not answer. The configured value is a real
+      // limit; refusing everything because a setting could not be read is not.
+      return undefined;
+    }
+  },
 });
 
 /* ---------------- Error shapes ---------------- */
@@ -1085,6 +1100,19 @@ export function buildGateway(): FastifyInstance {
       return reply.code(400).send({ error: tr(req, 'The concurrency limit has to be between 1 and 64') });
     gate.setMaxConcurrency(n);
     return { max: gate.max(), pools: gate.stats() };
+  });
+
+  /**
+   * Look at the queues again.
+   *
+   * For a limit that changed with no slot freed behind it: the per-user cap is a setting,
+   * written in the app container, and raising it makes queued requests eligible without a
+   * release to notice. Nothing else in the gate runs on its own, so on a gate held by long
+   * streaming turns that eligibility would sit unused until the waiters timed out.
+   */
+  app.post('/gate/reschedule', adminOnly, async () => {
+    gate.reschedule();
+    return { pools: gate.stats() };
   });
 
   /**
