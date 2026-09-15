@@ -136,7 +136,19 @@ function windowStatus(
   };
 }
 
-export function status(userId: string, now = new Date()): QuotaStatus {
+/**
+ * `withTypicalTurn` is off by default, and that is not a performance nicety.
+ *
+ * This function is on the gate's path — `check()` calls it for every upstream request —
+ * and the admin user list calls it once per user. What it would compute is a grouped scan
+ * of that user's usage rows, synchronously, on the event loop. Only the three surfaces
+ * that actually show "about N more turns" ask for it.
+ */
+export function status(
+  userId: string,
+  now = new Date(),
+  opts: { withTypicalTurn?: boolean } = {},
+): QuotaStatus {
   const q = usersRepo.getQuota(userId);
   const windows = Object.fromEntries(
     SCOPES.map((scope) => [scope, windowStatus(userId, q, scope, now)]),
@@ -156,9 +168,10 @@ export function status(userId: string, now = new Date()): QuotaStatus {
     exceeded: limited.some((w) => w.exceeded),
     warning: limited.some((w) => w.ratio >= 0.9),
     tightest,
-    // Only worth computing when something is actually capped: with no ceiling there is no
-    // remaining allowance to express in turns.
-    typicalTurn: limited.length ? usageRepo.typicalTurn(userId, q.limitKind) : null,
+    // Null both when nobody asked and when there is nothing to say — the one consumer
+    // treats either as "no line to show", which is the same answer.
+    typicalTurn:
+      opts.withTypicalTurn && limited.length ? usageRepo.typicalTurn(userId, q.limitKind) : null,
   };
 }
 

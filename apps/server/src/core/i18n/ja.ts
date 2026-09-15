@@ -16,6 +16,7 @@ export const ja: Record<string, string> = {
   'Missing model name': 'モデル名がありません',
   'Prices have to be numbers, written with a dot': '価格は数字で、小数点はピリオドを使ってください',
   'A price cannot be negative': '価格を負の数にはできません',
+  'The catch-all price cannot be zero — it is the unit quota is counted in, and a zero turns quota back into flat weights.': 'キャッチオールの価格を 0 にはできません。クォータを数える単位であり、0 にするとクォータは一律の重みに戻ってしまいます。',
   'The catch-all price cannot be removed — it prices every model without a row of its own, and is the unit quota is counted in. Add a replacement first.': 'キャッチオールの価格は削除できません。専用の行がないすべてのモデルの価格であり、クォータを数える単位でもあります。先に置き換える行を追加してください。',
   'No such price': 'その価格は存在しません',
   'Missing name': '名前がありません',

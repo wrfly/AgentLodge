@@ -16,6 +16,7 @@ export const fr: Record<string, string> = {
   'Missing model name': 'Nom du modèle manquant',
   'Prices have to be numbers, written with a dot': 'Les prix doivent être des nombres, écrits avec un point',
   'A price cannot be negative': 'Un prix ne peut pas être négatif',
+  'The catch-all price cannot be zero — it is the unit quota is counted in, and a zero turns quota back into flat weights.': 'Le prix par défaut ne peut pas être nul — il est l’unité de comptage du quota, et un zéro le ramène à des pondérations forfaitaires.',
   'The catch-all price cannot be removed — it prices every model without a row of its own, and is the unit quota is counted in. Add a replacement first.': 'Le prix par défaut ne peut pas être supprimé — il tarifie tout modèle sans ligne propre et sert d’unité de comptage du quota. Ajoutez d’abord un remplacement.',
   'No such price': 'Ce tarif n\'existe pas',
   'Missing name': 'Nom manquant',

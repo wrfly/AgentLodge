@@ -75,6 +75,27 @@ export function register(app: FastifyInstance): void {
       if (v < 0) return reply.code(400).send({ error: tr(req, 'A price cannot be negative') });
     }
 
+    /*
+     * The catch-all cannot be free, and this is the other half of the delete guard below.
+     *
+     * Refusing to remove the last '*' row protects nothing if a new one can be laid over it
+     * at zero — a price change appends, so the new row simply supersedes the old and the
+     * table is in exactly the state that guard exists to prevent. And it is reachable
+     * without meaning to: the form's empty boxes parse to 0, so typing `*` and pressing Add
+     * does it.
+     *
+     * What that costs: `billable()` divides a turn's cost by this row to express quota in
+     * "one input token at the standard rate", and a zero there fails its own guard and
+     * drops quota back to the flat weights. costMicroExact returns 0 for every model with
+     * no row of its own at the same moment. Only the global row is checked — a '*' scoped
+     * to one upstream is that upstream being free, which is a thing somebody may mean.
+     */
+    if (body.model.trim() === '*' && !body.providerId?.trim() && !(Number(body.priceInput) > 0)) {
+      return reply.code(400).send({
+        error: tr(req, 'The catch-all price cannot be zero — it is the unit quota is counted in, and a zero turns quota back into flat weights.'),
+      });
+    }
+
     const yuan = (v: unknown) => Math.round(Number(v ?? 0) * pricing.MICRO);
     const row = pricing.add({
       model: body.model,
@@ -92,7 +113,10 @@ export function register(app: FastifyInstance): void {
       detail: { model: body.model },
       ip: req.ip,
     });
-    return row;
+    // Decorated like the rows GET returns. Both are typed PricingRow, where peakLabel and
+    // peakNow are not optional — the page happens to refetch rather than render this, so an
+    // undecorated row was a promise the type made and this handler did not keep.
+    return { ...row, peakLabel: describePeak(row.peakWindows), peakNow: isPeakAt(row.peakWindows, new Date()) };
   });
 
   app.delete('/api/admin/pricing/:id', guard, async (req, reply) => {

@@ -158,15 +158,19 @@ export function Field({
  * standard one; they are applied **only to fields that have not said what they are for**.
  * A caller that writes `autoComplete="current-password"` has declared its purpose, and
  * telling a password manager to ignore it anyway would break the thing it asked for.
+ *
+ * **Autofill only.** An earlier version of this also defaulted `spellCheck`, `autoCorrect`
+ * and `autoCapitalize` to off, which is a different argument that was never made: those
+ * decide how a *person* types, not what a browser fills in, and every free-text box in the
+ * application goes through here — a note, an invite message, a display name. On a phone
+ * `autoCapitalize="off"` means a sentence typed into one comes out lowercase. The fields
+ * that genuinely want no spellcheck are identifiers and keys, and they say so themselves.
  */
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   const declared = props.autoComplete !== undefined;
   return (
     <input
       autoComplete={props.type === 'password' ? 'new-password' : 'off'}
-      autoCorrect="off"
-      autoCapitalize="off"
-      spellCheck={false}
       {...(declared ? {} : { 'data-1p-ignore': '', 'data-lpignore': 'true' })}
       {...props}
       className={clsx(

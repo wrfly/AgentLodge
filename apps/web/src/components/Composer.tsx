@@ -112,15 +112,24 @@ export function Composer({ agent }: { agent: AgentId }) {
    * enough to be worth saying. Null the rest of the time — a running count of a number
    * nobody is near is noise, and it would push the keyboard hint off every screen.
    *
-   * `tightest` rather than any window: it is the one that will refuse first, so it is the
-   * one whose remaining allowance is the real answer.
+   * **The fewest turns, across every capped window** — not `quota.tightest`, which was the
+   * first thing this used and was wrong. `tightest` is the highest *ratio*, and a ratio
+   * says nothing about how many turns fit: a 5-hour ceiling of 1M half spent leaves 500k,
+   * while a monthly ceiling of 100M three-fifths spent leaves 40M and the higher ratio. On
+   * turns of 250k that is two more against a hundred and sixty — and naming the month
+   * would have suppressed the warning exactly where it was needed. The two only agree when
+   * every ceiling is the same size.
    */
   const runway = (() => {
-    if (!quota || quota.exceeded || !quota.typicalTurn || !quota.tightest) return null;
-    const w = quota.windows[quota.tightest];
-    if (w.limit === null || w.remaining === null) return null;
-    const turns = Math.floor(w.remaining / quota.typicalTurn);
-    return turns <= 5 ? { turns, scope: w.scope } : null;
+    if (!quota || quota.exceeded || !quota.typicalTurn) return null;
+    const per = quota.typicalTurn;
+    let fewest: { turns: number; scope: QuotaScope } | null = null;
+    for (const w of Object.values(quota.windows)) {
+      if (w.limit === null || w.remaining === null) continue;
+      const turns = Math.floor(w.remaining / per);
+      if (!fewest || turns < fewest.turns) fewest = { turns, scope: w.scope };
+    }
+    return fewest && fewest.turns <= 5 ? fewest : null;
   })();
 
   const models = useAgents((s) => s.info(agent)?.models) ?? NO_MODELS;

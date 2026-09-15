@@ -16,6 +16,7 @@ export const zh: Record<string, string> = {
   'Missing model name': '缺少模型名',
   'Prices have to be numbers, written with a dot': '价格必须是数字,小数点用点',
   'A price cannot be negative': '价格不能为负',
+  'The catch-all price cannot be zero — it is the unit quota is counted in, and a zero turns quota back into flat weights.': '兜底价格不能为零 —— 它是配额计量的单位，填零会让配额退回到扁平权重。',
   'The catch-all price cannot be removed — it prices every model without a row of its own, and is the unit quota is counted in. Add a replacement first.': '不能删除兜底价格 —— 它为每个没有自己价格行的模型定价,也是配额计量的单位。请先添加替代行。',
   'No such price': '价格不存在',
   'Missing name': '缺少名称',

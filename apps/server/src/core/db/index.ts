@@ -590,8 +590,20 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         removed += Number(
           d
             .prepare(
+              /*
+               * Matched on the amounts, not on the currency label.
+               *
+               * Migration 13 stamped these rows with `row?.currency ?? 'USD'` — the
+               * currency of whatever row it was correcting. So on a CNY table the model
+               * that already had a row (deepseek-v4-pro, at the old seeded 435000) got
+               * DeepSeek's dollar amounts under a CNY label, and only the one that had
+               * never existed got 'USD'. Constraining on 'USD' would leave the mislabelled
+               * one behind — and being labelled consistently, it is invisible to the
+               * mixed-currency banner too. This whole block only runs when the table does
+               * not bill in dollars, so these exact amounts are 13's work either way.
+               */
               `delete from model_pricing
-               where model = ? and provider_id is null and currency = 'USD'
+               where model = ? and provider_id is null
                  and price_input = ? and price_output = ?`,
             )
             .run(w.model, w.input, w.output).changes,
@@ -603,8 +615,9 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         console.log('     rates per million tokens, in USD, to convert and enter yourself:');
         console.log('       deepseek-flash    in 0.15  cache read 0.003  cache write 0.15  out 0.60');
         console.log('       deepseek-v4-pro   in 0.66  cache read 0.022  cache write 0.66  out 1.98');
-        console.log("     Both double Mon–Fri 01:00–04:00 and 06:00–10:00 UTC — the console's");
-        console.log('     price form has a multiplier and a schedule for that.');
+        console.log('     Both double Mon–Fri 01:00–04:00 and 06:00–10:00 UTC. The price form');
+        console.log('     cannot express that yet — it shows a schedule but does not set one —');
+        console.log('     so a row entered here bills the off-peak rate around the clock.');
       }
     }
   }

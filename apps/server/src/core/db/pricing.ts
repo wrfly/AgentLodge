@@ -58,7 +58,10 @@ interface Row {
   peak_windows: string | null;
 }
 
-const toPricing = (r: Row): Pricing => ({
+const toPricing = (r: Row): Pricing => {
+  let cached: PeakWindows | null = null;
+  let parsed = false;
+  return {
   id: r.id,
   model: r.model,
   currency: r.currency,
@@ -71,8 +74,24 @@ const toPricing = (r: Row): Pricing => ({
   note: r.note ?? undefined,
   // A row written before the column existed reads as "no time of day", which it was
   peakMultiplier: r.peak_multiplier ?? 1,
-  peakWindows: parsePeak(r.peak_windows),
-});
+  /*
+   * Parsed when somebody looks, not when the row is mapped.
+   *
+   * resolve() maps **every** row in the table — its query has no model predicate — and uses
+   * one of them, and record() resolves four times for every usage row the gateway writes.
+   * Parsing eagerly put a JSON.parse and a full validity walk on that path for each row
+   * that carries a schedule. A row without one costs nothing either way, since parsePeak
+   * returns on the empty string.
+   */
+  get peakWindows() {
+    if (!parsed) {
+      cached = parsePeak(r.peak_windows);
+      parsed = true;
+    }
+    return cached;
+  },
+  };
+};
 
 /**
  * The same row with the time of day applied.
@@ -290,8 +309,39 @@ export const DEEPSEEK_RETIRED =
  * ⚠️ These numbers change. Check them against DeepSeek's own page and correct them in the
  * console before going live — the interface says so too.
  */
+/**
+ * The one row the table cannot be without.
+ *
+ * `billable()` divides a turn's cost by this to express quota in "one input token at the
+ * standard rate", and `resolve()` hands it to every model with no row of its own. Missing,
+ * both fail quietly: costMicro returns 0 and quota drops back to the flat weights.
+ *
+ * Checked separately from the seed because the seed's own question — "is the table empty" —
+ * is not this one. A data migration that writes a pricing row makes the table non-empty
+ * before seedDefaults() ever looks, and then it seeds nothing; that happened once already
+ * (migration 13), and the guard added for it protects a fresh file, not a file left
+ * half-built by a process that died between schema.sql and migrate().
+ */
+function ensureCatchAll(): void {
+  if (resolve('*')) return;
+  const rate = 5;
+  add({
+    model: '*',
+    priceInput: rate * MICRO,
+    priceCacheRead: (rate / 10) * MICRO,
+    priceCacheWrite: rate * 1.25 * MICRO,
+    priceOutput: rate * 5 * MICRO,
+    note: 'Restored: the table had no catch-all, which quota is counted in',
+  });
+  console.log("[pricing] no '*' catch-all in the price table — one was added, check the rate in the console");
+}
+
 export function seedDefaults(): void {
-  if (get('select 1 as x from model_pricing limit 1')) return;
+  if (get('select 1 as x from model_pricing limit 1')) {
+    // Non-empty is not the same as complete; see ensureCatchAll
+    ensureCatchAll();
+    return;
+  }
   const now = nowIso();
   /*
    * Units are micro-units per million tokens, so `$10 / MTok` is 10_000_000.

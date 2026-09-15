@@ -444,7 +444,7 @@ export async function startTurn(
       }
 
       // Usage changed, so push the current quota to refresh the usage bar
-      publish(conversationId, { type: 'quota.updated', quota: quota.status(userId) });
+      publish(conversationId, { type: 'quota.updated', quota: quota.status(userId, new Date(), { withTypicalTurn: true }) });
       void maybeWarnQuota(userId).catch(() => {});
 
       /*

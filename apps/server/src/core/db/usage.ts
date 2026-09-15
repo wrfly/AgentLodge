@@ -276,18 +276,34 @@ export function firstRecordFor(userId: string): string | undefined {
  *
  * Zero-cost rows are left out. A failed turn still gets a row, for debugging, and counting
  * those as cheap turns would say somebody has more room than they do.
+ *
+ * **Bounded to a window on purpose, and not called on the hot path.** `group by` defeats
+ * the (user_id, created_at) index, so without `since` this reads every row the user has
+ * ever produced and builds a temporary b-tree to sort it — and the gateway writes one row
+ * per upstream call, so "ever" grows without limit. It was briefly wired into
+ * `quota.status()`, which the gate calls on every single request and the admin user list
+ * calls once per user; node:sqlite is synchronous, so that is the event loop. It is asked
+ * for explicitly now, by the three surfaces that show it.
  */
-export function typicalTurn(userId: string, kind: LimitKind, sample = 20): number | null {
+export function typicalTurn(
+  userId: string,
+  kind: LimitKind,
+  sample = 20,
+  /** How far back to look. A month is long enough to have twenty turns in it and short
+   *  enough that the scan stays small — and recent turns are the ones that predict. */
+  since = new Date(Date.now() - 30 * 86_400_000).toISOString(),
+): number | null {
   const column = kind === 'cost' ? 'cost_micro' : 'billable_tokens';
   const rows = all<{ spent: number }>(
     `select sum(${column}) as spent
      from usage_records
-     where user_id = ?
+     where user_id = ? and created_at >= ?
      group by coalesce(turn_id, 'row:' || id)
      having spent > 0
      order by max(created_at) desc
      limit ?`,
     userId,
+    since,
     sample,
   );
   if (!rows.length) return null;
