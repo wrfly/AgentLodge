@@ -663,4 +663,6 @@ export const ja: Record<string, string> = {
   'Everything else on this page counts this upstream only. Click the row again for all of them.': 'このページの他の部分はこのアップストリームだけを数えます。もう一度クリックすると全体に戻ります。',
   'Click a row to count only that upstream everywhere else on this page.': '行をクリックすると、このページの他の部分はそのアップストリームだけを数えます。',
   'All upstreams': 'すべてのアップストリーム',
+  'Everything else in this card counts this upstream only. Click the row again for all of them.': 'このカードの他の部分はこのアップストリームだけを数えます。もう一度クリックすると全体に戻ります。',
+  'Click a row to count only that upstream everywhere else in this card.': '行をクリックすると、このカードの他の部分はそのアップストリームだけを数えます。',
 };

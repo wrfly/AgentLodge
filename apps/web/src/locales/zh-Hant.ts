@@ -637,4 +637,6 @@ export const zhHant: Record<string, string> = {
   'Everything else on this page counts this upstream only. Click the row again for all of them.': '本頁其餘部分只統計這個上游。再點這一列可恢復全部。',
   'Click a row to count only that upstream everywhere else on this page.': '點某一列，本頁其餘部分只統計那個上游。',
   'All upstreams': '全部上游',
+  'Everything else in this card counts this upstream only. Click the row again for all of them.': '本卡其餘部分只統計這個上游。再點這一列可恢復全部。',
+  'Click a row to count only that upstream everywhere else in this card.': '點某一列，本卡其餘部分只統計那個上游。',
 };

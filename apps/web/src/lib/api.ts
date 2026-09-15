@@ -622,10 +622,14 @@ export type PlatformPreset = 'window' | 'weekWindow' | 'today' | 'last7' | 'last
 export interface PlatformUsage {
   range: { from: string; to: string; label: string };
   currency: string;
+  /** The upstream everything but `byUpstream` is narrowed to, or null for all of them */
+  upstream: string | null;
   totals: UsageTotals;
   series: SeriesPoint[];
   seriesUnit: 'hour' | 'day';
   topUsers: Array<UsageTotals & { userId: string; username: string; email: string }>;
+  /** Every upstream over the range, never narrowed — the list being chosen from */
+  byUpstream: UpstreamUsage[];
 }
 
 export interface PricingRow {
@@ -931,8 +935,9 @@ export interface AuditEntry {
 
 export const admin = {
   overview: () => request<AdminOverview>('/api/admin/overview'),
-  platformUsage: (preset: PlatformPreset) =>
-    request<PlatformUsage>(`/api/admin/usage?preset=${preset}`),
+  /** `upstream` narrows everything but the upstream breakdown; 'none' is the rows with no upstream */
+  platformUsage: (preset: PlatformPreset, upstream?: string | null) =>
+    request<PlatformUsage>(`/api/admin/usage?preset=${preset}${upstream ? `&upstream=${encodeURIComponent(upstream)}` : ''}`),
   users: () => request<AdminUser[]>('/api/admin/users'),
   updateUser: (
     id: string,
