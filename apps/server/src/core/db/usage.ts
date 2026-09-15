@@ -210,15 +210,38 @@ const bounds = (r?: Range | string): [string, string] =>
     ? [r, FOREVER]
     : [r?.from ?? EPOCH, r?.to ?? FOREVER];
 
-export function totalsForUser(userId: string, range?: Range | string): Totals {
+/**
+ * Narrow a report to the traffic that went out through one upstream.
+ *
+ * `undefined` is no filter. `null` is the rows with no upstream of ours at all — usage the
+ * CLI booked itself, which `turns.ts` does only when the gateway was not in the path, and
+ * rows written before this column existed. Those are real spend and have to be selectable,
+ * or the breakdown's rows would not add up to the total beside them.
+ *
+ * Spelled as a fragment rather than five copies of the same two lines, because the report is
+ * five queries over one table and a filter that reached four of them would be worse than
+ * none: the chart would disagree with the figure above it.
+ */
+export type UpstreamFilter = string | null | undefined;
+
+function onlyUpstream(only: UpstreamFilter, prefix = ''): { sql: string; params: string[] } {
+  if (only === undefined) return { sql: '', params: [] };
+  return only === null
+    ? { sql: ` and ${prefix}provider_id is null`, params: [] }
+    : { sql: ` and ${prefix}provider_id = ?`, params: [only] };
+}
+
+export function totalsForUser(userId: string, range?: Range | string, only?: UpstreamFilter): Totals {
   const [from, to] = bounds(range);
+  const f = onlyUpstream(only);
   return toTotals(
     get<TotalsRow>(
       `select ${SUM()} from usage_records
-       where user_id = ? and created_at >= ? and created_at < ?`,
+       where user_id = ? and created_at >= ? and created_at < ?${f.sql}`,
       userId,
       from,
       to,
+      ...f.params,
     ),
   );
 }
@@ -351,15 +374,17 @@ export function dailyForUser(userId: string, days = 30): DailyPoint[] {
 }
 
 /** A day-by-day breakdown over any window */
-export function dailyForUserRange(userId: string, range: Range): DailyPoint[] {
+export function dailyForUserRange(userId: string, range: Range, only?: UpstreamFilter): DailyPoint[] {
   const [from, to] = bounds(range);
+  const f = onlyUpstream(only);
   return all<TotalsRow & { day: string }>(
     `select day, ${SUM()} from usage_records
-     where user_id = ? and created_at >= ? and created_at < ?
+     where user_id = ? and created_at >= ? and created_at < ?${f.sql}
      group by day order by day`,
     userId,
     from,
     to,
+    ...f.params,
   ).map((r) => ({ day: r.day, ...toTotals(r) }));
 }
 
@@ -368,18 +393,20 @@ export interface HourlyPoint extends Totals {
   hour: string;
 }
 
-export function hourlyForUserRange(userId: string, range: Range): HourlyPoint[] {
+export function hourlyForUserRange(userId: string, range: Range, only?: UpstreamFilter): HourlyPoint[] {
   const [from, to] = bounds(range);
+  const f = onlyUpstream(only);
   // SQLite's datetime functions work in UTC; the localtime modifier moves them to the
   // local timezone
   return all<TotalsRow & { hour: string }>(
     `select strftime('%Y-%m-%d %H:00', created_at, 'localtime') as hour, ${SUM()}
      from usage_records
-     where user_id = ? and created_at >= ? and created_at < ?
+     where user_id = ? and created_at >= ? and created_at < ?${f.sql}
      group by hour order by hour`,
     userId,
     from,
     to,
+    ...f.params,
   ).map((r) => ({ hour: r.hour, ...toTotals(r) }));
 }
 
@@ -424,15 +451,17 @@ export interface AgentBreakdown extends Totals {
   model: string | null;
 }
 
-export function byAgentForUser(userId: string, range?: Range | string): AgentBreakdown[] {
+export function byAgentForUser(userId: string, range?: Range | string, only?: UpstreamFilter): AgentBreakdown[] {
   const [from, to] = bounds(range);
+  const f = onlyUpstream(only);
   return all<TotalsRow & { agent: string; model: string | null }>(
     `select agent, model, ${SUM()} from usage_records
-     where user_id = ? and created_at >= ? and created_at < ?
+     where user_id = ? and created_at >= ? and created_at < ?${f.sql}
      group by agent, model order by billable_tokens desc`,
     userId,
     from,
     to,
+    ...f.params,
   ).map((r) => ({ agent: r.agent, model: r.model, ...toTotals(r) }));
 }
 
@@ -453,22 +482,63 @@ export interface ConversationUsage extends Totals {
   updatedAt: string;
 }
 
+export interface UpstreamUsage extends Totals {
+  /** Empty when the gateway was not in the path, so there is no upstream of ours to name */
+  providerId: string;
+  name: string;
+  kind: string;
+  /** Which credential it authenticated with, as the credential manager knows it */
+  credentialId: string;
+}
+
+/**
+ * What went out through each upstream, and on whose credential.
+ *
+ * The join is left, and the missing side is a row rather than a gap: usage recorded when the
+ * gateway was not in the path has no provider at all (`turns.ts` books the CLI's own total
+ * only in that case), and a provider deleted since still has its spend in the table. Dropping
+ * either would make this card disagree with the total above it, which is the one thing a
+ * breakdown must not do.
+ */
+export function byUpstreamForUser(userId: string, range?: Range | string): UpstreamUsage[] {
+  const [from, to] = bounds(range);
+  return all<TotalsRow & { provider_id: string | null; name: string | null; kind: string | null; credential_id: string | null }>(
+    `select u.provider_id, p.name, p.kind, p.credential_id, ${SUM('u.')}
+     from usage_records u left join upstream_providers p on p.id = u.provider_id
+     where u.user_id = ? and u.created_at >= ? and u.created_at < ?
+     group by u.provider_id
+     order by billable_tokens desc`,
+    userId,
+    from,
+    to,
+  ).map((r) => ({
+    providerId: r.provider_id ?? '',
+    name: r.name ?? '',
+    kind: r.kind ?? '',
+    credentialId: r.credential_id ?? '',
+    ...toTotals(r),
+  }));
+}
+
 export function byConversationForUser(
   userId: string,
   limit = 20,
   range?: Range | string,
+  only?: UpstreamFilter,
 ): ConversationUsage[] {
   const [from, to] = bounds(range);
+  const f = onlyUpstream(only, 'u.');
   return all<TotalsRow & { conversation_id: string; title: string; agent: string; updated_at: string }>(
     `select u.conversation_id, c.title, c.agent, c.updated_at, ${SUM('u.')}
      from usage_records u join conversations c on c.id = u.conversation_id
-     where u.user_id = ? and u.created_at >= ? and u.created_at < ?
+     where u.user_id = ? and u.created_at >= ? and u.created_at < ?${f.sql}
      group by u.conversation_id
      order by billable_tokens desc
      limit ?`,
     userId,
     from,
     to,
+    ...f.params,
     limit,
   ).map((r) => ({
     conversationId: r.conversation_id,
@@ -620,12 +690,13 @@ export function seriesForUserInRange(
   userId: string,
   range: Range,
   unit: 'hour' | 'day',
+  only?: UpstreamFilter,
 ): Array<Totals & { t: string }> {
   const [from, to] = bounds(range);
   const rows: Array<Totals & { t: string }> =
     unit === 'hour'
-      ? hourlyForUserRange(userId, range).map(({ hour, ...rest }) => ({ ...rest, t: hour }))
-      : dailyForUserRange(userId, range).map(({ day, ...rest }) => ({ ...rest, t: day }));
+      ? hourlyForUserRange(userId, range, only).map(({ hour, ...rest }) => ({ ...rest, t: hour }))
+      : dailyForUserRange(userId, range, only).map(({ day, ...rest }) => ({ ...rest, t: day }));
   return padded(rows, from, to, unit, EMPTY_TOTALS);
 }
 

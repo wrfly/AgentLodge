@@ -631,4 +631,9 @@ export const pt: Record<string, string> = {
 
   'Priced from the model price table.': 'Calculado pela tabela de preços dos modelos.',
   '{bucket} · from {time}': '{bucket} · a partir das {time}',
+  'By upstream': 'Por upstream',
+  'Not through the gateway': 'Fora do gateway',
+  'Everything else on this page counts this upstream only. Click the row again for all of them.': 'Todo o resto desta página conta apenas este upstream. Clique na linha de novo para voltar a todos.',
+  'Click a row to count only that upstream everywhere else on this page.': 'Clique numa linha para o resto da página contar apenas esse upstream.',
+  'All upstreams': 'Todos os upstreams',
 };
