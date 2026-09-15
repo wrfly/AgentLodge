@@ -663,4 +663,6 @@ export const ru: Record<string, string> = {
   'Everything else on this page counts this upstream only. Click the row again for all of them.': 'Всё остальное на этой странице считает только этот апстрим. Нажмите строку ещё раз, чтобы вернуть все.',
   'Click a row to count only that upstream everywhere else on this page.': 'Нажмите строку, чтобы всё остальное на странице считало только этот апстрим.',
   'All upstreams': 'Все апстримы',
+  'Everything else in this card counts this upstream only. Click the row again for all of them.': 'Всё остальное в этой карточке считает только этот апстрим. Нажмите строку ещё раз, чтобы вернуть все.',
+  'Click a row to count only that upstream everywhere else in this card.': 'Нажмите строку, чтобы всё остальное в карточке считало только этот апстрим.',
 };

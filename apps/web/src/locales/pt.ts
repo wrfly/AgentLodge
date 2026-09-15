@@ -636,4 +636,6 @@ export const pt: Record<string, string> = {
   'Everything else on this page counts this upstream only. Click the row again for all of them.': 'Todo o resto desta página conta apenas este upstream. Clique na linha de novo para voltar a todos.',
   'Click a row to count only that upstream everywhere else on this page.': 'Clique numa linha para o resto da página contar apenas esse upstream.',
   'All upstreams': 'Todos os upstreams',
+  'Everything else in this card counts this upstream only. Click the row again for all of them.': 'Todo o resto deste cartão conta apenas este upstream. Clique na linha de novo para voltar a todos.',
+  'Click a row to count only that upstream everywhere else in this card.': 'Clique numa linha para o resto do cartão contar apenas esse upstream.',
 };
