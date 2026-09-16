@@ -81,6 +81,41 @@ function isoFromEpoch(v: string | undefined): string | null {
   return n === null ? null : new Date(Math.round(n) * 1000).toISOString();
 }
 
+/**
+ * The allowances every model on a plan counts against, by the name a refusal gives them: the
+ * 5-hour window, the weekly one, and the usage credits behind both.
+ */
+const PLAN_WIDE_CLAIMS = new Set(['five_hour', 'seven_day', 'overage']);
+
+/**
+ * Whether a 429 refuses only some models, leaving the upstream open to the rest.
+ *
+ * A subscription also has allowances that only some models count against. `7d_oi` is Claude
+ * Fable's weekly one. Captured through the audit proxy, the 429 when it ran out named
+ * `seven_day_overage_included` in `representative-claim` and marked only that window
+ * rejected, with the 5-hour and weekly ones still open and a retry-after of five days.
+ * `seven_day_opus` and `seven_day_sonnet` are the same for those families. Claude Code reads
+ * the claim to tell its user which limit they hit, and calls these three the Fable, Opus and
+ * Sonnet limits.
+ *
+ * The concurrency gate takes a 429 as the upstream pushing back on everything sent to it: it
+ * halves the upstream's concurrency and holds every request for as long as retry-after says,
+ * up to an hour. For one of these narrower allowances that stops every other model on the
+ * plan behind a refusal that is not about them, and they time out in the queue.
+ *
+ * A claim not listed above counts as narrower, including one this code has never seen. Wrong
+ * in that direction, a few requests reach an upstream that refuses them at once; wrong in the
+ * other, every model on the plan stops for an hour. A 429 whose top-level status is still
+ * allowed has not refused anything on allowance grounds, so it stays the gate's to act on.
+ */
+export function refusesOnlySomeModels(status: number, headers: Headers): boolean {
+  if (status !== 429) return false;
+  const claim = headers.get(`${PREFIX}representative-claim`);
+  if (claim === null || PLAN_WIDE_CLAIMS.has(claim)) return false;
+  const overall = headers.get(`${PREFIX}status`);
+  return overall === null || overall === 'rejected';
+}
+
 let last: Allowance | null = null;
 
 export function record(provider: string, wire: Wire, headers: Headers): void {

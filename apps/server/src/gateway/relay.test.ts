@@ -28,6 +28,9 @@ process.env.CREDENTIAL_MANAGER_SOCKET = path.join(box, 'credential-manager.sock'
 // possible, so it is chosen once here and the slow block is timed against it
 process.env.STREAM_KEEP_ALIVE_MS = '120';
 process.env.UPSTREAM_IDLE_TIMEOUT_MS = '600';
+// Nothing here should ever queue, and one that does should fail in a second rather than
+// sit out the two-minute default looking hung
+process.env.QUEUE_TIMEOUT_MS = '1500';
 
 const manager = http.createServer((req, res) => {
   const id = new URL(req.url ?? '/', 'http://unix').searchParams.get('credential') ?? '';
@@ -51,7 +54,7 @@ const users = await import('../core/db/users.js');
 const providers = await import('../core/db/providers.js');
 const models = await import('../core/db/models.js');
 const { signRuntimeToken } = await import('../core/runtime-token.js');
-const { buildGateway } = await import('./index.js');
+const { buildGateway, gate } = await import('./index.js');
 
 let pass = 0;
 let fail = 0;
@@ -287,6 +290,73 @@ async function run(): Promise<void> {
     // The gate is already holding the door for exactly this long; a client told nothing
     // falls back to its own short backoff and retries into a closed gate
     ok('retry-after reaches the client', res.headers['retry-after'] === '42', JSON.stringify(res.headers['retry-after']));
+  }
+
+  console.log('\n=== One model running out of allowance leaves the upstream open to the rest ===');
+  {
+    /*
+     * Fable has a weekly allowance of its own on a subscription. When it runs out the upstream
+     * refuses Fable and nothing else, so holding the upstream for that 429 stops every model
+     * on it until the queue times them out.
+     *
+     * An upstream of its own, so the 429 in the block above is not in this gate.
+     */
+    const plan = providers.create({
+      name: 'Plan', kind: 'anthropic-native', baseUrl: upstreamUrl, credentialId: 'plan',
+    });
+    models.create({ name: 'claude-fable-5-1', providerId: plan.id });
+    models.create({ name: 'claude-sonnet-5', providerId: plan.id });
+    const pool = () => gate.for(plan.id).stats();
+
+    /** A refusal naming the allowance that ran out, and the headers that came with it */
+    const refuse = (claim: string, extra: Record<string, string>) => {
+      reply = (res) => {
+        res.writeHead(429, {
+          'content-type': 'application/json',
+          'anthropic-ratelimit-unified-status': 'rejected',
+          'anthropic-ratelimit-unified-representative-claim': claim,
+          ...extra,
+        });
+        res.end(JSON.stringify({
+          type: 'error',
+          error: { type: 'rate_limit_error', message: "This request would exceed your account's rate limit. Please try again later." },
+        }));
+      };
+    };
+
+    // What a captured Fable refusal carried: only its own window rejected, and a wait of five
+    // days, which the gate would have capped at an hour
+    refuse('seven_day_overage_included', {
+      'retry-after': '436688',
+      'anthropic-ratelimit-unified-5h-status': 'allowed',
+      'anthropic-ratelimit-unified-7d-status': 'allowed_warning',
+      'anthropic-ratelimit-unified-7d_oi-status': 'rejected',
+    });
+    const refused = await ask('claude-fable-5-1');
+    ok('Fable is refused', refused.statusCode === 429, String(refused.statusCode));
+    ok('with the wait the upstream gave', refused.headers['retry-after'] === '436688', JSON.stringify(refused.headers['retry-after']));
+    ok('the upstream is not put on hold', pool().cooldownUntil <= Date.now(), JSON.stringify(pool()));
+    ok('nor narrowed', pool().effectiveMax === pool().max, JSON.stringify(pool()));
+
+    reply = (res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        type: 'message', role: 'assistant', model: 'claude-sonnet-5',
+        content: [{ type: 'text', text: 'still here' }],
+        usage: { input_tokens: 3, output_tokens: 2 },
+      }));
+    };
+    const other = await ask('claude-sonnet-5');
+    ok(
+      'another model on the same upstream is answered',
+      other.statusCode === 200 && other.body.includes('still here'),
+      `${other.statusCode} ${other.body.slice(0, 120)}`,
+    );
+
+    // The windows every model counts against do close the upstream
+    refuse('five_hour', { 'retry-after': '7200', 'anthropic-ratelimit-unified-5h-status': 'rejected' });
+    await ask('claude-sonnet-5');
+    ok('a plan-wide refusal still holds it', pool().cooldownUntil > Date.now(), JSON.stringify(pool()));
   }
 }
 

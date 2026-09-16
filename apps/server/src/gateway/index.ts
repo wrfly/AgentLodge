@@ -521,9 +521,13 @@ async function handleProxy(
     const RETRY_AFTER_MAX_S = 3600;
     const usable =
       retryAfterHeader !== null && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0;
-    gate
-      .for(target.provider.id)
-      .reportUpstream(status, usable ? Math.min(retryAfterSeconds, RETRY_AFTER_MAX_S) * 1000 : undefined);
+    // A model whose own allowance ran out is refused by the upstream, not held by the gate:
+    // the gate holds the whole upstream, and the other models on it are still being served
+    if (!allowance.refusesOnlySomeModels(status, upstream.headers)) {
+      gate
+        .for(target.provider.id)
+        .reportUpstream(status, usable ? Math.min(retryAfterSeconds, RETRY_AFTER_MAX_S) * 1000 : undefined);
+    }
 
     const ct = upstream.headers.get('content-type') ?? 'application/json';
     /*
@@ -541,9 +545,9 @@ async function handleProxy(
       'content-type': ct,
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
-      // The one upstream header worth relaying: it says how long to wait, the gate is
-      // already holding the door for exactly that long, and a client told nothing falls
-      // back to its own short backoff and retries into a closed gate
+      // The one upstream header worth relaying: it says how long to wait, the gate or the
+      // upstream turns the request away for that long, and a client told nothing falls back
+      // to its own short backoff and retries straight into the refusal
       ...(usable ? { 'retry-after': retryAfterHeader! } : {}),
       ...(wire === 'anthropic' ? allowanceHeaders(verdict.status, target) : {}),
     };

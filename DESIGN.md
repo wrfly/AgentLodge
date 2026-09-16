@@ -1099,6 +1099,12 @@ onUpstreamResponse(status, headers) {
 ```
 熔断期间新请求继续排队而不是失败。管理后台展示实时 `effectiveMax`。
 
+只拒一部分模型的 429 不进这个环。订阅里 Fable、Opus、Sonnet 各有一份单独的周额度，用完时上游回 429，
+`anthropic-ratelimit-unified-representative-claim` 分别是 `seven_day_overage_included`、`seven_day_opus`、
+`seven_day_sonnet`。同一条上游上的其他模型这时仍然可用，而冷却和砍并发作用于整条上游，所以网关只把 429 和
+`retry-after` 转给客户端。进 AIMD 的是 503、529、没带这个头的 429，以及 claim 为 `five_hour`、`seven_day`、
+`overage` 的 429，这三份额度所有模型共用。没见过的 claim 也按单独额度处理，误判的代价是几个请求被上游直接拒掉。
+
 #### 多实例扩展（暂不需要，预留）
 单机单进程用内存信号量即可。将来要多实例时换成 Redis 实现：
 - `INCR upstream:inflight` + Lua 校验上限，拿到 lease 后写 `upstream:lease:<id>` 带 TTL
