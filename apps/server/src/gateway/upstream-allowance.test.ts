@@ -24,7 +24,7 @@ process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 const { initDb } = await import('../core/db/index.js');
 initDb();
 const { getStringFresh, setSetting } = await import('../core/db/settings.js');
-const { record, recordCodex, reset, snapshot } = await import('./upstream-allowance.js');
+const { record, recordCodex, refusesOnlySomeModels, reset, snapshot } = await import('./upstream-allowance.js');
 
 let pass = 0;
 let fail = 0;
@@ -55,6 +55,35 @@ const CAPTURED: Record<string, string> = {
   'anthropic-ratelimit-unified-overage-status': 'rejected',
   'content-type': 'text/event-stream',
   'request-id': 'req_011',
+};
+
+/**
+ * The 429 when Fable's weekly allowance ran out, captured the same way. Only the Fable window
+ * is rejected; the 5-hour and weekly ones are still open, and retry-after runs to the weekly
+ * reset five days out.
+ */
+const FABLE_REFUSED: Record<string, string> = {
+  'anthropic-ratelimit-unified-status': 'rejected',
+  'anthropic-ratelimit-unified-representative-claim': 'seven_day_overage_included',
+  'anthropic-ratelimit-unified-reset': '1789992000',
+  'anthropic-ratelimit-unified-fallback': 'available',
+  'anthropic-ratelimit-unified-fallback-percentage': '0.5',
+  'anthropic-ratelimit-unified-overage-status': 'rejected',
+  'anthropic-ratelimit-unified-overage-disabled-reason': 'org_level_disabled',
+  'anthropic-ratelimit-unified-5h-status': 'allowed',
+  'anthropic-ratelimit-unified-5h-utilization': '0.68',
+  'anthropic-ratelimit-unified-5h-reset': '1789557600',
+  'anthropic-ratelimit-unified-7d-status': 'allowed_warning',
+  'anthropic-ratelimit-unified-7d-utilization': '0.78',
+  'anthropic-ratelimit-unified-7d-reset': '1789992000',
+  'anthropic-ratelimit-unified-7d-surpassed-threshold': '0.75',
+  'anthropic-ratelimit-unified-7d_oi-status': 'rejected',
+  'anthropic-ratelimit-unified-7d_oi-utilization': '1.0',
+  'anthropic-ratelimit-unified-7d_oi-reset': '1789992000',
+  'anthropic-ratelimit-unified-7d_oi-surpassed-threshold': '1.0',
+  'retry-after': '436688',
+  'x-should-retry': 'true',
+  'content-type': 'application/json',
 };
 
 const headers = (o: Record<string, string>): Headers => new Headers(o);
@@ -204,6 +233,29 @@ console.log('\n=== The resets are written down, so the quota windows can follow 
     String(getStringFresh('quota.weekResetAt')),
   );
   ok('and the 5-hour key it shares the response with is untouched by that', getStringFresh('quota.windowResetAt') === new Date(1787331600_000).toISOString());
+}
+
+console.log('\n=== A refusal says whether it closes the plan or only some models ===');
+{
+  ok('the captured Fable refusal closes only some models', refusesOnlySomeModels(429, headers(FABLE_REFUSED)));
+
+  const refusal = (claim: string, extra: Record<string, string> = {}): Headers =>
+    headers({ 'anthropic-ratelimit-unified-representative-claim': claim, ...extra });
+
+  for (const claim of ['seven_day_overage_included', 'seven_day_opus', 'seven_day_sonnet']) {
+    ok(`${claim} refuses only some models`, refusesOnlySomeModels(429, refusal(claim)));
+  }
+  for (const claim of ['five_hour', 'seven_day', 'overage']) {
+    ok(`${claim} refuses the whole plan`, !refusesOnlySomeModels(429, refusal(claim)));
+  }
+  ok('a claim nobody has listed is taken as the narrower kind', refusesOnlySomeModels(429, refusal('seven_day_something_new')));
+  ok('a 429 that names no claim is a rate limit', !refusesOnlySomeModels(429, headers({ 'retry-after': '5' })));
+  // Successful responses name a claim too, so the status is what makes it a refusal
+  ok('a 200 refuses nothing', !refusesOnlySomeModels(200, refusal('seven_day_overage_included')));
+  ok(
+    'a 429 whose allowance is still allowed is a rate limit',
+    !refusesOnlySomeModels(429, refusal('seven_day_overage_included', { 'anthropic-ratelimit-unified-status': 'allowed' })),
+  );
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);

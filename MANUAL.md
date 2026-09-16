@@ -682,7 +682,8 @@ Error: Usage endpoint is rate limited. Please try again in a moment.
 - **并发闸门**：每条上游任一瞬间 in-flight ≤ 3（可在后台热调），各上游一个池子
   - 用户级轮转而非全局 FIFO —— 否则一个用户的 agent 循环会把别人饿死
   - 单用户最多占 2 个 slot，防独占
-  - AIMD 自适应：上游返回 429 就把并发砍半，连续成功 20 次再加回来
+  - AIMD 自适应：上游返回 429 就把并发砍半，连续成功 20 次再加回来；只拒某类模型的 429
+    （比如 Fable 周额度用完）不算，同一上游的其他模型照常走
   - 排队时把「前面还有几个」推给前端，不让人对着转圈猜
 - 同时兼容两种协议（实测抓包确认）：Claude Code 走 Anthropic Messages，
   Codex 走 OpenAI Responses
