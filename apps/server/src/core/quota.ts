@@ -67,19 +67,6 @@ function boostOf(q: usersRepo.Quota, scope: QuotaScope, now: Date): number {
 }
 
 /**
- * Where a window's count begins for this user: its boundary, unless a manual reset moved the
- * start forward inside a window already running. The next window still begins at its own
- * boundary.
- *
- * The rule lives here, and not at each caller, because anything that re-derives it drifts
- * from the number the gate enforces — and a report disagreeing with the gate about how much
- * somebody has spent is worse than not showing the figure at all.
- */
-export function countStartOf(q: usersRepo.Quota, start: Date): string {
-  return q.resetAt && new Date(q.resetAt) > start ? q.resetAt : start.toISOString();
-}
-
-/**
  * The ceiling the gate will actually enforce: the configured one plus any live top-up, or
  * null when the window is uncapped and a top-up would be discarded.
  *
@@ -99,22 +86,18 @@ function windowStatus(
   now: Date,
 ): QuotaWindow {
   const { start, end } = boundsOf(scope, now);
-  const from = countStartOf(q, start);
 
+  /*
+   * One query, and one number. There used to be two: `used`, counted from wherever a manual
+   * reset had moved this account's start to, and `spent`, counted from the window's own
+   * boundary — because after a reset the gate and the usage report disagreed and the page had
+   * to show both to be believable. Zeroing is retired, so a window now begins where it begins
+   * for everybody and there is nothing left for a second figure to reconcile.
+   */
   const amountOf = (t: usageRepo.Totals) => (q.limitKind === 'cost' ? t.costMicro : t.billableTokens);
+  const from = start.toISOString();
   const to = end.toISOString();
   const used = amountOf(usageRepo.totalsForUser(userId, { from, to }));
-  /*
-   * What was actually spent over the whole window, reset or no reset.
-   *
-   * `used` is what the gate counts; this is what the usage report counts. They are the same
-   * number until an administrator clears somebody part-way through, and then they are not —
-   * and a page showing both with no way to reconcile them is a page nobody trusts. The
-   * second query only happens when they can differ.
-   */
-  const spent = from === start.toISOString()
-    ? used
-    : amountOf(usageRepo.totalsForUser(userId, { from: start.toISOString(), to }));
 
   // Reported separately so the interface can mark a top-up, but the ceiling itself comes
   // from the one function that owns that rule
@@ -126,12 +109,10 @@ function windowStatus(
     limit,
     boost,
     used,
-    spent,
     remaining: limit === null ? null : Math.max(limit - used, 0),
     ratio: limit === null || limit <= 0 ? 0 : Math.min(used / limit, 1),
-    startsAt: start.toISOString(),
-    endsAt: end.toISOString(),
-    countsFrom: from,
+    startsAt: from,
+    endsAt: to,
     exceeded: limit !== null && used >= limit,
   };
 }

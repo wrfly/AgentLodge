@@ -11,10 +11,10 @@
  * - it must not be their sum, because a turn that called two models is one turn and belongs
  *   to both rows. The console says so out loud when the two differ, which it can only do if
  *   the server counts the total rather than adding up what it already sent;
- * - and the range has to be the one the title claims. "This quota month" is what the user's
- *   own usage page calls the range *the gate* counts over, which a manual reset moves. Read
- *   from the month boundary instead, the console would show a just-zeroed account its whole
- *   forgiven month under the words the other page uses for nothing.
+ * - and the range has to be the one the title claims, which is why both come from the server.
+ *   A label chosen on one side of the wire from a range computed on the other is how the two
+ *   drift apart — and a typo in the preset must land on the same period as omitting it, or
+ *   `?preset=moth` answers a different question under an authoritative-looking label.
  *
  * Run: npm -w @agentlodge/server run test:admin-usage-by-agent
  */
@@ -207,28 +207,6 @@ console.log('\n=== The period is chosen, and it is the same list the platform ca
   ok('an unknown preset falls back to what omitting it would give',
     unknown.range.label === omitted.range.label, `${unknown.range.label} vs ${omitted.range.label}`);
   ok('which is this route\'s own default', omitted.range.label === 'Today', omitted.range.label);
-}
-
-/*
- * These are reporting ranges: the same instants for every account. An old `reset_at` could
- * still move what the *gate* counts for one user — that is the quota bar's business, and it is
- * shown there — but it must not move what this panel reports, or two accounts' "This month"
- * would be different months.
- */
-console.log('\n=== One account\'s counting start does not move the period ===');
-{
-  const before = await ask(bob.user.id);
-  users.resetUsage(bob.user.id);
-  const after = await ask(bob.user.id);
-
-  ok('the range is where it was', after.range.from === before.range.from,
-    `${after.range.from} vs ${before.range.from}`);
-  ok('and so are the figures', after.total.inputTokens === before.total.inputTokens,
-    `${after.total.inputTokens} vs ${before.total.inputTokens}`);
-  ok('rows included', rowSum(after.rows) === rowSum(before.rows),
-    `${rowSum(after.rows)} vs ${rowSum(before.rows)}`);
-
-  users.undoResetUsage(bob.user.id);
 }
 
 console.log('\n=== An account that has never spent anything ===');

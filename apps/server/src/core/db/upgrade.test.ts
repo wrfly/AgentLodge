@@ -78,6 +78,26 @@ const added = [...source.matchAll(/alter table (\w+) add column (\w+)/g)].map((m
     old.exec(`alter table ${table} drop column ${column}`);
   }
 
+  /*
+   * A step that takes a column away cannot be tested by a fixture derived from the current
+   * schema.sql: the column is not in there to begin with, so the step's own guard makes it a
+   * no-op and the suite proves nothing about the only thing it does.
+   *
+   * So the columns migration 17 removes go back in by hand, and a row goes in on top of them.
+   * `auto_renew` is one of the six left over from the quota model migration 1 replaced —
+   * dropping those is the reason 17 rebuilds the table rather than dropping one column.
+   * Deliberately not `token_limit`: that one is migration 1's own switch, and putting it back
+   * would send this fixture down a data repair written for a database far older than 16.
+   */
+  old.exec('alter table user_quotas add column reset_at text');
+  old.exec('alter table user_quotas add column auto_renew integer');
+  old.exec(`
+    insert into users (id, email, username, password_hash, role, status, created_at)
+    values ('u-old', 'old@example.com', 'old', 'x', 'user', 'active', '2026-01-01T00:00:00.000Z');
+    insert into user_quotas (user_id, hard_stop, warned_period, reset_at, auto_renew, updated_at, updated_by)
+    values ('u-old', 1, 'window:2026-01-01T00:00:00.000Z', '2026-01-01T12:00:00.000Z', 1, '2026-01-01T00:00:00.000Z', 'u-admin');
+  `);
+
   old.exec('pragma user_version = 0');
   old.close();
 }
@@ -113,6 +133,36 @@ if (db) {
     for (const name of ['idx_conv_parent', 'idx_usage_provider_created', 'idx_pricing_model']) {
       ok(name, have.has(name));
     }
+  }
+
+  console.log('\n=== And the column migration 17 takes away is gone, with the row intact ===');
+  {
+    const cols = columns('user_quotas');
+    ok('reset_at is gone', !cols.has('reset_at'), [...cols].join(', '));
+    ok('and so is auto_renew, left over from the quota model before this one',
+      !cols.has('auto_renew'), [...cols].join(', '));
+    ok('while the columns that are still used stayed',
+      ['user_id', 'limit_kind', 'window_limit', 'week_limit', 'month_limit', 'hard_stop',
+       'boost_scope', 'boost_amount', 'boost_until', 'warned_period', 'updated_at', 'updated_by']
+        .every((c) => cols.has(c)), [...cols].join(', '));
+
+    const row = db.prepare("select * from user_quotas where user_id = 'u-old'").get() as
+      Record<string, unknown> | undefined;
+    ok('the row survived the rebuild', row !== undefined, JSON.stringify(row));
+    ok('with the rest of its values', row?.['warned_period'] === 'window:2026-01-01T00:00:00.000Z'
+      && row?.['updated_by'] === 'u-admin' && row?.['hard_stop'] === 1, JSON.stringify(row));
+
+    /*
+     * SQLite's `drop column` removes a span of the stored CREATE TABLE text, from the column's
+     * name to the next one — which takes the following column's comment with it and leaves the
+     * dropped column's comment attached to whatever came after. Measured. 17 rebuilds the
+     * table instead, and this is what says so: the word must not survive anywhere in the DDL.
+     */
+    const [ddl] = db
+      .prepare("select sql from sqlite_master where type = 'table' and name = 'user_quotas'")
+      .all() as Array<{ sql: string }>;
+    ok('and the table definition does not still mention it', !/reset_at/.test(ddl?.sql ?? ''),
+      ddl?.sql ?? '');
   }
 
   console.log('\n=== The version is stamped, so the next start does none of this ===');

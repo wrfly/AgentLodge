@@ -251,18 +251,18 @@ console.log('\n=== The console can ask about the seven days the quota is countin
     `${seven.range.from} vs ${rolling.range.from}`);
 
   /*
-   * These are reporting ranges: the same instants for everybody. A per-user counting start —
-   * `countsFrom`, which an old reset could still have moved — is one account's, and moving one
-   * account must not move what the console reports for the platform or for anybody else.
+   * The user card reports over this same window. Zeroing an account was the only thing that
+   * could ever have made the two disagree, and it is retired — so what is worth pinning is
+   * that the figures line up, not that a removed feature no longer fires.
    */
-  users.resetUsage(alice.user.id, new Date(monday8pm.getTime() + 2 * 3600_000).toISOString());
-  const afterReset = await askPreset('weekWindow');
-  ok('one account\'s counting start does not move the platform window',
-    afterReset.range.from === rolling.range.from, `${afterReset.range.from} vs ${rolling.range.from}`);
-  const usersAfter = (await askUsers()).json() as UserReport;
-  ok('nor what the user card reports for them',
-    usersAfter.rows.find((r) => r.username === 'alice')?.inputTokens === 1_200,
-    JSON.stringify(usersAfter.rows));
+  const inWindow = (await askUsers('weekWindow')).json() as UserReport;
+  ok('the user card accounts for the same window',
+    sum(inWindow.rows) === inWindow.totals.inputTokens,
+    `${sum(inWindow.rows)} vs ${inWindow.totals.inputTokens}`);
+  const everything = (await askUsers()).json() as UserReport;
+  ok('and over all time it has each account\'s whole spend',
+    everything.rows.find((r) => r.username === 'alice')?.inputTokens === 1_200,
+    JSON.stringify(everything.rows.map((r) => [r.username, r.inputTokens])));
 }
 
 console.log('\n=== It is the console, so it is for administrators ===');

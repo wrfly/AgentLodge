@@ -98,23 +98,6 @@ export interface QuotaWindow {
    */
   startsAt: string;
   endsAt: string;
-  /**
-   * Where `used` actually starts counting. The same as `startsAt`, except after a manual
-   * reset inside a running window, which moves the count forward without moving the window.
-   *
-   * Anything reporting a number next to `used` has to draw from this one, or the two disagree.
-   */
-  countsFrom: string;
-  /**
-   * What was spent over the whole window, reset or no reset — equal to `used` unless one
-   * happened.
-   *
-   * The pair is what makes a reset legible. `used` is what the gate counts and `spent` is
-   * what the usage report counts, so after a reset the same window shows 0 against a ceiling
-   * and 1.6M in the report beside it. Both are right; without both in one place there is
-   * nothing to say so.
-   */
-  spent: number;
   exceeded: boolean;
 }
 
