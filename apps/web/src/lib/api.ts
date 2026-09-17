@@ -318,6 +318,17 @@ export interface SeriesPoint extends UsageTotals {
   t: string;
 }
 
+/**
+ * One agent-and-model pair's share of a range.
+ *
+ * `model` is null for a turn that recorded none, which the table reads as "whatever the CLI
+ * picked". Named once because two routes answer in this shape and one table renders both.
+ */
+export interface AgentModelRow extends UsageTotals {
+  agent: string;
+  model: string | null;
+}
+
 /** One upstream's share of a range, with the credential it authenticated on */
 export interface UpstreamUsage extends UsageTotals {
   /** Empty when the gateway was not in the path, so there is no upstream of ours to name */
@@ -335,7 +346,7 @@ export interface UsageReport {
   totals: UsageTotals;
   series: SeriesPoint[];
   seriesUnit: 'day' | 'hour';
-  byAgent: Array<UsageTotals & { agent: string; model: string | null }>;
+  byAgent: AgentModelRow[];
   /** Every upstream over the range, never narrowed — this is the list being chosen from */
   byUpstream: UpstreamUsage[];
   byConversation: Array<
@@ -565,6 +576,21 @@ export interface AdminUser extends PublicUser {
   };
   usage: { period: UsageTotals; month: UsageTotals; allTime: UsageTotals };
   conversations: number;
+}
+
+/**
+ * One account's spend for a range, per agent and per model — the console's per-user panel.
+ *
+ * The range is the server's to state, label included: the console prints the label beside
+ * figures the server counted, and a label chosen here from a range chosen there is how the
+ * two come to disagree.
+ */
+export interface UserAgentUsage {
+  currency: string;
+  range: { from: string; label: string };
+  rows: AgentModelRow[];
+  /** Counted over `range`, not summed from `rows` — see the table's footer */
+  total: UsageTotals;
 }
 
 export interface InviteCode {
@@ -966,6 +992,15 @@ export const admin = {
   platformUsage: (preset: PlatformPreset, upstream?: string | null) =>
     request<PlatformUsage>(`/api/admin/usage?preset=${preset}${upstream ? `&upstream=${encodeURIComponent(upstream)}` : ''}`),
   users: () => request<AdminUser[]>('/api/admin/users'),
+  /**
+   * One account's per-model breakdown, fetched when a row in the list is opened.
+   *
+   * Its own route rather than the full user detail: that one also reads a 30-day series, the
+   * conversations, the sessions and every memory file this user owns, none of which is on
+   * screen here.
+   */
+  userAgentUsage: (id: string, signal?: AbortSignal) =>
+    request<UserAgentUsage>(`/api/admin/users/${encodeURIComponent(id)}/usage-by-agent`, { signal }),
   updateUser: (
     id: string,
     patch: {

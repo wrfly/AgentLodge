@@ -23,3 +23,7 @@ log/
 authkey-sync/authkey-sync
 
 notes.md
+
+# Operator notes for this checkout — hosts, paths, the deploy sequence. Local by
+# design: it describes one deployment, and the repo is not that deployment's.
+local_memory.md
