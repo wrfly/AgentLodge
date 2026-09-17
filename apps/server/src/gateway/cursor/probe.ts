@@ -37,8 +37,8 @@ const value = (name: string): string | undefined => {
 
 const key = process.env['CURSOR_API_KEY'] ?? '';
 const base = process.env['CURSOR_API_BASE_URL'] ?? CURSOR_API;
-const model = value('model') ?? 'claude-4.5-sonnet';
-const prompt = args.filter((a) => !a.startsWith('--') && a !== model).join(' ') || 'Say hello in five words.';
+const named = value('model');
+const prompt = args.filter((a) => !a.startsWith('--') && a !== named).join(' ') || 'Say hello in five words.';
 
 if (!key) {
   console.error('Set CURSOR_API_KEY to a key from cursor.com (Dashboard → API keys).');
@@ -56,7 +56,27 @@ async function models(): Promise<void> {
   console.log(`✓ ${out.models.length} models\n  ${out.models.join('\n  ')}`);
 }
 
+/**
+ * Which model to ask for.
+ *
+ * Asked rather than assumed when nobody said: Cursor's names are its own
+ * (`claude-4.6-opus-high-fast`), they change, and a guess that is merely stale fails in a
+ * way that looks exactly like the bridge being wrong — which is the one confusion a probe
+ * must not introduce.
+ */
+async function pickModel(): Promise<string> {
+  if (named) return named;
+  const out = await fetchCursorModels(key, base);
+  if (out.error || !out.models.length) {
+    throw new Error(`${out.error ?? 'no models'} — pass --model <name> to ask anyway`);
+  }
+  const choice = out.models.find((m) => m.includes('sonnet')) ?? out.models[0]!;
+  console.log(`  (no --model given; using ${choice}, of ${out.models.length} available)`);
+  return choice;
+}
+
 async function turn(): Promise<void> {
+  const model = await pickModel();
   const body: ChatRequest = {
     model,
     messages: [
