@@ -1,20 +1,27 @@
 /**
- * The console's platform usage card: what it can be asked for, and who may ask.
+ * The console's usage cards: what they can be asked for, how they break down, and who may ask.
  *
- * Two questions about one endpoint, so they share a harness.
+ * Three questions across two endpoints, so they share a harness.
  *
- * **By upstream.** The operator's question is not the user's — "what is this credential
- * costing us, and who is spending it there" — so the breakdown the usage page grew is here
- * over everybody, and choosing a row narrows the figures, the chart and the leaderboard
- * beneath it.
+ * **Upstream, then model.** The question this card answers is where a credential's money went,
+ * and money goes to models: two of them differ by a factor of ten per token, so an upstream's
+ * total says very little on its own. Opening a row used to narrow the whole card to that
+ * upstream instead, which answered "who used this credential" — a question about people, and
+ * people are the users tab's subject now. What has to hold is that both breakdowns come from
+ * one scan of one period, so an upstream's models add up to its row and the rows add up to the
+ * total above them.
+ *
+ * **By user.** The same period asked about people, on its own route. Deliberately not a top N:
+ * the rows have to account for the period, which a truncated list cannot do — and an operator
+ * looking for one person's spend should not have to hope they made the top ten.
  *
  * **The period control, and the one period it could not offer.** The card had the five-hour
  * window — the one that refuses first — and then jumped to calendar spans. The other window
  * the gate enforces is seven days, and once an upstream states its own weekly cadence it
- * phase-locks to that instant rather than to anybody's calendar, so "Last 7 days" beside it
- * is a different stretch of time.
+ * phase-locks to that instant rather than to anybody's calendar, so "Last 7 days" beside it is
+ * a different stretch of time.
  *
- * The upstream cases run first on purpose: the period ones finish by resetting a user, and
+ * The period cases run last on purpose: they finish by moving a user's counting start, and
  * whatever mutates shared state should come after everything that reads it.
  *
  * Run: npm -w @agentlodge/server run test:admin-overview
@@ -61,6 +68,7 @@ async function signedIn(email: string, username: string, role: 'admin' | 'user')
   return { user, bearer: { authorization: `Bearer ${token}` } };
 }
 
+// root is the administrator asking, and spends nothing — which is its own case below
 const root = await signedIn('root@example.com', 'root', 'admin');
 const alice = await signedIn('a@example.com', 'alice', 'user');
 const bob = await signedIn('b@example.com', 'bob', 'user');
@@ -75,40 +83,54 @@ await app.ready();
 const ark = providers.create({ name: 'Ark', kind: 'openai-chat', baseUrl: 'https://ark.example.com/api/v3', credentialId: 'ark-key' });
 const deep = providers.create({ name: 'DeepSeek', kind: 'anthropic-native', baseUrl: 'https://api.deepseek.com/anthropic', credentialId: 'ds-key' });
 
-const spend = (userId: string, providerId: string | undefined, tokens: number, turnId: string) =>
+/**
+ * One turn's spend, on a named upstream and model.
+ *
+ * Two models per upstream and one model on two upstreams: the cross is the whole point, and a
+ * fixture where every row is the same model would pass a breakdown that ignored the column.
+ */
+const spend = (
+  userId: string,
+  providerId: string | undefined,
+  model: string,
+  tokens: number,
+  turnId: string,
+) =>
   usage.record({
-    userId, agent: 'claude', model: 'sonnet', turnId, providerId, status: 'completed',
+    userId, agent: 'claude', model, turnId, providerId, status: 'completed',
     usage: { inputTokens: tokens, cacheReadTokens: 0, cacheCreationTokens: 0,
              outputTokens: 0, costUsd: 0, durationMs: 1, numTurns: 1 },
   });
-spend(alice.user.id, ark.id, 1_000, 'a1');
-spend(bob.user.id, ark.id, 400, 'b1');
-spend(bob.user.id, deep.id, 300, 'b2');
-spend(alice.user.id, undefined, 200, 'a2');   // the gateway was not in the path
 
-const askUpstream = async (upstream?: string, who = root.bearer) =>
-  app.inject({
-    method: 'GET',
-    url: `/api/admin/usage?preset=all${upstream ? `&upstream=${upstream}` : ''}`,
-    headers: who,
-  });
+spend(alice.user.id, ark.id, 'opus', 1_000, 'a1');
+spend(bob.user.id, ark.id, 'sonnet', 400, 'b1');
+spend(bob.user.id, deep.id, 'sonnet', 300, 'b2');
+spend(alice.user.id, undefined, 'sonnet', 200, 'a2');   // the gateway was not in the path
+
+const ask = (preset = 'all', who = root.bearer) =>
+  app.inject({ method: 'GET', url: `/api/admin/usage?preset=${preset}`, headers: who });
+
+const askUsers = (preset = 'all', who = root.bearer) =>
+  app.inject({ method: 'GET', url: `/api/admin/usage-by-user?preset=${preset}`, headers: who });
 
 const askPreset = async (preset: string, who = root.bearer) =>
-  (await app.inject({ method: 'GET', url: `/api/admin/usage?preset=${preset}`, headers: who }))
-    .json() as { range: { from: string; to: string; label: string } };
+  (await ask(preset, who)).json() as { range: { from: string; to: string; label: string } };
 
 interface Report {
-  upstream: string | null;
   totals: { inputTokens: number };
   series: Array<{ inputTokens: number }>;
-  topUsers: Array<{ username: string; inputTokens: number }>;
   byUpstream: Array<{ providerId: string; name: string; kind: string; credentialId: string; inputTokens: number }>;
+  byUpstreamModel: Array<{ providerId: string; model: string; inputTokens: number }>;
+}
+interface UserReport {
+  totals: { inputTokens: number };
+  rows: Array<{ userId: string; username: string; inputTokens: number }>;
 }
 const sum = (rows: Array<{ inputTokens: number }>) => rows.reduce((n, r) => n + r.inputTokens, 0);
 
 console.log('\n=== Everyone\'s spend, by the upstream that carried it ===');
 {
-  const all = (await askUpstream()).json() as Report;
+  const all = (await ask()).json() as Report;
   ok('one row per upstream, plus the one with none', all.byUpstream.length === 3,
     JSON.stringify(all.byUpstream.map((r) => r.name)));
   ok('and they add up to the platform total', sum(all.byUpstream) === all.totals.inputTokens,
@@ -121,31 +143,53 @@ console.log('\n=== Everyone\'s spend, by the upstream that carried it ===');
     JSON.stringify(all.byUpstream.find((r) => r.providerId === '')));
 }
 
-console.log('\n=== Choosing one narrows the card, but not the list to choose from ===');
+console.log('\n=== Opening one shows the models under it, and they add up to it ===');
 {
-  const only = (await askUpstream(ark.id)).json() as Report;
-  ok('the report says which upstream it is narrowed to', only.upstream === ark.id, String(only.upstream));
-  ok('the total counts that upstream alone', only.totals.inputTokens === 1_400, String(only.totals.inputTokens));
-  ok('and so does the chart', sum(only.series) === 1_400, String(sum(only.series)));
-  /*
-   * The leaderboard is the operator's real question — "who is spending it *there*" — and it
-   * is the one that would be most misleading unfiltered: Bob outspends Alice overall on this
-   * upstream only if you count what he spent on the other one.
-   */
-  ok('the leaderboard is about that upstream', sum(only.topUsers) === 1_400, JSON.stringify(only.topUsers));
-  ok('and ranks by what went through it', only.topUsers[0]?.username === 'alice',
-    JSON.stringify(only.topUsers.map((u) => u.username)));
-  ok('the list to choose from is not narrowed', only.byUpstream.length === 3,
-    JSON.stringify(only.byUpstream.map((r) => r.name)));
+  const all = (await ask()).json() as Report;
+  const under = (id: string) => all.byUpstreamModel.filter((m) => m.providerId === id);
 
-  const none = (await askUpstream('none')).json() as Report;
-  ok('the rows with no upstream can be asked for', none.totals.inputTokens === 200,
-    String(none.totals.inputTokens));
-  ok('with the leaderboard agreeing', sum(none.topUsers) === 200, JSON.stringify(none.topUsers));
+  ok('an upstream with two models has two rows', under(ark.id).length === 2,
+    JSON.stringify(under(ark.id).map((m) => m.model)));
+  ok('and they add up to the row they open from', sum(under(ark.id)) === 1_400,
+    `${sum(under(ark.id))} vs 1400`);
+  ok('one model does not carry another\'s spend',
+    under(ark.id).find((m) => m.model === 'opus')?.inputTokens === 1_000,
+    JSON.stringify(under(ark.id)));
+  // The cross is the point: the same model on two upstreams is a row under each, not one row
+  ok('a model used on two upstreams is a row under each',
+    all.byUpstreamModel.filter((m) => m.model === 'sonnet').length === 3,
+    JSON.stringify(all.byUpstreamModel.filter((m) => m.model === 'sonnet')));
+  ok('what never went through the gateway keeps its models too', sum(under('')) === 200,
+    JSON.stringify(under('')));
+  ok('and the whole breakdown adds up to the total',
+    sum(all.byUpstreamModel) === all.totals.inputTokens,
+    `${sum(all.byUpstreamModel)} vs ${all.totals.inputTokens}`);
+}
 
-  const empty = (await askUpstream('no-such-provider')).json() as Report;
-  ok('an upstream with nothing on it is empty, not unfiltered', empty.totals.inputTokens === 0,
-    String(empty.totals.inputTokens));
+console.log('\n=== The same period, asked about people ===');
+{
+  const res = await askUsers();
+  ok('the users tab has its own route: 200', res.statusCode === 200, String(res.statusCode));
+  const byUser = res.json() as UserReport;
+
+  ok('one row per account that spent anything', byUser.rows.length === 2,
+    JSON.stringify(byUser.rows.map((r) => r.username)));
+  ok('and the rows account for the period rather than topping it',
+    sum(byUser.rows) === byUser.totals.inputTokens,
+    `${sum(byUser.rows)} vs ${byUser.totals.inputTokens}`);
+  ok('heaviest first', byUser.rows[0]?.username === 'alice',
+    JSON.stringify(byUser.rows.map((r) => r.username)));
+  ok('a row spans every upstream that account used',
+    byUser.rows.find((r) => r.username === 'alice')?.inputTokens === 1_200,
+    JSON.stringify(byUser.rows.find((r) => r.username === 'alice')));
+  // root is signed in and has spent nothing; a row of zeroes in an account of where the money
+  // went is noise, and the `having` in the query is what keeps it out
+  ok('an account that spent nothing is not a row',
+    !byUser.rows.some((r) => r.username === 'root'),
+    JSON.stringify(byUser.rows.map((r) => r.username)));
+  ok('the two cards agree about the period they share',
+    byUser.totals.inputTokens === ((await ask()).json() as Report).totals.inputTokens,
+    String(byUser.totals.inputTokens));
 }
 
 console.log('\n=== The console can ask about the seven days the quota is counting ===');
@@ -176,20 +220,26 @@ console.log('\n=== The console can ask about the seven days the quota is countin
     `${seven.range.from} vs ${rolling.range.from}`);
 
   /*
-   * This card is everybody's, so the boundary is the window's own — never a `countsFrom`,
-   * which is one user's and moves when an administrator resets them. Resetting one user must
-   * not move what the console reports for the platform.
+   * These are reporting ranges: the same instants for everybody. A per-user counting start —
+   * `countsFrom`, which an old reset could still have moved — is one account's, and moving one
+   * account must not move what the console reports for the platform or for anybody else.
    */
   users.resetUsage(alice.user.id, new Date(monday8pm.getTime() + 2 * 3600_000).toISOString());
   const afterReset = await askPreset('weekWindow');
-  ok('one user\'s reset does not move the platform window',
+  ok('one account\'s counting start does not move the platform window',
     afterReset.range.from === rolling.range.from, `${afterReset.range.from} vs ${rolling.range.from}`);
+  const usersAfter = (await askUsers()).json() as UserReport;
+  ok('nor what the user card reports for them',
+    usersAfter.rows.find((r) => r.username === 'alice')?.inputTokens === 1_200,
+    JSON.stringify(usersAfter.rows));
 }
 
 console.log('\n=== It is the console, so it is for administrators ===');
 {
-  const res = await askUpstream(undefined, alice.bearer);
-  ok('a user is refused', res.statusCode === 403, String(res.statusCode));
+  ok('a user is refused the upstream card', (await ask('all', alice.bearer)).statusCode === 403,
+    String((await ask('all', alice.bearer)).statusCode));
+  ok('and the user card too', (await askUsers('all', alice.bearer)).statusCode === 403,
+    String((await askUsers('all', alice.bearer)).statusCode));
 }
 
 await app.close();

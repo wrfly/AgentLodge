@@ -579,6 +579,41 @@ function byUpstream(range?: Range | string, userId?: string): UpstreamUsage[] {
   }));
 }
 
+/** One model's share of one upstream — `providerId` empty for the rows with no upstream of ours */
+export interface UpstreamModelUsage extends Totals {
+  providerId: string;
+  model: string;
+}
+
+/**
+ * Every (upstream, model) pair over a range, for the console to hang under its upstream rows.
+ *
+ * One scan for the whole card rather than one per upstream opened. The result is bounded by
+ * providers × models — a couple of dozen rows on any deployment that has a price table — so
+ * sending it all and letting the page reveal a row's share costs less than a request per
+ * click, and the expanded rows are guaranteed to add up to the row they hang under because
+ * both came from the same scan.
+ *
+ * Grouped on the same left join as `byUpstream`, so spend with no upstream of ours keeps its
+ * row here too. A breakdown that silently drops it would stop summing to the total above it.
+ */
+export function byUpstreamModelAll(range?: Range | string): UpstreamModelUsage[] {
+  const [from, to] = bounds(range);
+  return all<TotalsRow & { provider_id: string | null; model: string | null }>(
+    `select u.provider_id, coalesce(u.model, '') as model, ${SUM('u.')}
+     from usage_records u
+     where u.created_at >= ? and u.created_at < ?
+     group by u.provider_id, coalesce(u.model, '')
+     order by billable_tokens desc`,
+    from,
+    to,
+  ).map((r) => ({
+    providerId: r.provider_id ?? '',
+    model: r.model ?? '',
+    ...toTotals(r),
+  }));
+}
+
 export function byConversationForUser(
   userId: string,
   limit = 20,
@@ -633,6 +668,32 @@ export function topUsers(range?: Range | string, limit = 20, only?: UpstreamFilt
     to,
     ...f.params,
     limit,
+  ).map((r) => ({ userId: r.user_id, username: r.username, email: r.email, ...toTotals(r) }));
+}
+
+/**
+ * Every account that spent anything over a range, heaviest first.
+ *
+ * `topUsers` with no limit would be the same query, and the limit is exactly what makes that
+ * one a leaderboard: the console's usage tab has to account for a period, and a truncated
+ * list cannot add up to the total printed above it.
+ *
+ * The `having` is kept: somebody whose only row in the window is a refusal spent nothing, and
+ * a row of zeroes in an account of where the money went is noise. Spelled as the aggregates
+ * rather than the output aliases because `billable_tokens` is also a real column, so SQLite
+ * binds the bare name to an arbitrary row of the group and a user with one zero row vanishes.
+ */
+export function allUsersInRange(range: Range): UserLeaderRow[] {
+  const [from, to] = bounds(range);
+  return all<TotalsRow & { user_id: string; username: string; email: string }>(
+    `select u.user_id, us.username, us.email, ${SUM('u.')}
+     from usage_records u join users us on us.id = u.user_id
+     where u.created_at >= ? and u.created_at < ?
+     group by u.user_id
+     having sum(u.billable_tokens) > 0 or sum(u.cost_micro) > 0
+     order by billable_tokens desc`,
+    from,
+    to,
   ).map((r) => ({ userId: r.user_id, username: r.username, email: r.email, ...toTotals(r) }));
 }
 

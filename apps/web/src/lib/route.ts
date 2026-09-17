@@ -6,8 +6,15 @@ export const AGENTS: Array<{ id: AgentId; path: string; label: string }> = [
   { id: 'codex', path: '/codex', label: 'Codex' },
 ];
 
-export type AdminTab = 'overview' | 'users' | 'invites' | 'settings' | 'trace_logs' | 'audit';
-const ADMIN_TABS: AdminTab[] = ['overview', 'users', 'invites', 'settings', 'trace_logs', 'audit'];
+/*
+ * `users` stays the account-management tab rather than being renamed: it is the one anybody
+ * has bookmarked, and a rename would land them on a page that no longer does what they came
+ * for. Usage, which was part of it, is the new id.
+ */
+export type AdminTab =
+  | 'overview' | 'user_usage' | 'users' | 'invites' | 'settings' | 'trace_logs' | 'audit';
+const ADMIN_TABS: AdminTab[] =
+  ['overview', 'user_usage', 'users', 'invites', 'settings', 'trace_logs', 'audit'];
 
 export type Route =
   | { name: 'chat'; agent: AgentId }

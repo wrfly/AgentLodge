@@ -4,6 +4,7 @@ import { Page } from '../components/ui';
 import { useT } from '../lib/i18n';
 import { Overview } from './admin/Overview';
 import { Users } from './admin/Users';
+import { UserUsage } from './admin/UserUsage';
 import { Invites } from './admin/Invites';
 import { TraceLogs } from './admin/Traces';
 import { SettingsTab } from './admin/Settings';
@@ -11,7 +12,9 @@ import { Audit } from './admin/Audit';
 
 const TABS: Array<{ id: AdminTab; label: string }> = [
   { id: 'overview', label: 'Overview' },
-  { id: 'users', label: 'Users' },
+  // Reading and editing, in that order: an operator looks before they adjust
+  { id: 'user_usage', label: 'User usage' },
+  { id: 'users', label: 'Accounts' },
   { id: 'invites', label: 'Invite codes' },
   { id: 'settings', label: 'System settings' },
   { id: 'trace_logs', label: 'Egress traces' },
@@ -44,6 +47,7 @@ export function AdminPage({ tab }: { tab: AdminTab }) {
       </div>
 
       {tab === 'overview' && <Overview />}
+      {tab === 'user_usage' && <UserUsage />}
       {tab === 'users' && <Users />}
       {tab === 'invites' && <Invites />}
       {tab === 'settings' && <SettingsTab />}

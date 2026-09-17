@@ -1,9 +1,10 @@
 /**
- * The overview tab: totals, top users, and the shared plan's own allowance.
+ * The overview tab: totals, what carried them, and the shared plan's own allowance.
  *
  * Split out of AdminPage.tsx, which had grown to 2700 lines; one file per tab now.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import {
   admin,
@@ -25,6 +26,7 @@ import {
   fmtTokens
 } from '../../components/ui';
 import { useT } from '../../lib/i18n';
+import { PLATFORM_PRESETS } from './shared';
 
 /* ---------------- Overview ---------------- */
 
@@ -112,35 +114,29 @@ const WINDOW_LABEL: Record<string, string> = {
   overage: 'Overage'
 };
 
-/* ---------------- Everybody's usage, over one period ---------------- */
+/* ---------------- The platform's usage, over one period ---------------- */
 
-const PLATFORM_PRESETS: Array<{ id: PlatformPreset; label: string }> = [
-  // First, and the shortest span offered: it is the window that refuses first, so "who is
-  // burning it right now" is the question this card gets asked in anger
-  { id: 'window', label: 'This window' },
-  // Next, because it is the other window the gate enforces — and the one the calendar-week
-  // reading beside it disagrees with the moment an upstream states its own cadence
-  { id: 'weekWindow', label: 'This 7-day window' },
-  { id: 'today', label: 'Today' },
-  { id: 'last7', label: 'Last 7 days' },
-  { id: 'last30', label: 'Last 30 days' },
-  { id: 'month', label: 'This month' },
-  { id: 'all', label: 'All time' },
-];
 
 /**
- * One period control for the total, the shape of it, and who spent it.
+ * The platform's total for one period, the shape of it, and what carried it.
  *
- * Four ranking cards would answer the same question four times and still not let anybody
- * compare: somebody who spent heavily this month and nothing today is not the person to go
- * and talk to. One selector drives all three, so switching the period re-answers everything
- * at once — the same control the user-facing usage page has, at the other scope.
+ * It was called "Usage, all users" while it ended in a leaderboard. There are no users in it
+ * now — the total, the chart, the upstreams and their models are all the platform's — and a
+ * name that still promised people would have had operators looking here for them.
+ *
+ * Four cards would answer the same question four times and still not let anybody compare: an
+ * upstream that carried heavily this month and nothing today is not the one to go and look
+ * at. One selector drives everything, so switching the period re-answers it all at once.
+ *
+ * Opening an upstream shows the models under it, because that is what an upstream's total is
+ * made of and two models differ by a factor of ten per token. Who spent it is the user usage
+ * tab's subject, on the same periods, so the two can be read against each other.
  */
 function PlatformUsageCard() {
   const t = useT();
   const [preset, setPreset] = useState<PlatformPreset>('today');
-  /** Which upstream everything is narrowed to; null is all of them, 'none' the ones with none */
-  const [upstream, setUpstream] = useState<string | null>(null);
+  /** Which upstream rows are open. Several at once, because the point is comparing them. */
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const [data, setData] = useState<PlatformUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,11 +145,18 @@ function PlatformUsageCard() {
     setData(null);
     setError(null);
     void admin
-      .platformUsage(preset, upstream)
+      .platformUsage(preset)
       .then((d) => { if (live) setData(d); })
       .catch((e) => { if (live) setError(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
-  }, [preset, upstream]);
+  }, [preset]);
+
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   // Already padded with empty buckets by the server, which is the only place that knows
   // which timezone its own bucket keys were cut in
@@ -164,7 +167,7 @@ function PlatformUsageCard() {
     data?.seriesUnit === 'hour' ? stamp.slice(11, 16) : stamp.slice(5);
 
   return (
-    <Card title={t('Usage, all users')}>
+    <Card title={t('Platform usage')}>
       <div className="mb-3 flex flex-wrap gap-1.5">
         {PLATFORM_PRESETS.map((p) => (
           <Button
@@ -220,17 +223,21 @@ function PlatformUsageCard() {
           )}
 
           {/*
-            Which upstream carried it, above the people who spent it — an operator asking
-            "what is this credential costing us" is asking about the upstream first and about
-            who used it second. Clicking a row narrows the figures, the chart and the list
-            below to that upstream.
+            What carried it, and underneath each one, what it was spent on. Opening a row used
+            to narrow the whole card to that upstream, which answered "who used this
+            credential" — a question about people, and people moved to the users tab. The
+            question left here is where a credential's money went, and money goes to models.
+
+            Several rows open at once on purpose: an operator comparing what two upstreams are
+            being used for cannot do it one row at a time.
           */}
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[420px] text-[13px]">
+            <table className="w-full min-w-[460px] text-[13px]">
               <thead>
                 <tr className="border-b border-line text-left text-faint">
                   <th className="pb-1.5 font-medium">{t('Upstream')}</th>
                   <th className="pb-1.5 font-medium">{t('Credential')}</th>
+                  <th className="pb-1.5 text-right font-medium">{t('Turns')}</th>
                   <th className="pb-1.5 text-right font-medium">{t('Billable tokens')}</th>
                   <th className="pb-1.5 text-right font-medium">{t('Cost')}</th>
                 </tr>
@@ -238,64 +245,78 @@ function PlatformUsageCard() {
               <tbody>
                 {data.byUpstream.map((r) => {
                   const id = r.providerId || 'none';
-                  const chosen = data.upstream === id;
+                  const shown = open.has(id);
+                  // Its own models, from the same scan as the row — so they add up to it
+                  const models = data.byUpstreamModel.filter(
+                    (m) => (m.providerId || 'none') === id,
+                  );
                   return (
-                    <tr
-                      key={id}
-                      onClick={() => setUpstream(chosen ? null : id)}
-                      className={clsx(
-                        'cursor-pointer border-b border-line last:border-0 hover:bg-bubble',
-                        chosen && 'bg-bubble',
+                    <Fragment key={id}>
+                      <tr
+                        onClick={() => toggle(id)}
+                        className={clsx(
+                          'cursor-pointer border-b border-line hover:bg-bubble',
+                          shown && 'bg-bubble',
+                        )}
+                      >
+                        {/* Spend the CLI booked itself, which happens only when the gateway
+                            was not in the path, plus anything written before the column
+                            existed. A row, because it is the difference between this table
+                            and the total. */}
+                        <td className="py-1.5">
+                          <ChevronRight
+                            size={12}
+                            className={clsx(
+                              'mr-1 inline shrink-0 text-faint transition-transform',
+                              shown && 'rotate-90',
+                            )}
+                          />
+                          {r.name || t('Not through the gateway')}
+                          {r.kind && <span className="ml-2 font-mono text-[11px] text-faint">{r.kind}</span>}
+                        </td>
+                        <td className="py-1.5 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
+                        <td className="py-1.5 text-right tabular-nums">{r.turns}</td>
+                        <td className="py-1.5 text-right font-mono tabular-nums">
+                          {fmtTokens(r.billableTokens)}
+                        </td>
+                        <td className="py-1.5 text-right font-mono tabular-nums text-muted">
+                          {fmtMoney(r.costMicro, data.currency)}
+                        </td>
+                      </tr>
+
+                      {shown && models.length === 0 && (
+                        <tr className="border-b border-line">
+                          <td colSpan={5} className="py-1.5 pl-6 text-[12px] text-faint">
+                            {t('No usage in this period')}
+                          </td>
+                        </tr>
                       )}
-                    >
-                      {/* Spend the CLI booked itself, which happens only when the gateway was
-                          not in the path, plus anything written before the column existed. A
-                          row, because it is the difference between this table and the total. */}
-                      <td className="py-1.5">
-                        {r.name || t('Not through the gateway')}
-                        {r.kind && <span className="ml-2 font-mono text-[11px] text-faint">{r.kind}</span>}
-                      </td>
-                      <td className="py-1.5 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
-                      <td className="py-1.5 text-right font-mono tabular-nums">
-                        {fmtTokens(r.billableTokens)}
-                      </td>
-                      <td className="py-1.5 text-right font-mono tabular-nums text-muted">
-                        {fmtMoney(r.costMicro, data.currency)}
-                      </td>
-                    </tr>
+
+                      {shown &&
+                        models.map((m) => (
+                          <tr key={`${id}-${m.model}`} className="border-b border-line bg-bubble/40">
+                            {/* A turn that recorded no model groups under an empty name; the
+                                interface reads that as "whatever the CLI picked" */}
+                            <td className="py-1 pl-6 font-mono text-[12px] text-muted" colSpan={2}>
+                              {m.model || t('(default)')}
+                            </td>
+                            <td className="py-1 text-right text-[12px] tabular-nums text-muted">{m.turns}</td>
+                            <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
+                              {fmtTokens(m.billableTokens)}
+                            </td>
+                            <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
+                              {fmtMoney(m.costMicro, data.currency)}
+                            </td>
+                          </tr>
+                        ))}
+                    </Fragment>
                   );
                 })}
               </tbody>
             </table>
             <p className="mt-1.5 text-[11.5px] text-faint">
-              {data.upstream
-                ? t('Everything else in this card counts this upstream only. Click the row again for all of them.')
-                : t('Click a row to count only that upstream everywhere else in this card.')}
+              {t('Click an upstream to see which models its spend went on.')}
             </p>
-          </div>
-
-          <div className="mt-4 space-y-1">
-            {data.topUsers.length === 0 ? (
-              <Empty text={t('No data in this period')} />
-            ) : (
-              data.topUsers.map((u, i) => (
-                <div key={u.userId} className="flex items-center gap-3 px-1 py-1.5 text-[13px]">
-                  <span className="w-5 shrink-0 text-right font-mono text-[11px] text-faint">{i + 1}</span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {u.username}
-                    <span className="ml-2 text-[11.5px] text-faint">{u.email}</span>
-                  </span>
-                  {/* Tokens and money both: two models differ by a factor of ten per token,
-                      so a column of counts on its own does not say where the budget went */}
-                  <span className="shrink-0 font-mono text-[12px] tabular-nums">
-                    {fmtTokens(u.billableTokens)}
-                  </span>
-                  <span className="w-16 shrink-0 text-right font-mono text-[12px] tabular-nums text-muted">
-                    {fmtMoney(u.costMicro, data.currency)}
-                  </span>
-                </div>
-              ))
-            )}
           </div>
         </>
       )}
@@ -431,10 +452,7 @@ function UpstreamAllowanceCard() {
   );
 
   return (
-    <Card
-      title={t('Upstream plan allowance')}
-      description={t('What the shared subscription reports about itself. Users are shown their own quota instead, so this is the only place it is visible.')}
-    >
+    <Card title={t('Upstream plan allowance')}>
       {view.unreachable || view.error ? (
         <Banner tone="warn">{view.error ?? t('Cannot reach the gateway')}</Banner>
       ) : !a ? (

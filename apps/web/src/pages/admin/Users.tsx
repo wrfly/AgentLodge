@@ -1,12 +1,20 @@
 /**
- * Accounts: quotas, top-ups, resets, roles.
+ * Account management: quotas, top-ups, roles, disabling.
  *
- * Split out of AdminPage.tsx, which had grown to 2700 lines; one file per tab now.
+ * Split out of AdminPage.tsx, which had grown to 2700 lines; one file per tab now — and split
+ * again from usage, which is its own tab. Managing an account is an edit made at one moment;
+ * reading usage is a read of everybody at once, made at another. Sharing a screen made the
+ * read hunt through forms and the edit scroll past figures.
+ *
+ * Zeroing a user's usage used to live here and is gone. The windows it moved the count inside
+ * are the platform's — the same instants for everybody — so forgiving one account's spend put
+ * that account on a scale nobody else was on, while the honest way to let somebody through
+ * early is a top-up, which says so and expires on its own.
  */
 import { useEffect, useState } from 'react';
-import { BarChart3, Gauge, RotateCcw, Wallet } from 'lucide-react';
+import { Gauge, Wallet } from 'lucide-react';
 import clsx from 'clsx';
-import { admin, type AdminUser, fmtMoney, type QuotaScope, type UserAgentUsage } from '../../lib/api';
+import { admin, type AdminUser, fmtMoney, type QuotaScope } from '../../lib/api';
 import {
   Banner,
   Button,
@@ -22,73 +30,10 @@ import {
   mToTokens,
   tokensToM,
 } from '../../components/ui';
-import { AgentModelTable } from '../../components/AgentModelTable';
 import { useT } from '../../lib/i18n';
 import { WithUnit } from './shared';
 
 /* ---------------- Users ---------------- */
-
-/**
- * The same per-model table the user's own usage page shows, about somebody else.
- *
- * Fetched when the panel opens rather than with the list: the breakdown is a grouped scan per
- * account, and the list renders every account on the deployment. An operator opens one row at
- * a time.
- *
- * `reload` is the list's own counter, so the table follows the buttons above it. A top-up, a
- * reset or an undo all change what this account has spent and all call `onChange`, which used
- * to reload only the row — leaving a freshly-zeroed bar sitting over a pre-reset breakdown.
- *
- * The range and its label both come from the server. Naming the period here would have meant
- * two places deciding what "this quota month" covers, and they disagree the moment somebody
- * is reset: the gate counts from the reset, a month boundary does not.
- */
-function UsagePanel({ userId, reload }: { userId: string; reload: number }) {
-  const t = useT();
-  const [data, setData] = useState<UserAgentUsage | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  /** Bumped by the retry button — the only thing that re-runs the effect on the same row */
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    // The panel can be closed, the user searched away, or the row reloaded under it before
-    // the answer lands — in all three the request itself is abandoned, not just its result
-    const ac = new AbortController();
-    setErr(null);
-    admin
-      .userAgentUsage(userId, ac.signal)
-      .then(setData)
-      .catch((e) => {
-        if (!ac.signal.aborted) setErr(e instanceof Error ? e.message : String(e));
-      });
-    return () => ac.abort();
-  }, [userId, reload, attempt]);
-
-  return (
-    <div className="mt-3 rounded-lg border border-line bg-elevated p-3">
-      <div className="mb-2 text-[12.5px] font-medium">
-        {`${t('By agent and model')}${data ? ` · ${t(data.range.label)}` : ''}`}
-      </div>
-      {err ? (
-        // Recoverable, because the usual cause is: the server was restarting. Without this
-        // the banner is terminal and the only way out is to guess that closing the panel and
-        // reopening it starts over.
-        <Banner tone="error">
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="flex-1">{err}</span>
-            <Button variant="ghost" onClick={() => setAttempt((n) => n + 1)}>
-              {t('Retry')}
-            </Button>
-          </span>
-        </Banner>
-      ) : !data ? (
-        <Spinner />
-      ) : (
-        <AgentModelTable rows={data.rows} totals={data.total} currency={data.currency} />
-      )}
-    </div>
-  );
-}
 
 /**
  * A top-up lifts one window's ceiling until that window resets.
@@ -156,22 +101,10 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
 /** Digits and one decimal point: the unit is millions, so 0.5 has to be typeable */
 const clean = (v: string): string => v.replace(/[^\d.]/g, '');
 
-function UserRow({ user, onChange: reloadList }: { user: AdminUser; onChange: () => void }) {
+function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) {
   const t = useT();
   const [editing, setEditing] = useState(false);
   const [topup, setTopup] = useState(false);
-  const [usage, setUsage] = useState(false);
-  /*
-   * Everything in this row that changes what the account has spent goes through `onChange`,
-   * which reloads the list. The usage panel below is not in the list, so it needs telling
-   * separately — otherwise a reset zeroes the bar and leaves the breakdown beside it showing
-   * the month that was just forgiven.
-   */
-  const [reload, setReload] = useState(0);
-  const onChange = () => {
-    setReload((n) => n + 1);
-    reloadList();
-  };
   // Typed in millions; the API takes the quota's own unit
   const asM = (v: number | null) => (v === null ? '' : tokensToM(v));
   const [limitWindow, setLimitWindow] = useState(asM(user.quota.window));
@@ -202,30 +135,6 @@ function UserRow({ user, onChange: reloadList }: { user: AdminUser; onChange: ()
         hardStop,
       });
       setEditing(false);
-      onChange();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const [lastReset, setLastReset] = useState<number | null>(null);
-
-  const resetUsage = async () => {
-    setBusy(true);
-    try {
-      const res = await admin.resetUsage(user.id);
-      setLastReset(res.clearedTokens ?? 0);
-      onChange();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const undoReset = async () => {
-    setBusy(true);
-    try {
-      await admin.resetUsage(user.id, true);
-      setLastReset(null);
       onChange();
     } finally {
       setBusy(false);
@@ -301,27 +210,20 @@ function UserRow({ user, onChange: reloadList }: { user: AdminUser; onChange: ()
                 'h-full rounded-full',
                 pct >= 1 ? 'bg-danger' : pct >= 0.9 ? 'bg-amber-500' : 'bg-accent',
               )}
-              /* Nothing spent draws nothing: a window that has just rolled over, or a
-                 user who has just been reset, has no usage to mark. */
+              /* Nothing spent draws nothing: a window that has just rolled over has no
+                 usage to mark. */
               style={{ width: used === 0 ? '0%' : `${Math.max(pct * 100, cap ? 2 : 0)}%` }}
             />
           </div>
         </div>
 
-        {/* Two tiers rather than one row of five buttons, and the weight differs with the
-            stakes. Spending is adjusted daily, so it keeps the buttons; role and status are
-            touched once in the life of an account and read as quiet links under them. A
-            labelled pair of groups was the first attempt at the split and it put two grey
-            words on every row to say what the layout already says. */}
+        {/* Two tiers, and the weight differs with the stakes. Spending is adjusted often, so
+            it keeps the buttons; role and status are touched once in the life of an account
+            and read as quiet links under them. A labelled pair of groups was the first
+            attempt at the split and it put two grey words on every row to say what the
+            layout already says. */}
         <div className="flex flex-col items-end gap-1">
           <div className="flex flex-wrap items-center justify-end gap-1.5">
-            {/* First of the three: it is the one that is only ever read. The row already
-                says what this account has spent — this says what it spent it on, which is
-                the question the bar beside it cannot answer. */}
-            <Button variant="ghost" onClick={() => setUsage((v) => !v)}>
-              <BarChart3 size={12} />
-              {t('Usage')}
-            </Button>
             <Button variant="ghost" onClick={() => setTopup((v) => !v)}>
               <Wallet size={12} />
               {t('Top up')}
@@ -329,15 +231,6 @@ function UserRow({ user, onChange: reloadList }: { user: AdminUser; onChange: ()
             <Button variant="ghost" onClick={() => setEditing((v) => !v)}>
               <Gauge size={12} />
               {t('Quota')}
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => void resetUsage()}
-              disabled={busy}
-              title={t('Zero the usage for this period — nothing is deleted, the counting start just moves forward')}
-            >
-              <RotateCcw size={12} />
-              {t('Reset to zero')}
             </Button>
           </div>
 
@@ -375,26 +268,6 @@ function UserRow({ user, onChange: reloadList }: { user: AdminUser; onChange: ()
       </div>
 
       {err && <div className="mt-2 text-[12px] text-danger">{err}</div>}
-
-      {lastReset !== null && (
-        <div className="mt-2 flex items-center gap-2 rounded-lg border border-line bg-elevated px-3 py-2 text-[12.5px]">
-          <span className="flex-1">
-            {/* Money for a cost quota — it said "Zeroed 9,000,000 tokens" to an operator
-                who had just cleared $9.00 — and the unit noun kept for tokens, which
-                `show` alone drops. */}
-            {t('Zeroed')}{' '}
-            <strong className="font-mono">
-              {byCost ? show(lastReset) : `${lastReset.toLocaleString()} ${t('tokens')}`}
-            </strong>{' '}
-            {t('(nothing was deleted; the counting start just moved forward)')}
-          </span>
-          <Button variant="ghost" onClick={() => void undoReset()} disabled={busy}>
-            {t('Undo')}
-          </Button>
-        </div>
-      )}
-
-      {usage && <UsagePanel userId={user.id} reload={reload} />}
 
       {topup && <TopupPanel user={user} onDone={() => { setTopup(false); onChange(); }} />}
 
