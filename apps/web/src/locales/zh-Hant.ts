@@ -592,8 +592,6 @@ export const zhHant: Record<string, string> = {
   'This account has no ceiling on any window.': '這個帳號在任何視窗上都沒有上限。',
   'incl. {amount} topped up': '含加量 {amount}',
   'tokens': 'token',
-  'counting from {when} · {spent} spent over the full window': '從 {when} 起計 · 整個視窗實際花費 {spent}',
-  'counting from {when}': '從 {when} 起計',
 
   // The admin overview: the live window, and everybody over one period
   'Platform usage': '平台用量',

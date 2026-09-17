@@ -376,8 +376,8 @@ export function statusCountsAll(range: Range): Record<TurnStatus, number> {
  * check-then-insert between them is a race, and a client retrying in a loop would otherwise
  * write a row a second — a figure measuring that client's retry policy and nothing else.
  *
- * Keyed on the window's own boundary. `countsFrom` moves forward when an administrator
- * resets somebody mid-window, which would let the same window record the same person twice.
+ * Keyed on the window's own boundary, which is the same instant for everybody — so one window
+ * records one person once.
  */
 export function noteRefusal(input: {
   userId: string;

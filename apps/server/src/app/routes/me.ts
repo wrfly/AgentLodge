@@ -74,7 +74,7 @@ function resolveRange(
      */
     case 'window': {
       const w = quotaStatus.windows.window;
-      return { from: w.countsFrom, to: w.endsAt, label: 'This 5-hour window' };
+      return { from: w.startsAt, to: w.endsAt, label: 'This 5-hour window' };
     }
     case 'today':
       return { from: iso(today), to: endOfToday, label: 'Today' };
@@ -101,7 +101,7 @@ function resolveRange(
      */
     case 'weekWindow': {
       const w = quotaStatus.windows.week;
-      return { from: w.countsFrom, to: w.endsAt, label: 'This 7-day window' };
+      return { from: w.startsAt, to: w.endsAt, label: 'This 7-day window' };
     }
     case 'month':
       return { from: usageRepo.periodStart('monthly'), to: endOfToday, label: 'This month' };
@@ -142,7 +142,7 @@ function resolveRange(
     case 'quota':
     default:
       return {
-        from: quotaStatus.windows.month.countsFrom,
+        from: quotaStatus.windows.month.startsAt,
         to: endOfToday,
         label: 'This quota month',
       };

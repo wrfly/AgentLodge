@@ -128,7 +128,7 @@ function hasTables(d: DatabaseSync): boolean {
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
  */
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -644,6 +644,31 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
       create index if not exists idx_deferred_release on deferred_turns(release_at);
       create index if not exists idx_deferred_user on deferred_turns(user_id);
     `);
+  }
+
+  if (from < 17) {
+    /*
+     * Zeroing one account's usage is retired, and the column that recorded it goes with it.
+     *
+     * The windows a reset moved the count inside are the platform's — the same instants for
+     * everybody — so forgiving one account put that account on a scale nobody else was on,
+     * while the gate still enforced everyone else's. The way to let somebody through early is
+     * a top-up, which says what it is, raises the ceiling rather than hiding the spend, and
+     * expires on the window's own boundary.
+     *
+     * Dropping rather than leaving it null. A column nothing writes and three things read is
+     * how a value comes back: `countStartOf` on the gate's path, the admin list's bar, and
+     * the usage page's "counting from" caption all consulted it, and all of them are gone in
+     * the same change. Leaving the column would keep the shape of the feature around for the
+     * next person to wire back up.
+     *
+     * Any value still in here is forgiveness an operator granted under the old rules. It
+     * stops applying the moment this runs, which for a window still open means that account's
+     * count goes back to the whole window — the same count everyone else already had.
+     */
+    if (columns(d, 'user_quotas').has('reset_at')) {
+      d.exec('alter table user_quotas drop column reset_at');
+    }
   }
 
   d.exec(`pragma user_version = ${SCHEMA_VERSION}`);

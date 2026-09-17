@@ -591,8 +591,6 @@ export const fr: Record<string, string> = {
   'This account has no ceiling on any window.': 'Ce compte n\'a de plafond sur aucune fenêtre.',
   'incl. {amount} topped up': 'dont {amount} de recharge',
   'tokens': 'tokens',
-  'counting from {when} · {spent} spent over the full window': 'compté depuis {when} · {spent} dépensé sur la fenêtre entière',
-  'counting from {when}': 'compté depuis {when}',
 
   // The admin overview: the live window, and everybody over one period
   'Platform usage': 'Consommation de la plateforme',

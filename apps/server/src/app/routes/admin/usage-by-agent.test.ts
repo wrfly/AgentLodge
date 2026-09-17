@@ -209,28 +209,6 @@ console.log('\n=== The period is chosen, and it is the same list the platform ca
   ok('which is this route\'s own default', omitted.range.label === 'Today', omitted.range.label);
 }
 
-/*
- * These are reporting ranges: the same instants for every account. An old `reset_at` could
- * still move what the *gate* counts for one user — that is the quota bar's business, and it is
- * shown there — but it must not move what this panel reports, or two accounts' "This month"
- * would be different months.
- */
-console.log('\n=== One account\'s counting start does not move the period ===');
-{
-  const before = await ask(bob.user.id);
-  users.resetUsage(bob.user.id);
-  const after = await ask(bob.user.id);
-
-  ok('the range is where it was', after.range.from === before.range.from,
-    `${after.range.from} vs ${before.range.from}`);
-  ok('and so are the figures', after.total.inputTokens === before.total.inputTokens,
-    `${after.total.inputTokens} vs ${before.total.inputTokens}`);
-  ok('rows included', rowSum(after.rows) === rowSum(before.rows),
-    `${rowSum(after.rows)} vs ${rowSum(before.rows)}`);
-
-  users.undoResetUsage(bob.user.id);
-}
-
 console.log('\n=== An account that has never spent anything ===');
 {
   // What the console draws its `Empty` for: a range with nothing in it, not an error

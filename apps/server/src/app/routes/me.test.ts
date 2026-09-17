@@ -267,18 +267,18 @@ console.log('\n=== What falls either side of the boundary ===');
     String(seven.totals.inputTokens));
 
   /*
-   * A manual reset moves the start forward inside a window already running, and the range
-   * follows it — `countsFrom`, not `startsAt`. Anything that re-derived the boundary here
-   * would drift from the number the gate enforces, and a report disagreeing with the gate
-   * about what somebody has spent is worse than no report.
+   * The range is the window's own boundary, and nothing per-account moves it.
+   *
+   * It used to follow `countsFrom`, which a manual reset pushed forward for one account —
+   * so two people asking for "this 7-day window" on the same afternoon could be asking about
+   * two different stretches of time. Zeroing is retired; the report and the gate now count
+   * the same interval because there is only one interval to count.
    */
-  const cutoff = new Date(boundary.getTime() + 2 * 60_000);
-  users.resetUsage(carol.user.id, cutoff.toISOString());
-  const afterReset = await ask('weekWindow');
-  ok('a reset part-way through moves the start with it',
-    afterReset.range.from === cutoff.toISOString(), `${afterReset.range.from} vs ${cutoff.toISOString()}`);
-  ok('and what it counts moves with it', afterReset.totals.inputTokens === 0,
-    String(afterReset.totals.inputTokens));
+  const again = await ask('weekWindow');
+  ok('asking twice gives the same window', again.range.from === rolling.range.from,
+    `${again.range.from} vs ${rolling.range.from}`);
+  ok('and it is the boundary, not something per-account',
+    again.range.from === boundary.toISOString(), `${again.range.from} vs ${boundary.toISOString()}`);
 }
 
 console.log('\n=== Which upstream it went out through, and on whose credential ===');

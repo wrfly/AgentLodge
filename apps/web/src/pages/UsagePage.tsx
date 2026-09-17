@@ -177,23 +177,12 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
               <div className="mt-1 flex flex-wrap gap-x-3 text-[11.5px] text-faint">
                 {capped && <span>{pct}%</span>}
                 {capped && <span>{t('{amount} left', { amount: show(w.remaining ?? 0) })}</span>}
+                {/* No "counting from" caption any more. It existed because an administrator
+                    could clear one account's window part-way through, which made the figure
+                    above start later than the row's own boundary — the count and the report
+                    disagreed and the page had to admit it. Windows now begin where they begin
+                    for everybody, so there is nothing to disclose. */}
                 <span>{t('resets {when}', { when: fmtDate(w.endsAt) })}</span>
-                {/* An administrator cleared this window part-way through. Say so whenever
-                    it happened — the count above starts later than the row's own boundary and
-                    nothing else on the page admits it — and add the second figure only when
-                    there is one: `spent` is what was really spent over the window, which is
-                    what the calendar ranges and the tiles beside them show. A reset that
-                    forgave this row nothing leaves the two equal and needs no number. */}
-                {w.countsFrom !== w.startsAt && (
-                  <span className="text-accent">
-                    {w.spent === w.used
-                      ? t('counting from {when}', { when: fmtDate(w.countsFrom) })
-                      : t('counting from {when} · {spent} spent over the full window', {
-                          when: fmtDate(w.countsFrom),
-                          spent: show(w.spent),
-                        })}
-                  </span>
-                )}
               </div>
             </div>
           );

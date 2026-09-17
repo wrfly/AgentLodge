@@ -49,8 +49,6 @@ create table if not exists user_quotas (
   boost_scope  text,                    -- window | week | month
   boost_amount integer,
   boost_until  text,                    -- the window's end at the moment it was granted
-  -- When an administrator zeroed it; counting starts at max(window start, reset_at)
-  reset_at     text,
   -- Which window a warning email has gone out for, so one window does not nag twice
   warned_period text,
   updated_at   text not null,

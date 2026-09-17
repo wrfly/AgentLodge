@@ -22,10 +22,8 @@ export function register(app: FastifyInstance): void {
     const firstId = usersRepo.firstId();
     return usersRepo.list().map((u) => {
       const q = usersRepo.getQuota(u.id);
-      // The 5-hour window is the one that bites first, so it is the one the list shows —
-      // counted from wherever the gate counts it from, or an operator who has just reset
-      // somebody reads a percentage the reset already forgave
-      const windowStart = quota.countStartOf(q, windowBounds.start);
+      // The 5-hour window is the one that bites first, so it is the one the list shows
+      const windowStart = windowBounds.start.toISOString();
       return {
         ...usersRepo.toPublic(u),
         // Always an active administrator, so the list offers no way to demote or disable it
@@ -232,16 +230,8 @@ export function register(app: FastifyInstance): void {
         error: tr(req, 'That window has no ceiling, so a top-up would do nothing — set a limit first'),
       });
 
+    // The only way to let one account through early, now that zeroing its usage is gone
     usersRepo.grantBoost(id, scope, amount, quota.boundsOf(scope).end.toISOString(), req.user!.id);
-    /*
-     * The boost is the intervention; a previous manual reset should not compound it.
-     *
-     * Zeroing usage is gone from the console, but `reset_at` rows written before it was
-     * removed are still honoured by the gate — and with the reset route gone this is the only
-     * thing left that can clear one. Dropping it would leave those accounts counting from an
-     * old reset **and** holding the extra ceiling, with nothing able to put them back.
-     */
-    usersRepo.undoResetUsage(id);
 
     audit.log({
       actorId: req.user!.id,

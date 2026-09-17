@@ -37,13 +37,6 @@ export interface Quota {
   hardStop: boolean;
   /** A top-up: extra allowance on one window, expiring when that window resets */
   boost?: { scope: QuotaScope; amount: number; until: string };
-  /**
-   * When an administrator zeroed it by hand.
-   *
-   * Counting takes max(window start, resetAt), so it only affects windows already running;
-   * the next one begins at its own boundary as usual.
-   */
-  resetAt?: string;
   /** The window a quota warning email has already gone out for */
   warnedPeriod?: string;
   updatedAt: string;
@@ -74,7 +67,6 @@ interface QuotaRow {
   boost_scope?: string | null;
   boost_amount?: number | null;
   boost_until?: string | null;
-  reset_at?: string | null;
   warned_period?: string | null;
   updated_at: string;
   updated_by: string | null;
@@ -112,7 +104,6 @@ const toQuota = (r: QuotaRow): Quota => ({
     r.boost_scope && r.boost_amount != null && r.boost_until
       ? { scope: r.boost_scope as QuotaScope, amount: r.boost_amount, until: r.boost_until }
       : undefined,
-  resetAt: r.reset_at ?? undefined,
   warnedPeriod: r.warned_period ?? undefined,
   updatedAt: r.updated_at,
   updatedBy: r.updated_by ?? undefined,
@@ -256,22 +247,6 @@ export interface QuotaPatch {
 
 export function markWarned(userId: string, period: string): void {
   run('update user_quotas set warned_period = ? where user_id = ?', period, userId);
-}
-
-/**
- * Zero this user's usage in the windows currently running.
- *
- * Counting takes max(window start, reset_at), so a reset only affects windows that have
- * already begun; the next one starts at its own boundary, which is what keeps the
- * boundaries the same for everybody even after an administrator intervenes.
- */
-export function resetUsage(userId: string, at: string | null = nowIso()): void {
-  run('update user_quotas set reset_at = ?, warned_period = null where user_id = ?', at, userId);
-}
-
-/** Undo a manual reset and count from the window's own start again */
-export function undoResetUsage(userId: string): void {
-  resetUsage(userId, null);
 }
 
 /**

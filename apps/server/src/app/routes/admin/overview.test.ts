@@ -251,18 +251,13 @@ console.log('\n=== The console can ask about the seven days the quota is countin
     `${seven.range.from} vs ${rolling.range.from}`);
 
   /*
-   * These are reporting ranges: the same instants for everybody. A per-user counting start —
-   * `countsFrom`, which an old reset could still have moved — is one account's, and moving one
-   * account must not move what the console reports for the platform or for anybody else.
+   * The window is the platform\'s, so asking again is asking about the same stretch of time.
+   * There is nothing per-account left that could move it: zeroing one account's usage was the
+   * only thing that ever did, and it is retired.
    */
-  users.resetUsage(alice.user.id, new Date(monday8pm.getTime() + 2 * 3600_000).toISOString());
-  const afterReset = await askPreset('weekWindow');
-  ok('one account\'s counting start does not move the platform window',
-    afterReset.range.from === rolling.range.from, `${afterReset.range.from} vs ${rolling.range.from}`);
-  const usersAfter = (await askUsers()).json() as UserReport;
-  ok('nor what the user card reports for them',
-    usersAfter.rows.find((r) => r.username === 'alice')?.inputTokens === 1_200,
-    JSON.stringify(usersAfter.rows));
+  const again = await askPreset('weekWindow');
+  ok('the window is the platform\'s, so it does not move per account',
+    again.range.from === rolling.range.from, `${again.range.from} vs ${rolling.range.from}`);
 }
 
 console.log('\n=== It is the console, so it is for administrators ===');

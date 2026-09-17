@@ -618,8 +618,6 @@ export const ru: Record<string, string> = {
   'This account has no ceiling on any window.': 'У этой учётной записи нет потолка ни в одном окне.',
   'incl. {amount} topped up': 'включая пополнение {amount}',
   'tokens': 'токенов',
-  'counting from {when} · {spent} spent over the full window': 'счёт идёт с {when} · за всё окно потрачено {spent}',
-  'counting from {when}': 'счёт идёт с {when}',
 
   // The admin overview: the live window, and everybody over one period
   'Platform usage': 'Расход платформы',

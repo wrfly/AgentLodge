@@ -618,8 +618,6 @@ export const ja: Record<string, string> = {
   'This account has no ceiling on any window.': 'このアカウントはどのウィンドウにも上限がありません。',
   'incl. {amount} topped up': 'うち {amount} は追加分',
   'tokens': 'トークン',
-  'counting from {when} · {spent} spent over the full window': '{when} から計上 · ウィンドウ全体の実支出は {spent}',
-  'counting from {when}': '{when} から計上',
 
   // The admin overview: the live window, and everybody over one period
   'Platform usage': 'プラットフォーム使用量',
