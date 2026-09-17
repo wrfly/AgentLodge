@@ -12,11 +12,9 @@
  * different ranges: the usage page about whichever period is selected, the console about the
  * quota month.
  */
-import { fmtMoney, type UsageTotals } from '../lib/api';
+import { type AgentModelRow, fmtMoney, type UsageTotals } from '../lib/api';
 import { Empty, fmtTokens } from './ui';
 import { useT } from '../lib/i18n';
-
-export type AgentModelRow = UsageTotals & { agent: string; model: string | null };
 
 export function AgentModelTable({
   rows,
@@ -40,7 +38,11 @@ export function AgentModelTable({
       <table className="w-full min-w-[460px] text-[13px]">
         <thead>
           <tr className="border-b border-line text-left text-faint">
-            <th className="pb-2 font-medium">Agent</th>
+            {/* Translated like every other header. It was a bare literal on the usage page,
+                which read as English in all eight locales beside seven translated columns —
+                and check-i18n cannot see it, because check 2 only visits keys that reach
+                `t()` and check 3 finds the word in the source and calls the key live. */}
+            <th className="pb-2 font-medium">{t('Agent')}</th>
             <th className="pb-2 font-medium">{t('Model')}</th>
             <th className="pb-2 text-right font-medium">{t('Turns')}</th>
             {/* Three columns, not two. `In` used to carry the cache as well, so it

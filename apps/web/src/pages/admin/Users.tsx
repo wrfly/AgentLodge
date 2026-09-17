@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { BarChart3, Gauge, RotateCcw, Wallet } from 'lucide-react';
 import clsx from 'clsx';
-import { admin, type AdminUser, type AdminUserDetail, fmtMoney, type QuotaScope } from '../../lib/api';
+import { admin, type AdminUser, fmtMoney, type QuotaScope, type UserAgentUsage } from '../../lib/api';
 import {
   Banner,
   Button,
@@ -31,45 +31,60 @@ import { WithUnit } from './shared';
 /**
  * The same per-model table the user's own usage page shows, about somebody else.
  *
- * Fetched when the panel opens rather than with the list: the breakdown is a grouped scan
- * per account, and the list renders every account on the deployment. An operator opens one
- * row at a time.
+ * Fetched when the panel opens rather than with the list: the breakdown is a grouped scan per
+ * account, and the list renders every account on the deployment. An operator opens one row at
+ * a time.
  *
- * The quota month, because that is the range the route's breakdown already answers for —
- * and the one an operator adjusting a monthly ceiling is looking at.
+ * `reload` is the list's own counter, so the table follows the buttons above it. A top-up, a
+ * reset or an undo all change what this account has spent and all call `onChange`, which used
+ * to reload only the row — leaving a freshly-zeroed bar sitting over a pre-reset breakdown.
+ *
+ * The range and its label both come from the server. Naming the period here would have meant
+ * two places deciding what "this quota month" covers, and they disagree the moment somebody
+ * is reset: the gate counts from the reset, a month boundary does not.
  */
-function UsagePanel({ userId }: { userId: string }) {
+function UsagePanel({ userId, reload }: { userId: string; reload: number }) {
   const t = useT();
-  const [data, setData] = useState<AdminUserDetail | null>(null);
+  const [data, setData] = useState<UserAgentUsage | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  /** Bumped by the retry button — the only thing that re-runs the effect on the same row */
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    // The row can be closed before the request lands, and a user can be searched away
-    let live = true;
+    // The panel can be closed, the user searched away, or the row reloaded under it before
+    // the answer lands — in all three the request itself is abandoned, not just its result
+    const ac = new AbortController();
+    setErr(null);
     admin
-      .user(userId)
-      .then((d) => live && setData(d))
-      .catch((e) => live && setErr(e instanceof Error ? e.message : String(e)));
-    return () => {
-      live = false;
-    };
-  }, [userId]);
+      .userAgentUsage(userId, ac.signal)
+      .then(setData)
+      .catch((e) => {
+        if (!ac.signal.aborted) setErr(e instanceof Error ? e.message : String(e));
+      });
+    return () => ac.abort();
+  }, [userId, reload, attempt]);
 
   return (
     <div className="mt-3 rounded-lg border border-line bg-elevated p-3">
       <div className="mb-2 text-[12.5px] font-medium">
-        {`${t('By agent and model')} · ${t('This quota month')}`}
+        {`${t('By agent and model')}${data ? ` · ${t(data.range.label)}` : ''}`}
       </div>
       {err ? (
-        <Banner tone="error">{err}</Banner>
+        // Recoverable, because the usual cause is: the server was restarting. Without this
+        // the banner is terminal and the only way out is to guess that closing the panel and
+        // reopening it starts over.
+        <Banner tone="error">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="flex-1">{err}</span>
+            <Button variant="ghost" onClick={() => setAttempt((n) => n + 1)}>
+              {t('Retry')}
+            </Button>
+          </span>
+        </Banner>
       ) : !data ? (
         <Spinner />
       ) : (
-        <AgentModelTable
-          rows={data.usage.byAgent}
-          totals={data.usage.month}
-          currency={data.quota.currency}
-        />
+        <AgentModelTable rows={data.rows} totals={data.total} currency={data.currency} />
       )}
     </div>
   );
@@ -141,11 +156,22 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
 /** Digits and one decimal point: the unit is millions, so 0.5 has to be typeable */
 const clean = (v: string): string => v.replace(/[^\d.]/g, '');
 
-function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) {
+function UserRow({ user, onChange: reloadList }: { user: AdminUser; onChange: () => void }) {
   const t = useT();
   const [editing, setEditing] = useState(false);
   const [topup, setTopup] = useState(false);
   const [usage, setUsage] = useState(false);
+  /*
+   * Everything in this row that changes what the account has spent goes through `onChange`,
+   * which reloads the list. The usage panel below is not in the list, so it needs telling
+   * separately — otherwise a reset zeroes the bar and leaves the breakdown beside it showing
+   * the month that was just forgiven.
+   */
+  const [reload, setReload] = useState(0);
+  const onChange = () => {
+    setReload((n) => n + 1);
+    reloadList();
+  };
   // Typed in millions; the API takes the quota's own unit
   const asM = (v: number | null) => (v === null ? '' : tokensToM(v));
   const [limitWindow, setLimitWindow] = useState(asM(user.quota.window));
@@ -368,7 +394,7 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
         </div>
       )}
 
-      {usage && <UsagePanel userId={user.id} />}
+      {usage && <UsagePanel userId={user.id} reload={reload} />}
 
       {topup && <TopupPanel user={user} onDone={() => { setTopup(false); onChange(); }} />}
 

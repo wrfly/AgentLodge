@@ -64,30 +64,54 @@ export function register(app: FastifyInstance): void {
     const user = usersRepo.findById(id);
     if (!user) return reply.code(404).send({ error: tr(req, 'No such user') });
     const q = usersRepo.getQuota(id);
-    /*
-     * One instant for the breakdown and for its total. Read twice, a request that straddles
-     * the month boundary would hand the console a table whose footer counts a different
-     * month from its rows — and a total that disagrees with the rows is precisely the
-     * reading the footer exists to settle.
-     */
-    const monthStart = quota.boundsOf('month').start.toISOString();
     return {
       ...usersRepo.toPublic(user),
       quota: q,
       quotaStatus: quota.status(id),
       usage: {
         daily: usageRepo.dailyForUser(id, 30),
-        byAgent: usageRepo.byAgentForUser(id, monthStart),
-        /**
-         * `byAgent`'s total over `byAgent`'s range — not a second period, and not the sum of
-         * the rows: a turn that called two models belongs to both rows and is one turn here.
-         */
-        month: usageRepo.totalsForUser(id, monthStart),
+        byAgent: usageRepo.byAgentForUser(id, quota.boundsOf('month').start.toISOString()),
         byConversation: usageRepo.byConversationForUser(id, 10),
         allTime: usageRepo.totalsForUser(id),
       },
       sessions: sessionsRepo.listActive(id).length,
       memory: await memory.stats(id),
+    };
+  });
+
+  /**
+   * What one account spent this quota month, per agent and per model.
+   *
+   * Its own route rather than a field on the detail above, because the console opens this one
+   * row at a time and the detail response is expensive in a way this question is not: a
+   * 30-day series, the heaviest conversations, the live sessions, three scopes of quota
+   * status, and `memory.stats`, which reads every one of that user's memory files off disk to
+   * count their bytes. None of it is on screen here.
+   *
+   * The range comes back with the rows because the console labels it, and a label picked on
+   * one side of the wire from a range computed on the other is how the two drift apart. It is
+   * the quota month **as the gate counts it** — `countStartOf`, so a manual reset moves the
+   * start — which is what the user's own usage page already shows under these words. Reading
+   * it from the month boundary instead would have put a freshly-reset account's whole
+   * pre-reset month under a label the other page uses for nothing.
+   */
+  app.get('/api/admin/users/:id/usage-by-agent', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!usersRepo.findById(id)) return reply.code(404).send({ error: tr(req, 'No such user') });
+    const q = usersRepo.getQuota(id);
+    // One instant for the rows and for their total: read twice, a request that straddled the
+    // boundary would put one month's rows under another month's total
+    const from = quota.countStartOf(q, quota.boundsOf('month').start);
+    return {
+      currency: q.currency,
+      range: { from, label: 'This quota month' },
+      rows: usageRepo.byAgentForUser(id, from),
+      /**
+       * Deliberately not the rows' sum: a turn that called two models is one turn and belongs
+       * to both rows, so the column adds up to more than this. The console says so out loud
+       * when they differ, which it can only do if this is counted rather than added up.
+       */
+      total: usageRepo.totalsForUser(id, from),
     };
   });
 
