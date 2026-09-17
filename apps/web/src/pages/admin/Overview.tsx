@@ -231,13 +231,16 @@ function PlatformUsageCard() {
             Several rows open at once on purpose: an operator comparing what two upstreams are
             being used for cannot do it one row at a time.
           */}
+          {/* No turns column here, unlike the by-user table. `turns` counts distinct turn ids,
+              so one turn that called two models on an upstream is one turn on its row and one
+              under each model beneath it — tokens and money add up, that would not, and this
+              is the one table whose whole point is that its parts sum to their parent. */}
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[460px] text-[13px]">
+            <table className="w-full min-w-[420px] text-[13px]">
               <thead>
                 <tr className="border-b border-line text-left text-faint">
                   <th className="pb-1.5 font-medium">{t('Upstream')}</th>
                   <th className="pb-1.5 font-medium">{t('Credential')}</th>
-                  <th className="pb-1.5 text-right font-medium">{t('Turns')}</th>
                   <th className="pb-1.5 text-right font-medium">{t('Billable tokens')}</th>
                   <th className="pb-1.5 text-right font-medium">{t('Cost')}</th>
                 </tr>
@@ -275,7 +278,6 @@ function PlatformUsageCard() {
                           {r.kind && <span className="ml-2 font-mono text-[11px] text-faint">{r.kind}</span>}
                         </td>
                         <td className="py-1.5 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
-                        <td className="py-1.5 text-right tabular-nums">{r.turns}</td>
                         <td className="py-1.5 text-right font-mono tabular-nums">
                           {fmtTokens(r.billableTokens)}
                         </td>
@@ -284,14 +286,8 @@ function PlatformUsageCard() {
                         </td>
                       </tr>
 
-                      {shown && models.length === 0 && (
-                        <tr className="border-b border-line">
-                          <td colSpan={5} className="py-1.5 pl-6 text-[12px] text-faint">
-                            {t('No usage in this period')}
-                          </td>
-                        </tr>
-                      )}
-
+                      {/* No empty case: both breakdowns come from one scan of one range, so an
+                          upstream listed above always has at least one model row under it. */}
                       {shown &&
                         models.map((m) => (
                           <tr key={`${id}-${m.model}`} className="border-b border-line bg-bubble/40">
@@ -300,7 +296,6 @@ function PlatformUsageCard() {
                             <td className="py-1 pl-6 font-mono text-[12px] text-muted" colSpan={2}>
                               {m.model || t('(default)')}
                             </td>
-                            <td className="py-1 text-right text-[12px] tabular-nums text-muted">{m.turns}</td>
                             <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
                               {fmtTokens(m.billableTokens)}
                             </td>

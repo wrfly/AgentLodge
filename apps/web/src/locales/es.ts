@@ -648,6 +648,7 @@ export const es: Record<string, string> = {
   'All upstreams': 'Todos los proveedores',
 
   // The console's usage tabs
+  'Deleted account': 'Cuenta eliminada',
   User: 'Usuario',
   'User usage': 'Uso por usuario',
   Accounts: 'Cuentas',

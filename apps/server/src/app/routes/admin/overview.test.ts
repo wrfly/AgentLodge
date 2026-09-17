@@ -123,8 +123,8 @@ interface Report {
   byUpstreamModel: Array<{ providerId: string; model: string; inputTokens: number }>;
 }
 interface UserReport {
-  totals: { inputTokens: number };
-  rows: Array<{ userId: string; username: string; inputTokens: number }>;
+  totals: { inputTokens: number; turns: number };
+  rows: Array<{ userId: string; username: string; inputTokens: number; turns: number }>;
 }
 const sum = (rows: Array<{ inputTokens: number }>) => rows.reduce((n, r) => n + r.inputTokens, 0);
 
@@ -182,14 +182,45 @@ console.log('\n=== The same period, asked about people ===');
   ok('a row spans every upstream that account used',
     byUser.rows.find((r) => r.username === 'alice')?.inputTokens === 1_200,
     JSON.stringify(byUser.rows.find((r) => r.username === 'alice')));
-  // root is signed in and has spent nothing; a row of zeroes in an account of where the money
-  // went is noise, and the `having` in the query is what keeps it out
-  ok('an account that spent nothing is not a row',
+  // root is signed in and has no rows in the table at all, so there is nothing to account for
+  ok('an account with no activity is not a row',
     !byUser.rows.some((r) => r.username === 'root'),
     JSON.stringify(byUser.rows.map((r) => r.username)));
   ok('the two cards agree about the period they share',
     byUser.totals.inputTokens === ((await ask()).json() as Report).totals.inputTokens,
     String(byUser.totals.inputTokens));
+}
+
+/*
+ * The two ways this list could fail to account for its own total, both of which a leaderboard
+ * is allowed to and this is not.
+ */
+console.log('\n=== Everything the total counts has a row to put it in ===');
+{
+  // A turn that was refused spends nothing. Filtered out as noise, its turns would still be in
+  // the total above, leaving a figure with no row to attribute the difference to.
+  usage.record({ userId: root.user.id, agent: 'claude', status: 'error' });
+
+  // Spend whose account has been deleted. Nothing cascades from `users` to `usage_records`, so
+  // an inner join would drop it from the rows while the total still counted it.
+  const ghost = users.create({ email: 'g@example.com', username: 'ghost', passwordHash: 'x', role: 'user' });
+  spend(ghost.id, ark.id, 'opus', 7_777, 'g1');
+  users.remove(ghost.id);
+
+  const byUser = (await askUsers()).json() as UserReport;
+  const rootRow = byUser.rows.find((r) => r.username === 'root');
+  ok('an account whose turns all failed is a row of zeroes',
+    rootRow !== undefined && rootRow.inputTokens === 0, JSON.stringify(rootRow));
+  ok('a deleted account keeps its spend as a row', byUser.rows.some((r) => r.inputTokens === 7_777),
+    JSON.stringify(byUser.rows.map((r) => [r.username, r.inputTokens])));
+  ok('with no name, which the console fills in', byUser.rows.find((r) => r.inputTokens === 7_777)?.username === '',
+    JSON.stringify(byUser.rows.find((r) => r.inputTokens === 7_777)));
+  ok('and the rows still add up to the total', sum(byUser.rows) === byUser.totals.inputTokens,
+    `${sum(byUser.rows)} vs ${byUser.totals.inputTokens}`);
+  // Turns belong to exactly one account, so unlike the upstream table this column adds up too
+  ok('turns included',
+    byUser.rows.reduce((n, r) => n + r.turns, 0) === byUser.totals.turns,
+    `${byUser.rows.reduce((n, r) => n + r.turns, 0)} vs ${byUser.totals.turns}`);
 }
 
 console.log('\n=== The console can ask about the seven days the quota is counting ===');

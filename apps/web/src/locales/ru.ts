@@ -675,6 +675,7 @@ export const ru: Record<string, string> = {
   'All upstreams': 'Все апстримы',
 
   // The console's usage tabs
+  'Deleted account': 'Удалённая учётная запись',
   User: 'Пользователь',
   'User usage': 'Расход пользователей',
   Accounts: 'Учётные записи',

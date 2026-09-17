@@ -649,6 +649,7 @@ export const zhHant: Record<string, string> = {
   'All upstreams': '全部上游',
 
   // The console's usage tabs
+  'Deleted account': '已刪除的帳號',
   User: '使用者',
   'User usage': '使用者用量',
   Accounts: '帳號管理',

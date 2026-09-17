@@ -8,6 +8,22 @@ export const guard = { preHandler: requireAdmin };
 
 export type PlatformPreset = 'window' | 'weekWindow' | 'today' | 'last7' | 'last30' | 'month' | 'all';
 
+const PRESETS: readonly PlatformPreset[] =
+  ['window', 'weekWindow', 'today', 'last7', 'last30', 'month', 'all'];
+
+/**
+ * What the caller asked for, or the route's own default.
+ *
+ * Without this a typo is not an error, it is a different period: the query string is cast to
+ * `PlatformPreset` and `platformRange`'s `default:` branch answers 'Today', so `?preset=moth`
+ * reports today under a label that looks as authoritative as any other — and differs from
+ * what omitting the parameter entirely would have returned. Each route names its own
+ * fallback, so the two answers agree.
+ */
+export function presetOr(asked: string | undefined, fallback: PlatformPreset): PlatformPreset {
+  return PRESETS.includes(asked as PlatformPreset) ? (asked as PlatformPreset) : fallback;
+}
+
 /**
  * The periods the console offers, in one place because two cards now offer them.
  *

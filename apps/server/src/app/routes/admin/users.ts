@@ -8,7 +8,7 @@ import * as audit from '../../../core/db/audit.js';
 import * as quota from '../../../core/quota.js';
 import * as memory from '../../memory.js';
 import * as pricing from '../../../core/db/pricing.js';
-import { guard, type PlatformPreset, platformRange } from './shared.js';
+import { guard, platformRange, presetOr } from './shared.js';
 import { tr } from '../../../core/i18n/locale.js';
 
 export function register(app: FastifyInstance): void {
@@ -100,11 +100,11 @@ export function register(app: FastifyInstance): void {
   app.get('/api/admin/users/:id/usage-by-agent', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!usersRepo.findById(id)) return reply.code(404).send({ error: tr(req, 'No such user') });
-    const { preset } = req.query as { preset?: PlatformPreset };
+    const { preset } = req.query as { preset?: string };
     const q = usersRepo.getQuota(id);
     // One range object for the rows and for their total: read twice, a request that straddled
     // a boundary would put one period's rows under another period's total
-    const range = platformRange(preset ?? 'month');
+    const range = platformRange(presetOr(preset, 'today'));
     return {
       currency: q.currency,
       range,
@@ -232,13 +232,16 @@ export function register(app: FastifyInstance): void {
         error: tr(req, 'That window has no ceiling, so a top-up would do nothing — set a limit first'),
       });
 
-    /*
-     * The top-up is now the only way to let one account through early. It used to clear a
-     * previous manual reset here, so the two interventions could not compound — there is no
-     * second intervention to compound with any more, and a `reset_at` left over from before
-     * this is history the books should keep rather than something a top-up quietly erases.
-     */
     usersRepo.grantBoost(id, scope, amount, quota.boundsOf(scope).end.toISOString(), req.user!.id);
+    /*
+     * The boost is the intervention; a previous manual reset should not compound it.
+     *
+     * Zeroing usage is gone from the console, but `reset_at` rows written before it was
+     * removed are still honoured by the gate — and with the reset route gone this is the only
+     * thing left that can clear one. Dropping it would leave those accounts counting from an
+     * old reset **and** holding the extra ceiling, with nothing able to put them back.
+     */
+    usersRepo.undoResetUsage(id);
 
     audit.log({
       actorId: req.user!.id,

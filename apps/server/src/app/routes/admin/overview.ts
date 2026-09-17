@@ -6,7 +6,7 @@ import * as quota from '../../../core/quota.js';
 import { getString } from '../../../core/db/settings.js';
 import { fetchBalance } from '../../agents/provider.js';
 import { listAgents } from '../../agents/registry.js';
-import { guard, type PlatformPreset, platformRange } from './shared.js';
+import { guard, platformRange, presetOr } from './shared.js';
 
 export function register(app: FastifyInstance): void {
 
@@ -69,11 +69,14 @@ export function register(app: FastifyInstance): void {
    * little on its own.
    *
    * Both breakdowns come from the same period and the same table, so an upstream's models add
-   * up to its row and the rows add up to the total above them.
+   * up to its row and the rows add up to the total above them — in tokens and in money. Not in
+   * turns: `turns` is `count(distinct turn_id)`, and one turn that called two models on an
+   * upstream is one turn there and one under each model. The console does not print a turns
+   * column on this table for that reason.
    */
   app.get('/api/admin/usage', guard, async (req) => {
-    const q = req.query as { preset?: PlatformPreset };
-    const range = platformRange(q.preset ?? 'today');
+    const q = req.query as { preset?: string };
+    const range = platformRange(presetOr(q.preset, 'today'));
     const spanMs = new Date(range.to).getTime() - new Date(range.from).getTime();
     // Two days or less is shown hourly, longer spans daily — the same rule as /api/me/usage
     const byHour = spanMs <= 2 * 86400_000;
@@ -107,16 +110,18 @@ export function register(app: FastifyInstance): void {
    * and it can: upstreams are a handful. Users are not bounded that way.
    */
   app.get('/api/admin/usage-by-user', guard, async (req) => {
-    const q = req.query as { preset?: PlatformPreset };
-    const range = platformRange(q.preset ?? 'month');
+    const q = req.query as { preset?: string };
+    // The same default as the card above, so an operator moving between the two tabs to
+    // compare is not silently handed two different periods
+    const range = platformRange(presetOr(q.preset, 'today'));
     return {
       range,
       currency: getString('billing.currency', 'USD'),
       totals: usageRepo.totalsAllInRange(range),
       /*
-       * No limit. `topUsers` orders by spend and takes a count; the count is the part that
-       * made it a leaderboard, and this list is meant to account for the period — the rows
-       * add up to the total above them, which a truncated list cannot do.
+       * Every account with activity, not a top N: the rows have to add up to the total above
+       * them, which a truncated list cannot do. A turn belongs to exactly one account, so
+       * unlike the upstream breakdown these rows add up in every column, turns included.
        */
       rows: usageRepo.allUsersInRange(range),
     };

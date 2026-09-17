@@ -675,6 +675,7 @@ export const ja: Record<string, string> = {
   'All upstreams': 'すべてのアップストリーム',
 
   // The console's usage tabs
+  'Deleted account': '削除されたアカウント',
   User: 'ユーザー',
   'User usage': 'ユーザー使用量',
   Accounts: 'アカウント',

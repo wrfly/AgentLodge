@@ -76,7 +76,12 @@ function UserModels({ userId, preset }: { userId: string; preset: PlatformPreset
 
 export function UserUsage() {
   const t = useT();
-  const [preset, setPreset] = useState<PlatformPreset>('month');
+  /*
+   * The same default as the overview's platform card. The reason these two tabs share a
+   * preset list is that an operator moves between them to compare, and two different starting
+   * periods would make the first comparison anybody draws a false one.
+   */
+  const [preset, setPreset] = useState<PlatformPreset>('today');
   /** Which rows are open. Several at once, because the point is comparing them. */
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [data, setData] = useState<UsersUsage | null>(null);
@@ -165,7 +170,12 @@ export function UserUsage() {
                                 shown && 'rotate-90',
                               )}
                             />
-                            {u.username}
+                            {/* Spend outlives the account: nothing cascades from `users` to
+                                `usage_records`, so a deleted account leaves rows the total
+                                above still counts. Named rather than left blank, for the same
+                                reason the upstream table names what never went through the
+                                gateway — it is the difference between the rows and the total. */}
+                            {u.username || t('Deleted account')}
                             <span className="ml-2 text-[11.5px] text-faint">{u.email}</span>
                           </td>
                           <td className="py-1.5 text-right tabular-nums">{u.turns}</td>

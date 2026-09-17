@@ -675,6 +675,7 @@ export const zh: Record<string, string> = {
   'All upstreams': '全部上游',
 
   // The console's usage tabs
+  'Deleted account': '已删除的账号',
   User: '用户',
   'User usage': '用户用量',
   Accounts: '账号管理',

@@ -177,8 +177,14 @@ console.log('\n=== The period is chosen, and it is the same list the platform ca
   const all = await ask(bob.user.id, 'all');
 
   ok('each preset says which period it is', window.range.label === 'This window', window.range.label);
-  ok('and cuts a different stretch of time', window.range.from !== month.range.from,
-    `${window.range.from} vs ${month.range.from}`);
+  /*
+   * Labels, not instants. With no observed window reset the 5-hour grid is phased on the
+   * quota anchor, so it realigns with the month boundary every five days — comparing the two
+   * `from` values fails on a correct implementation for the first five hours of roughly one
+   * month in five.
+   */
+  ok('and they are different periods', window.range.label !== month.range.label,
+    `${window.range.label} vs ${month.range.label}`);
   ok('the rows follow the period they were asked for',
     all.total.inputTokens === 1_600 && month.total.inputTokens === 1_400,
     `all ${all.total.inputTokens}, month ${month.total.inputTokens}`);
@@ -188,9 +194,19 @@ console.log('\n=== The period is chosen, and it is the same list the platform ca
   ok('the row from before the month is back under all time',
     all.rows.some((r) => r.agent === 'codex'), JSON.stringify(all.rows.map((r) => r.agent)));
 
+  /*
+   * A typo must not be a different period. The query string is not typed, and the switch in
+   * `platformRange` has a `default:` — so an unvalidated preset used to answer 'Today' while
+   * omitting the parameter answered the route's own default, which made `?preset=moth` return
+   * something plausible-looking and wrong.
+   */
   const unknown = await ask(bob.user.id, 'not-a-preset');
-  ok('an unknown preset falls back rather than failing', unknown.range.label === 'Today',
-    unknown.range.label);
+  const omitted = (await (await app.inject({
+    method: 'GET', url: `/api/admin/users/${bob.user.id}/usage-by-agent`, headers: root.bearer,
+  })).json()) as Report;
+  ok('an unknown preset falls back to what omitting it would give',
+    unknown.range.label === omitted.range.label, `${unknown.range.label} vs ${omitted.range.label}`);
+  ok('which is this route\'s own default', omitted.range.label === 'Today', omitted.range.label);
 }
 
 /*

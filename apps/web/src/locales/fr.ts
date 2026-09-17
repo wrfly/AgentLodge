@@ -648,6 +648,7 @@ export const fr: Record<string, string> = {
   'All upstreams': 'Tous les amonts',
 
   // The console's usage tabs
+  'Deleted account': 'Compte supprimé',
   User: 'Utilisateur',
   'User usage': 'Utilisation par utilisateur',
   Accounts: 'Comptes',

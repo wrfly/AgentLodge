@@ -648,6 +648,7 @@ export const de: Record<string, string> = {
   'All upstreams': 'Alle Upstreams',
 
   // The console's usage tabs
+  'Deleted account': 'Gelöschtes Konto',
   User: 'Benutzer',
   'User usage': 'Benutzerverbrauch',
   Accounts: 'Konten',
