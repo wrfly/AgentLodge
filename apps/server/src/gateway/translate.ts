@@ -359,8 +359,14 @@ export class ChatToAnthropic {
        * is reading Anthropic frames by now — so it becomes the one Anthropic frame that
        * means the same thing, carrying the upstream's own words, which is what the retry
        * path reads. Nothing after it is translated.
+       *
+       * Except the last frame of an ordinary answer, which has the same shape. An upstream
+       * honouring `stream_options.include_usage` — which every request built here asks for —
+       * ends with usage and an empty `choices`, and isErrorBody() cannot tell that from
+       * `{"choices":[],"error":…}` without looking at the usage. Untested, it closed a
+       * perfectly good answer with an error frame naming nothing.
        */
-      if (isErrorBody(c)) {
+      if (isErrorBody(c) && !c.usage) {
         this.failed = true;
         return out + this.ev('error', { type: 'error', error: { type: 'api_error', message: errorTextOf(c) } });
       }
@@ -672,8 +678,9 @@ export class ChatToResponses {
         continue; // Not valid JSON: skip this frame
       }
       // As on the Anthropic side: a refusal becomes the frame that means refusal, with the
-      // upstream's wording kept
-      if (isErrorBody(c)) {
+      // upstream's wording kept — and the usage frame that ends an ordinary answer wears
+      // the same shape, so it is told apart the same way
+      if (isErrorBody(c) && !c.usage) {
         this.failed = true;
         return out + this.ev('error', { type: 'error', code: 'upstream_error', message: errorTextOf(c) });
       }

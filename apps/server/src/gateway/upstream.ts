@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { config } from '../core/config.js';
 import * as models from '../core/db/models.js';
 import * as providers from '../core/db/providers.js';
+import { CHAT_RPC as CURSOR_CHAT_RPC, CURSOR_API } from './cursor/index.js';
 import type { Wire } from './usage-parser.js';
 
 /**
@@ -71,6 +72,26 @@ export async function resolveUpstream(
   // An upstream that only speaks chat: requests from both CLIs need translating
   if (p.kind === 'openai-chat') {
     return { url: `${base}/chat/completions`, wire: 'chat', translate: wire !== 'chat', apiKey, provider: p, upstreamModel };
+  }
+
+  /*
+   * Cursor speaks neither wire: Connect-RPC with protobuf bodies, over a schema of its own
+   * (gateway/cursor/). It is declared as `chat` here all the same, and that is the point —
+   * the bridge turns one turn into a Chat Completions stream, so the translation both CLIs
+   * already rely on carries the rest, and nothing downstream needs a Cursor branch.
+   *
+   * The address is where the request really goes, which is what the audit gate asks about.
+   * The bridge builds its own URLs from the same base; a blank one means Cursor's own.
+   */
+  if (p.kind === 'cursor') {
+    return {
+      url: `${(base || CURSOR_API).replace(/\/+$/, '')}${CURSOR_CHAT_RPC}`,
+      wire: 'chat',
+      translate: wire !== 'chat',
+      apiKey,
+      provider: p,
+      upstreamModel,
+    };
   }
 
   // The mock upstream and the local agent never use HTTP; the URL is a placeholder

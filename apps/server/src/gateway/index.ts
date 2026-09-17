@@ -46,6 +46,8 @@ import {
   type AnthropicRequest,
   type ResponsesRequest,
 } from './translate.js';
+import { fetchCursor } from './cursor/index.js';
+import type { ChatRequest } from './cursor/request.js';
 import { SseSniffer, absorbBody, absorbStream, newUsageAcc, type Wire } from './usage-parser.js';
 import {
   RateLimitScrubber,
@@ -307,7 +309,10 @@ async function handleProxy(
   }
   // The mock upstream and the local agent need no key; for any other kind, a missing key
   // is a misconfiguration
-  const needsKey = target.provider.kind === 'anthropic-native' || target.provider.kind === 'openai-chat';
+  const needsKey =
+    target.provider.kind === 'anthropic-native'
+    || target.provider.kind === 'openai-chat'
+    || target.provider.kind === 'cursor';
   if (needsKey && !target.apiKey && !target.url.startsWith('http://127.0.0.1')) {
     return sendError(
       reply,
@@ -503,15 +508,32 @@ async function handleProxy(
         : null;
     let upstream: Response;
     try {
-      upstream = await fetch(asCli ? betaUrl(egress.url) : egress.url, {
-        method: 'POST',
-        headers: {
-          ...outboundHeaders(req.headers, target.wire, target.apiKey, claims.cid, cli),
-          ...egress.headers,
-        },
-        body: JSON.stringify(asCli ? withBillingSystem(attributed, cli) : attributed),
-        signal: ac.signal,
-      });
+      upstream =
+        target.provider.kind === 'cursor'
+          ? /*
+             * Cursor speaks Connect-RPC with protobuf bodies, so the one hop that cannot be
+             * a plain fetch is this one. What comes back is a Chat Completions stream built
+             * by the bridge, which is why everything below — the sniffer, the translator,
+             * the keep-alive — needs no branch of its own. See gateway/cursor/index.ts.
+             */
+            await fetchCursor({
+              baseUrl: target.provider.baseUrl,
+              secret: target.apiKey,
+              body: attributed as ChatRequest,
+              model: reqModel,
+              conversationId: claims.cid,
+              signal: ac.signal,
+              egress: (upstreamUrl) => egressTarget({ ...target, url: upstreamUrl }),
+            })
+          : await fetch(asCli ? betaUrl(egress.url) : egress.url, {
+              method: 'POST',
+              headers: {
+                ...outboundHeaders(req.headers, target.wire, target.apiKey, claims.cid, cli),
+                ...egress.headers,
+              },
+              body: JSON.stringify(asCli ? withBillingSystem(attributed, cli) : attributed),
+              signal: ac.signal,
+            });
     } finally {
       if (headersTimer) clearTimeout(headersTimer);
     }

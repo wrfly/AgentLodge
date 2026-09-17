@@ -67,14 +67,33 @@ DeepSeek API Key    随便填（网关只要求非空）
 配置的时候以供应商为中心，用的时候以模型为中心。后台有两张卡：**上游**说的是「怎么连上去」，
 **模型**说的是「用户能选什么、每个模型走哪条上游」。请求带哪个模型名，就由那一行决定发给谁。
 
-上游有四种 kind：
+上游有五种 kind：
 
 | kind | 用途 | 需要凭据 |
 |---|---|---|
 | `anthropic-native` | 原生说 Anthropic Messages 的端点：**官方 Anthropic**、DeepSeek 兼容层、自建 LLM 网关 | ✓ |
 | `openai-chat` | 只会 `/chat/completions` 的端点：Ollama / LM Studio / vLLM / 多数第三方 | 视端点 |
+| `cursor` | **Cursor 订阅**，走它自己的 Connect-RPC 协议，见下 | ✓ |
 | `mock` | **内置假上游**，不出网不花钱，切过去就能测全链路 | — |
 | `local-agent` | 宿主机上的 CLI，**只出文本**，仅供冒烟测试 | — |
+
+### Cursor 订阅
+
+Cursor 没有可以填进 `ANTHROPIC_BASE_URL` 的 HTTP API：它的客户端跟 `api2.cursor.sh` 说
+Connect-RPC，body 是 protobuf，schema 没公开过，是从客户端里读出来的
+（`scripts/extract-cursor-schema.mjs`）。网关把这段对话整个包在 `gateway/cursor/` 里，对外
+交出一条 Chat Completions 流 —— 所以 `claude` 和 `codex` 都能用，两边都不知道背后是 Cursor。
+
+配置：kind 选 `cursor`，Base URL 留空（要经过前面的中转才填），凭据填一个在 cursor.com 上创建
+的 **Cursor API key**。网关拿它换访问令牌（`/auth/exchange_user_api_key`），令牌不落盘，过期
+自己换。模型清单可以「从上游拉取」，问的是 Cursor 的 `AvailableModels`。
+
+两个跟别的上游不一样的地方，配之前要知道：
+
+- **token 数是估的。** Cursor 按请求记自己的账，它的聊天协议里根本没有 token 计数，所以用量、
+  配额闸门、以及由它们算出来的价格，对这条上游来说都是按字符数估出来的（约 3 字符 1 token）。
+- **thinking 不往下传。** Cursor 会流式发思考内容，Chat Completions 没有这个字段，翻译层也
+  不读任何厂商自创的那几种，所以这条上游的思考在界面上是空的。
 
 多条上游同时生效，没有「当前上游」这个开关了。模型那张卡里一行是（模型名，上游）：
 

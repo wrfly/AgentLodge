@@ -375,6 +375,36 @@ chat 协议则是最后一帧带 `usage`（③ 会在请求里发 `stream_option
 
 底层模型的 key **只进 ④**，不进 ③ —— ③ 连它用的是哪个模型都不需要知道。
 
+### 2.4.1 Cursor 订阅（`gateway/cursor/`）—— 一个不讲这两种协议的 ④
+
+Cursor 两条都不满足：它的客户端跟 `api2.cursor.sh` 说 Connect-RPC，body 是 protobuf，
+schema 没有公开的 `.proto`。于是这条上游是**唯一一条 ③ 自己说话的**，其余四种 kind 都是
+`fetch` 一个 JSON 出去。
+
+```
+claude → Messages ┐                                        ┌ StreamUnifiedChatRequest（protobuf）
+                  ├→ translate.ts →  Chat Completions  →  ─┤   Connect 帧 → api2.cursor.sh
+codex  → Responses┘                        ↑              └ StreamUnifiedChatResponse 帧流
+                                           └───────────────── cursor/stream.ts 再翻回 chat SSE
+```
+
+**为什么 pivot 选 Chat Completions**：③ 本来就把两个 CLI 都翻成它了，把桥接写在那一层上，
+两个 CLI 一起有，而且要写对的只有一处而不是两处。`resolveUpstream` 给 cursor 上游的 wire
+就是 `chat`，所以嗅探 usage、翻译回客户端协议、keep-alive 这些全都没有 cursor 分支。
+
+几件定下来的事：
+
+| 事 | 怎么做的 | 为什么 |
+|---|---|---|
+| 走哪个 RPC | `aiserver.v1.ChatService/StreamUnifiedChat` | IDE 的聊天 RPC。`cursor-agent` CLI 走的 `agent.v1.AgentService` 是**服务端跑 agent 循环、回头叫客户端执行工具**，跟「客户端自己有工具」正好相反 |
+| 调用方的工具 | 塞进 `mcp_tools`（name / description / JSON schema） | `supported_tools` 是 Cursor 自己那套固定工具（read_file、run_terminal_command…），实现在一个这里不存在的工作区上；MCP 那一支是唯一能带任意名字和 schema 的 |
+| 凭据 | Cursor API key → `/auth/exchange_user_api_key` 换访问令牌 | 令牌几小时就过期，key 是人能创建和吊销的那个。令牌只在内存里，401 时强制重换一次 |
+| schema | 从 CLI bundle 里提取，提取结果进版本库 | 字段号挪了是**静默**的：请求照样被接受，只是意思变了。所以产物提交上来，diff 就是报警 |
+| token 数 | 按字符估（约 3 字符 1 token） | Cursor 的聊天协议里没有 token 计数。记 0 的话这条上游看起来免费，配额窗口永远不动 |
+
+> ⚠️ **这条上游的计量是估的**，用量、配额、价格全部由上面那个估算派生。别的上游是「上游报什么记什么」，
+> 这条不是。
+
 ### 2.5 审计代理（`trace-proxy/`）—— 位置 A，默认关
 
 零依赖的透明转发代理，字节不改（只改 `Host`/协议要求的部分），落盘请求头体、SSE 逐事件、

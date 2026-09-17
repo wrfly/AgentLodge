@@ -260,6 +260,28 @@ console.log('\n=== A refusal is recognised by there being no answer ===');
   );
 }
 
+console.log('\n=== The frame that ends an ordinary answer is not one of them ===');
+{
+  /*
+   * `stream_options.include_usage`, which every request built here asks for, makes the
+   * upstream end with usage and an empty `choices` — the same shape as the error above.
+   * Read as a refusal, it closed a perfectly good answer with an error frame naming
+   * nothing, on every streaming turn against an upstream that honours the option.
+   */
+  const usage = 'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}\n\n';
+
+  const t = new ChatToAnthropic('m');
+  const out = t.push('data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n') + t.push(usage) + t.end();
+  ok('no error frame', !out.includes('event: error'), out);
+  ok('the message is closed properly', out.includes('"stop_reason":"end_turn"') && out.includes('message_stop'), out);
+  ok('and the count it carried is reported', out.includes('"output_tokens":3'), out);
+
+  const r = new ChatToResponses('m');
+  const rout = r.push('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n') + r.push(usage) + r.end();
+  ok('the Responses side finishes too', rout.includes('response.completed') && !rout.includes('event: error'), rout);
+  ok('with the usage it was given', rout.includes('"input_tokens":7') && rout.includes('"output_tokens":3'), rout);
+}
+
 console.log('\n=== Once refused, nothing more is translated ===');
 {
   // The error and the frames after it can land in different reads, so the latch has to

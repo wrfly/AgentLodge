@@ -11,7 +11,7 @@ import { decrypt, invalidate as invalidateSettings } from './settings.js';
  * that request asks for; see core/db/models.ts.
  */
 
-export type ProviderKind = 'anthropic-native' | 'openai-chat' | 'mock' | 'local-agent';
+export type ProviderKind = 'anthropic-native' | 'openai-chat' | 'cursor' | 'mock' | 'local-agent';
 
 /**
  * Shown in the console's kind dropdown. English is the source text; the client
@@ -20,6 +20,7 @@ export type ProviderKind = 'anthropic-native' | 'openai-chat' | 'mock' | 'local-
 export const KIND_LABEL: Record<ProviderKind, string> = {
   'anthropic-native': 'Anthropic Messages native (official / DeepSeek compatibility layer / your own gateway)',
   'openai-chat': 'OpenAI Chat compatible (Ollama / LM Studio / third party)',
+  cursor: 'Cursor subscription (a Cursor API key, spoken to over its own protocol)',
   mock: 'Built-in mock upstream (no network, no cost)',
   'local-agent': 'CLI on the host (testing only, text out)',
 };
