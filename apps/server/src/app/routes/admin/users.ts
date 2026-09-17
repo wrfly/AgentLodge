@@ -1,4 +1,4 @@
-/** User administration: listing, detail, quota, role and status, resetting usage, signing out, top-ups */
+/** User administration: listing, detail, usage over a period, quota, role and status, signing out, top-ups */
 import type { FastifyInstance } from 'fastify';
 import * as usersRepo from '../../../core/db/users.js';
 import * as sessionsRepo from '../../../core/db/sessions.js';
@@ -8,7 +8,7 @@ import * as audit from '../../../core/db/audit.js';
 import * as quota from '../../../core/quota.js';
 import * as memory from '../../memory.js';
 import * as pricing from '../../../core/db/pricing.js';
-import { guard } from './shared.js';
+import { guard, platformRange, presetOr } from './shared.js';
 import { tr } from '../../../core/i18n/locale.js';
 
 export function register(app: FastifyInstance): void {
@@ -80,7 +80,7 @@ export function register(app: FastifyInstance): void {
   });
 
   /**
-   * What one account spent this quota month, per agent and per model.
+   * What one account spent over a chosen period, per agent and per model.
    *
    * Its own route rather than a field on the detail above, because the console opens this one
    * row at a time and the detail response is expensive in a way this question is not: a
@@ -88,30 +88,33 @@ export function register(app: FastifyInstance): void {
    * status, and `memory.stats`, which reads every one of that user's memory files off disk to
    * count their bytes. None of it is on screen here.
    *
-   * The range comes back with the rows because the console labels it, and a label picked on
-   * one side of the wire from a range computed on the other is how the two drift apart. It is
-   * the quota month **as the gate counts it** — `countStartOf`, so a manual reset moves the
-   * start — which is what the user's own usage page already shows under these words. Reading
-   * it from the month boundary instead would have put a freshly-reset account's whole
-   * pre-reset month under a label the other page uses for nothing.
+   * The periods are `platformRange`'s, the same ones the console's all-users card offers, so
+   * that one account and everybody can be read against each other — an operator moving between
+   * the two cards is comparing, and two lists of presets would drift.
+   *
+   * They are **reporting** ranges: what was spent between two instants. The gate's own
+   * counting can begin later for one account, and the quota bar in the manage panel is where
+   * that is shown. The range comes back with the rows, label included, because a label picked
+   * on one side of the wire from a range computed on the other is how the two drift apart.
    */
   app.get('/api/admin/users/:id/usage-by-agent', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!usersRepo.findById(id)) return reply.code(404).send({ error: tr(req, 'No such user') });
+    const { preset } = req.query as { preset?: string };
     const q = usersRepo.getQuota(id);
-    // One instant for the rows and for their total: read twice, a request that straddled the
-    // boundary would put one month's rows under another month's total
-    const from = quota.countStartOf(q, quota.boundsOf('month').start);
+    // One range object for the rows and for their total: read twice, a request that straddled
+    // a boundary would put one period's rows under another period's total
+    const range = platformRange(presetOr(preset, 'today'));
     return {
       currency: q.currency,
-      range: { from, label: 'This quota month' },
-      rows: usageRepo.byAgentForUser(id, from),
+      range,
+      rows: usageRepo.byAgentForUser(id, range),
       /**
        * Deliberately not the rows' sum: a turn that called two models is one turn and belongs
        * to both rows, so the column adds up to more than this. The console says so out loud
        * when they differ, which it can only do if this is counted rather than added up.
        */
-      total: usageRepo.totalsForUser(id, from),
+      total: usageRepo.totalsForUser(id, range),
     };
   });
 
@@ -167,38 +170,6 @@ export function register(app: FastifyInstance): void {
 
     const updated = usersRepo.findById(id)!;
     return { ...usersRepo.toPublic(updated), quota: usersRepo.getQuota(id) };
-  });
-
-  app.post('/api/admin/users/:id/reset-usage', guard, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    if (!usersRepo.findById(id)) return reply.code(404).send({ error: tr(req, 'No such user') });
-    const body = (req.body ?? {}) as { undo?: boolean };
-    const before = quota.status(id);
-
-    // Undoable if clicked by mistake: clearing reset_at returns to the natural period
-    if (body.undo) {
-      usersRepo.undoResetUsage(id);
-      audit.log({
-        actorId: req.user!.id,
-        action: 'admin.user.undo_reset_usage',
-        targetType: 'user',
-        targetId: id,
-        ip: req.ip,
-      });
-      return { ok: true, undone: true, quota: quota.status(id) };
-    }
-
-    usersRepo.resetUsage(id);
-    audit.log({
-      actorId: req.user!.id,
-      action: 'admin.user.reset_usage',
-      targetType: 'user',
-      targetId: id,
-      // Record the figure before zeroing — the books keep a trace
-      detail: { cleared: before.windows.month.used, scope: 'all windows' },
-      ip: req.ip,
-    });
-    return { ok: true, clearedTokens: before.windows.month.used, quota: quota.status(id) };
   });
 
   app.post('/api/admin/users/:id/logout-all', guard, async (req, reply) => {
@@ -262,7 +233,14 @@ export function register(app: FastifyInstance): void {
       });
 
     usersRepo.grantBoost(id, scope, amount, quota.boundsOf(scope).end.toISOString(), req.user!.id);
-    // The boost is the intervention; a previous manual reset should not compound it
+    /*
+     * The boost is the intervention; a previous manual reset should not compound it.
+     *
+     * Zeroing usage is gone from the console, but `reset_at` rows written before it was
+     * removed are still honoured by the gate — and with the reset route gone this is the only
+     * thing left that can clear one. Dropping it would leave those accounts counting from an
+     * old reset **and** holding the extra ceiling, with nothing able to put them back.
+     */
     usersRepo.undoResetUsage(id);
 
     audit.log({

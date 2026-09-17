@@ -288,10 +288,6 @@ export const de: Record<string, string> = {
   '{n} conversations': '{n} Unterhaltungen',
   'last login {when}': 'letzte Anmeldung {when}',
   unlimited: 'unbegrenzt',
-  'Zero the usage for this period — nothing is deleted, the counting start just moves forward': 'Die Nutzung dieses Zeitraums auf null setzen — es wird nichts gelöscht, nur der Zählbeginn rückt vor',
-  'Reset to zero': 'Auf null setzen',
-  Zeroed: 'Auf null gesetzt',
-  '(nothing was deleted; the counting start just moved forward)': '(es wurde nichts gelöscht; nur der Zählbeginn ist vorgerückt)',
   Undo: 'Rückgängig',
   Period: 'Zeitraum',
   Daily: 'Täglich',
@@ -391,7 +387,6 @@ export const de: Record<string, string> = {
   'Request failed ({status})': 'Anfrage fehlgeschlagen ({status})',
   'Export failed': 'Export fehlgeschlagen',
   'Upstream plan allowance': 'Kontingent des Upstream-Tarifs',
-  'What the shared subscription reports about itself. Users are shown their own quota instead, so this is the only place it is visible.': 'Was das gemeinsame Abo über sich selbst meldet. Benutzern wird stattdessen ihr eigenes Kontingent angezeigt, hier ist es also als Einziges sichtbar.',
   'Cannot reach the gateway': 'Gateway nicht erreichbar',
   'Nothing observed yet — it fills in on the next upstream response.': 'Noch nichts beobachtet — füllt sich mit der nächsten Antwort des Upstreams.',
   'as of {t}': 'Stand {t}',
@@ -600,7 +595,7 @@ export const de: Record<string, string> = {
   'counting from {when}': 'zählt ab {when}',
 
   // The admin overview: the live window, and everybody over one period
-  'Usage, all users': 'Verbrauch, alle Nutzer',
+  'Platform usage': 'Plattformverbrauch',
   'resets in {d}': 'Reset in {d}',
   '{n}% of the window elapsed': '{n}% des Fensters vergangen',
   '{n} hit their quota': '{n} am Kontingent angekommen',
@@ -651,6 +646,13 @@ export const de: Record<string, string> = {
   'Everything else on this page counts this upstream only. Click the row again for all of them.': 'Alles andere auf dieser Seite zählt nur diesen Upstream. Erneut klicken für alle.',
   'Click a row to count only that upstream everywhere else on this page.': 'Eine Zeile anklicken, damit alles andere auf dieser Seite nur diesen Upstream zählt.',
   'All upstreams': 'Alle Upstreams',
-  'Everything else in this card counts this upstream only. Click the row again for all of them.': 'Alles andere in dieser Karte zählt nur diesen Upstream. Erneut klicken für alle.',
-  'Click a row to count only that upstream everywhere else in this card.': 'Eine Zeile anklicken, damit alles andere in dieser Karte nur diesen Upstream zählt.',
+
+  // The console's usage tabs
+  'Deleted account': 'Gelöschtes Konto',
+  User: 'Benutzer',
+  'User usage': 'Benutzerverbrauch',
+  Accounts: 'Konten',
+  'Usage by user': 'Verbrauch nach Benutzer',
+  'Click an upstream to see which models its spend went on.': 'Auf einen Upstream klicken, um zu sehen, auf welche Modelle seine Ausgaben entfielen.',
+  'Click a user to see which models their spend went on.': 'Auf einen Benutzer klicken, um zu sehen, auf welche Modelle seine Ausgaben entfielen.',
 };

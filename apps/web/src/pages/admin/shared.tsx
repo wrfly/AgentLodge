@@ -4,7 +4,30 @@
  * Split out of AdminPage.tsx, which had grown to 2700 lines; one file per tab now.
  */
 import clsx from 'clsx';
+import type { PlatformPreset } from '../../lib/api';
 import { Input } from '../../components/ui';
+
+/**
+ * The periods the console offers, in one list because two cards offer them.
+ *
+ * Everybody's usage and one account's usage are the same question at two scopes, and an
+ * operator moving between them is comparing. Two lists would drift — one card gaining a
+ * period the other lacks — and the server cuts them from one `platformRange`, so a preset
+ * missing here is a period nobody can ask for rather than a period that reads differently.
+ */
+export const PLATFORM_PRESETS: Array<{ id: PlatformPreset; label: string }> = [
+  // First, and the shortest span offered: it is the window that refuses first, so "what is
+  // burning it right now" is the question this gets asked in anger
+  { id: 'window', label: 'This window' },
+  // Next, because it is the other window the gate enforces — and the one the calendar-week
+  // reading beside it disagrees with the moment an upstream states its own cadence
+  { id: 'weekWindow', label: 'This 7-day window' },
+  { id: 'today', label: 'Today' },
+  { id: 'last7', label: 'Last 7 days' },
+  { id: 'last30', label: 'Last 30 days' },
+  { id: 'month', label: 'This month' },
+  { id: 'all', label: 'All time' },
+];
 
 /**
  * A number with its unit inside the box.

@@ -6,7 +6,7 @@ import * as quota from '../../../core/quota.js';
 import { getString } from '../../../core/db/settings.js';
 import { fetchBalance } from '../../agents/provider.js';
 import { listAgents } from '../../agents/registry.js';
-import { guard } from './shared.js';
+import { guard, platformRange, presetOr } from './shared.js';
 
 export function register(app: FastifyInstance): void {
 
@@ -55,94 +55,75 @@ export function register(app: FastifyInstance): void {
   });
 
   /**
-   * Everybody's consumption over one period: the total, the shape of it, and who spent it.
+   * Everybody's consumption over one period: the total, the shape of it, and what carried it.
    *
    * Deliberately one endpoint answering for whichever period is asked, rather than a card per
-   * period. An operator comparing "who is burning it today" against "who burned it this
+   * period. An operator comparing "what is burning it today" against "what burned it this
    * month" wants one control, not four lists to read side by side.
+   *
+   * The breakdown goes upstream → model, and it is an expansion rather than a filter. Clicking
+   * an upstream used to narrow the whole card to it, which answered "who used this credential"
+   * — a question about people, and people are the users tab's subject, not this card's. What
+   * an operator is actually asking here is where a credential's money went, and money goes to
+   * models: two of them differ by a factor of ten per token, so an upstream's total says very
+   * little on its own.
+   *
+   * Both breakdowns come from the same period and the same table, so an upstream's models add
+   * up to its row and the rows add up to the total above them — in tokens and in money. Not in
+   * turns: `turns` is `count(distinct turn_id)`, and one turn that called two models on an
+   * upstream is one turn there and one under each model. The console does not print a turns
+   * column on this table for that reason.
    */
   app.get('/api/admin/usage', guard, async (req) => {
-    const q = req.query as { preset?: PlatformPreset; upstream?: string };
-    const range = platformRange(q.preset ?? 'today');
+    const q = req.query as { preset?: string };
+    const range = platformRange(presetOr(q.preset, 'today'));
     const spanMs = new Date(range.to).getTime() - new Date(range.from).getTime();
     // Two days or less is shown hourly, longer spans daily — the same rule as /api/me/usage
     const byHour = spanMs <= 2 * 86400_000;
 
-    /*
-     * Which upstream to count, if the operator picked one. The same three-way reading as
-     * /api/me/usage: absent is all of them, `none` is the rows with no upstream of ours —
-     * what the CLI booked itself, which happens only when the gateway was not in the path.
-     *
-     * The question this answers is the one the console could not: what is each upstream, and
-     * each credential behind it, costing the platform — and who is spending it there.
-     */
-    const only: usageRepo.UpstreamFilter =
-      q.upstream === undefined || q.upstream === '' ? undefined
-        : q.upstream === 'none' ? null
-          : q.upstream;
-
     return {
       range,
       currency: getString('billing.currency', 'USD'),
-      /** Echoed so the page can say which upstream the figures are narrowed to */
-      upstream: q.upstream === undefined || q.upstream === '' ? null : q.upstream,
-      totals: usageRepo.totalsAllInRange(range, only),
+      totals: usageRepo.totalsAllInRange(range),
       // Padded here: the bucket keys are the server's local time, and a client rebuilding
       // them from its own clock matches nothing
-      series: usageRepo.seriesAllInRange(range, byHour ? 'hour' : 'day', only),
+      series: usageRepo.seriesAllInRange(range, byHour ? 'hour' : 'day'),
       seriesUnit: byHour ? ('hour' as const) : ('day' as const),
-      topUsers: usageRepo.topUsers(range, 10, only),
-      /** Never narrowed: this is the list being chosen from */
       byUpstream: usageRepo.byUpstreamAll(range),
+      /** Every (upstream, model) pair, for the page to reveal under the upstream it belongs to */
+      byUpstreamModel: usageRepo.byUpstreamModelAll(range),
     };
   });
-}
 
-export type PlatformPreset = 'window' | 'weekWindow' | 'today' | 'last7' | 'last30' | 'month' | 'all';
-
-function platformRange(preset: PlatformPreset): { from: string; to: string; label: string } {
-  const now = new Date();
-  const iso = (d: Date) => d.toISOString();
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const endOfToday = iso(new Date(today.getTime() + 86400_000));
-
-  switch (preset) {
-    /*
-     * The same bounds the live card above reports, from the same function, so the two cannot
-     * disagree about where the window starts — and the period control can answer "who spent
-     * it" for the window that refuses first, which was the one period it could not.
-     */
-    case 'window': {
-      const w = quota.boundsOf('window', now);
-      return { from: iso(w.start), to: iso(w.end), label: 'This window' };
-    }
-    /*
-     * The seven days the quota is counting, which are not the calendar's.
-     *
-     * From `boundsOf` rather than recomputed, for the same reason the five-hour window above
-     * is: once an upstream states its own weekly cadence the window phase-locks to it, so a
-     * week that opened at 20:00 on a Monday reopens at 20:00 on a Monday — and a console
-     * cutting it on the administrator's calendar would report a period the gate is not
-     * enforcing. No per-user reset here: `countsFrom` is one user's, and this card is
-     * everybody's.
-     */
-    case 'weekWindow': {
-      const w = quota.boundsOf('week', now);
-      return { from: iso(w.start), to: iso(w.end), label: 'This 7-day window' };
-    }
-    case 'last7':
-      return { from: iso(new Date(today.getTime() - 6 * 86400_000)), to: endOfToday, label: 'Last 7 days' };
-    // The old landing page always drew thirty days, and one preset short of it is a
-    // regression on the first of a month, when "This month" is a single bar
-    case 'last30':
-      return { from: iso(new Date(today.getTime() - 29 * 86400_000)), to: endOfToday, label: 'Last 30 days' };
-    case 'month':
-      return { from: usageRepo.periodStart('monthly'), to: endOfToday, label: 'This month' };
-    case 'all':
-      return { from: '1970-01-01T00:00:00.000Z', to: endOfToday, label: 'All time' };
-    case 'today':
-    default:
-      return { from: iso(today), to: endOfToday, label: 'Today' };
-  }
+  /**
+   * The same period, asked about people instead of upstreams.
+   *
+   * Its own route and its own tab because it is its own question. The card above used to end
+   * in a top-ten list, which put "where is the money going" and "who is spending it" in one
+   * scroll and answered neither properly: ten rows is a leaderboard, not an account of a
+   * period, and an operator looking for one person's spend had to hope they were in the top
+   * ten.
+   *
+   * Every account that spent anything, then — not a top N. The list is one row per user, and
+   * the models under each are fetched when a row is opened, from the per-user route that
+   * already exists. Sending every (user, model) pair inline is what the upstream card does,
+   * and it can: upstreams are a handful. Users are not bounded that way.
+   */
+  app.get('/api/admin/usage-by-user', guard, async (req) => {
+    const q = req.query as { preset?: string };
+    // The same default as the card above, so an operator moving between the two tabs to
+    // compare is not silently handed two different periods
+    const range = platformRange(presetOr(q.preset, 'today'));
+    return {
+      range,
+      currency: getString('billing.currency', 'USD'),
+      totals: usageRepo.totalsAllInRange(range),
+      /*
+       * Every account with activity, not a top N: the rows have to add up to the total above
+       * them, which a truncated list cannot do. A turn belongs to exactly one account, so
+       * unlike the upstream breakdown these rows add up in every column, turns included.
+       */
+      rows: usageRepo.allUsersInRange(range),
+    };
+  });
 }

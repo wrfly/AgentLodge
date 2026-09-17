@@ -119,14 +119,18 @@ console.log('\n=== And it is not a turn ===');
   ok('while the refusal is still counted where it belongs', usage.refusedCount(NEXT) === 1);
 }
 
-console.log('\n=== Who spent the most does not list people who spent nothing ===');
+console.log('\n=== The console\'s list of who was active accounts for the period ===');
 {
   /*
-   * A refusal row has zero of everything, so somebody refused and nothing else would sit in
-   * the leaderboard at 0 — and, worse, the filter that keeps them out is a HAVING on a name
-   * that is both an output alias and a real column. SQLite binds the bare name to an
-   * arbitrary row of the group, so `having billable_tokens > 0` dropped every user with even
-   * one zero row: the list came back empty while the total beside it read 459,000.
+   * This list used to be a leaderboard, and the filter that kept zero-spend accounts out of
+   * it was a HAVING on a name that is both an output alias and a real column. SQLite binds
+   * the bare name to an arbitrary row of the group, so `having billable_tokens > 0` dropped
+   * every user with even one zero row: the list came back empty while the total beside it
+   * read 459,000.
+   *
+   * The filter is gone — the console prints a total above these rows and every row it counts
+   * has to be here — so that exact bug cannot recur. What the aggregate has to keep getting
+   * right is the sum itself, which is what these cases now pin.
    */
   /*
    * Distinct instants, zero rows on both sides of the spend. Which row SQLite reads a bare
@@ -138,12 +142,34 @@ console.log('\n=== Who spent the most does not list people who spent nothing ===
   backdate(alice, '2026-08-23T20:10:00.000Z');
   usage.record({ userId: alice, agent: 'claude', status: 'aborted' });
   backdate(alice, '2026-08-23T22:30:00.000Z');
-  const top = usage.topUsers(NEXT, 10);
-  ok('the spender is listed', top.some((u) => u.username === 'alice' && u.billableTokens > 0),
-    JSON.stringify(top.map((u) => [u.username, u.billableTokens])));
-  ok('and having a zero row alongside does not hide them', top.length === 1, String(top.length));
-  ok('while somebody with only a refusal is left out', !top.some((u) => u.username === 'bob'));
-  ok('the total counts the same spend', usage.totalsAllInRange(NEXT).billableTokens > 0);
+  // Somebody whose only turn in the window failed: zero of everything, but a turn the total
+  // above these rows still counts
+  usage.record({ userId: bob, agent: 'claude', status: 'error' });
+  backdate(bob, '2026-08-23T21:00:00.000Z');
+  const rows = usage.allUsersInRange(NEXT);
+  ok('the spender is listed', rows.some((u) => u.username === 'alice' && u.billableTokens > 0),
+    JSON.stringify(rows.map((u) => [u.username, u.billableTokens])));
+  /*
+   * The bug this pins: `billable_tokens` is both an output alias and a real column, so an
+   * aggregate that names it bare lets SQLite read some arbitrary row of the group — and a
+   * spender whose group also holds zero rows came back as zero, or vanished entirely.
+   */
+  ok('and zero rows alongside do not swallow their spend',
+    rows.find((u) => u.username === 'alice')?.billableTokens === usage.totalsAllInRange(NEXT).billableTokens,
+    JSON.stringify(rows.map((u) => [u.username, u.billableTokens])));
+  /*
+   * Somebody whose only turns were refused belongs here as a row of zeroes. This list accounts
+   * for a period rather than ranking it: the console prints a total above these rows, and that
+   * total counts bob's turns, so dropping his row would leave a figure nothing adds up to.
+   */
+  const bobRow = rows.find((u) => u.username === 'bob');
+  ok('somebody with only a refusal is a row of zeroes, not a gap',
+    bobRow !== undefined && bobRow.billableTokens === 0, JSON.stringify(bobRow));
+  ok('and their turns are counted, which is why the row has to be there',
+    (bobRow?.turns ?? 0) > 0, String(bobRow?.turns));
+  ok('the rows account for the period',
+    rows.reduce((n, u) => n + u.billableTokens, 0) === usage.totalsAllInRange(NEXT).billableTokens,
+    String(rows.reduce((n, u) => n + u.billableTokens, 0)));
 }
 
 fs.rmSync(box, { recursive: true, force: true });

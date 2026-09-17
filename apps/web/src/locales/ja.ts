@@ -307,10 +307,6 @@ export const ja: Record<string, string> = {
   '{n} conversations': '会話 {n} 件',
   'last login {when}': '最終ログイン {when}',
   unlimited: '無制限',
-  'Zero the usage for this period — nothing is deleted, the counting start just moves forward': '今回の期間の使用量をゼロにします（記録は削除せず、集計の起点を進めるだけです）',
-  'Reset to zero': 'ゼロにする',
-  Zeroed: 'ゼロにしました',
-  '(nothing was deleted; the counting start just moved forward)': '（記録は削除されておらず、集計の起点が進んだだけです）',
   Undo: '元に戻す',
   Period: '期間',
   Daily: '日次',
@@ -416,7 +412,6 @@ export const ja: Record<string, string> = {
   'Request failed ({status})': 'リクエストに失敗しました（{status}）',
   'Export failed': 'エクスポートに失敗しました',
   'Upstream plan allowance': '上流プランの残量',
-  'What the shared subscription reports about itself. Users are shown their own quota instead, so this is the only place it is visible.': '共有サブスクリプション自身が報告している数値です。ユーザーには各自のクォータが表示されるため、ここでしか確認できません。',
   'Cannot reach the gateway': 'ゲートウェイに接続できません',
   'Nothing observed yet — it fills in on the next upstream response.': 'まだ観測されていません。次の上流レスポンスが通れば表示されます。',
   'as of {t}': '{t} 時点',
@@ -627,7 +622,7 @@ export const ja: Record<string, string> = {
   'counting from {when}': '{when} から計上',
 
   // The admin overview: the live window, and everybody over one period
-  'Usage, all users': '全ユーザーの使用量',
+  'Platform usage': 'プラットフォーム使用量',
   'resets in {d}': '{d} 後にリセット',
   '{n}% of the window elapsed': 'ウィンドウの {n}% が経過',
   '{n} hit their quota': '{n} 人がクォータに到達',
@@ -678,6 +673,13 @@ export const ja: Record<string, string> = {
   'Everything else on this page counts this upstream only. Click the row again for all of them.': 'このページの他の部分はこのアップストリームだけを数えます。もう一度クリックすると全体に戻ります。',
   'Click a row to count only that upstream everywhere else on this page.': '行をクリックすると、このページの他の部分はそのアップストリームだけを数えます。',
   'All upstreams': 'すべてのアップストリーム',
-  'Everything else in this card counts this upstream only. Click the row again for all of them.': 'このカードの他の部分はこのアップストリームだけを数えます。もう一度クリックすると全体に戻ります。',
-  'Click a row to count only that upstream everywhere else in this card.': '行をクリックすると、このカードの他の部分はそのアップストリームだけを数えます。',
+
+  // The console's usage tabs
+  'Deleted account': '削除されたアカウント',
+  User: 'ユーザー',
+  'User usage': 'ユーザー使用量',
+  Accounts: 'アカウント',
+  'Usage by user': 'ユーザー別の使用量',
+  'Click an upstream to see which models its spend went on.': 'アップストリームをクリックすると、その支出がどのモデルに使われたか分かります。',
+  'Click a user to see which models their spend went on.': 'ユーザーをクリックすると、その支出がどのモデルに使われたか分かります。',
 };

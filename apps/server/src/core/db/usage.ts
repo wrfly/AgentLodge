@@ -579,6 +579,44 @@ function byUpstream(range?: Range | string, userId?: string): UpstreamUsage[] {
   }));
 }
 
+/** One model's share of one upstream — `providerId` empty for the rows with no upstream of ours */
+export interface UpstreamModelUsage extends Totals {
+  providerId: string;
+  model: string;
+}
+
+/**
+ * Every (upstream, model) pair over a range, for the console to hang under its upstream rows.
+ *
+ * One scan for the whole card rather than one per upstream opened. The result is bounded by
+ * providers × models — a couple of dozen rows on any deployment that has a price table — so
+ * sending it all and letting the page reveal a row's share costs less than a request per
+ * click, and the expanded rows are guaranteed to add up to the row they hang under because
+ * both came from the same scan.
+ *
+ * No join at all, which is how spend with no upstream of ours keeps its row: `byUpstream`
+ * needs one for the provider's name and credential and makes it a **left** join for exactly
+ * this reason, and here there is no name to fetch. Anyone adding one later should make it
+ * left too — an inner join would silently drop the not-through-the-gateway bucket, and a
+ * breakdown that stops summing to the total above it is the one thing it must not do.
+ */
+export function byUpstreamModelAll(range?: Range | string): UpstreamModelUsage[] {
+  const [from, to] = bounds(range);
+  return all<TotalsRow & { provider_id: string | null; model: string | null }>(
+    `select u.provider_id, coalesce(u.model, '') as model, ${SUM('u.')}
+     from usage_records u
+     where u.created_at >= ? and u.created_at < ?
+     group by u.provider_id, coalesce(u.model, '')
+     order by billable_tokens desc`,
+    from,
+    to,
+  ).map((r) => ({
+    providerId: r.provider_id ?? '',
+    model: r.model ?? '',
+    ...toTotals(r),
+  }));
+}
+
 export function byConversationForUser(
   userId: string,
   limit = 20,
@@ -610,30 +648,46 @@ export function byConversationForUser(
 
 export interface UserLeaderRow extends Totals {
   userId: string;
+  /** Empty when the account has been deleted and only its spend is left */
   username: string;
   email: string;
 }
 
-export function topUsers(range?: Range | string, limit = 20, only?: UpstreamFilter): UserLeaderRow[] {
+/**
+ * Every account with any activity over a range, heaviest first.
+ *
+ * This has to **account for the period**, which is what separates it from a leaderboard: the
+ * console prints a total above these rows, so every row the total counts has to be here.
+ *
+ * Two consequences, both deliberate:
+ *
+ * No `having`. An account whose only turns in the range were refused or errored spent nothing
+ * and would be filtered out of a leaderboard as noise — but the total counts its turns, so
+ * dropping it leaves a turn count nothing adds up to and no row to attribute the difference
+ * to. A row of zeroes is the honest answer to "who was active".
+ *
+ * A **left** join, like `byUpstream` and for the same reason. `usage_records.user_id` has no
+ * foreign key and nothing cascades, so deleting an account leaves its spend in the table; an
+ * inner join would drop that spend from the breakdown while the total above it still counted
+ * it. `username` comes back empty for those, and the console names the row rather than
+ * leaving a gap.
+ */
+export function allUsersInRange(range: Range): UserLeaderRow[] {
   const [from, to] = bounds(range);
-  const f = onlyUpstream(only, 'u.');
-  return all<TotalsRow & { user_id: string; username: string; email: string }>(
+  return all<TotalsRow & { user_id: string; username: string | null; email: string | null }>(
     `select u.user_id, us.username, us.email, ${SUM('u.')}
-     from usage_records u join users us on us.id = u.user_id
-     where u.created_at >= ? and u.created_at < ?${f.sql}
+     from usage_records u left join users us on us.id = u.user_id
+     where u.created_at >= ? and u.created_at < ?
      group by u.user_id
-     -- Somebody whose only row in the window is a refusal spent nothing, and a list of who
-     -- spent the most should not have them in it at all. Spelled as the aggregates rather
-     -- than the output aliases: billable_tokens is also a real column, so SQLite binds the
-     -- bare name to some arbitrary row of the group and a user with one zero row vanishes.
-     having sum(u.billable_tokens) > 0 or sum(u.cost_micro) > 0
-     order by billable_tokens desc
-     limit ?`,
+     order by billable_tokens desc`,
     from,
     to,
-    ...f.params,
-    limit,
-  ).map((r) => ({ userId: r.user_id, username: r.username, email: r.email, ...toTotals(r) }));
+  ).map((r) => ({
+    userId: r.user_id,
+    username: r.username ?? '',
+    email: r.email ?? '',
+    ...toTotals(r),
+  }));
 }
 
 export function dailyAllInRange(range: Range, only?: UpstreamFilter): DailyPoint[] {

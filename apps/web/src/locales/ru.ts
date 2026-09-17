@@ -307,10 +307,6 @@ export const ru: Record<string, string> = {
   '{n} conversations': 'бесед: {n}',
   'last login {when}': 'последний вход {when}',
   unlimited: 'без ограничения',
-  'Zero the usage for this period — nothing is deleted, the counting start just moves forward': 'Обнулить расход за текущий период — ничего не удаляется, лишь сдвигается точка отсчёта',
-  'Reset to zero': 'Обнулить',
-  Zeroed: 'Обнулено',
-  '(nothing was deleted; the counting start just moved forward)': '(ничего не удалено; сдвинута лишь точка отсчёта)',
   Undo: 'Отменить',
   Period: 'Период',
   Daily: 'Ежедневно',
@@ -416,7 +412,6 @@ export const ru: Record<string, string> = {
   'Request failed ({status})': 'Запрос не удался ({status})',
   'Export failed': 'Не удалось экспортировать',
   'Upstream plan allowance': 'Лимиты плана апстрима',
-  'What the shared subscription reports about itself. Users are shown their own quota instead, so this is the only place it is visible.': 'Что общая подписка сообщает о себе. Пользователям показывается их собственная квота, поэтому увидеть это можно только здесь.',
   'Cannot reach the gateway': 'Не удаётся связаться со шлюзом',
   'Nothing observed yet — it fills in on the next upstream response.': 'Пока ничего не зафиксировано — заполнится при следующем ответе апстрима.',
   'as of {t}': 'по состоянию на {t}',
@@ -627,7 +622,7 @@ export const ru: Record<string, string> = {
   'counting from {when}': 'счёт идёт с {when}',
 
   // The admin overview: the live window, and everybody over one period
-  'Usage, all users': 'Расход, все пользователи',
+  'Platform usage': 'Расход платформы',
   'resets in {d}': 'сброс через {d}',
   '{n}% of the window elapsed': 'прошло {n}% окна',
   '{n} hit their quota': '{n} упёрлись в квоту',
@@ -678,6 +673,13 @@ export const ru: Record<string, string> = {
   'Everything else on this page counts this upstream only. Click the row again for all of them.': 'Всё остальное на этой странице считает только этот апстрим. Нажмите строку ещё раз, чтобы вернуть все.',
   'Click a row to count only that upstream everywhere else on this page.': 'Нажмите строку, чтобы всё остальное на странице считало только этот апстрим.',
   'All upstreams': 'Все апстримы',
-  'Everything else in this card counts this upstream only. Click the row again for all of them.': 'Всё остальное в этой карточке считает только этот апстрим. Нажмите строку ещё раз, чтобы вернуть все.',
-  'Click a row to count only that upstream everywhere else in this card.': 'Нажмите строку, чтобы всё остальное в карточке считало только этот апстрим.',
+
+  // The console's usage tabs
+  'Deleted account': 'Удалённая учётная запись',
+  User: 'Пользователь',
+  'User usage': 'Расход пользователей',
+  Accounts: 'Учётные записи',
+  'Usage by user': 'Расход по пользователям',
+  'Click an upstream to see which models its spend went on.': 'Нажмите на апстрим, чтобы увидеть, на какие модели пришёлся его расход.',
+  'Click a user to see which models their spend went on.': 'Нажмите на пользователя, чтобы увидеть, на какие модели пришёлся его расход.',
 };

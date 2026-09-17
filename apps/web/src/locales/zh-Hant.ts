@@ -289,10 +289,6 @@ export const zhHant: Record<string, string> = {
   '{n} conversations': '{n} 個對話',
   'last login {when}': '最後登入 {when}',
   unlimited: '不限量',
-  'Zero the usage for this period — nothing is deleted, the counting start just moves forward': '把這個週期的用量歸零——什麼都不會刪，只是把計數起點往前挪',
-  'Reset to zero': '歸零',
-  Zeroed: '已歸零',
-  '(nothing was deleted; the counting start just moved forward)': '（什麼都沒刪，只是把計數起點往前挪了）',
   Undo: '復原',
   Period: '週期',
   Daily: '每日',
@@ -392,7 +388,6 @@ export const zhHant: Record<string, string> = {
   'Request failed ({status})': '請求失敗（{status}）',
   'Export failed': '匯出失敗',
   'Upstream plan allowance': '上游套餐額度',
-  'What the shared subscription reports about itself. Users are shown their own quota instead, so this is the only place it is visible.': '這份共用訂閱自己報的數字。使用者那側看到的是各自的配額，所以只有這裡看得到。',
   'Cannot reach the gateway': '連不上網關',
   'Nothing observed yet — it fills in on the next upstream response.': '還沒有觀測到——下一次上游回應時就會填上。',
   'as of {t}': '截至 {t}',
@@ -601,7 +596,7 @@ export const zhHant: Record<string, string> = {
   'counting from {when}': '從 {when} 起計',
 
   // The admin overview: the live window, and everybody over one period
-  'Usage, all users': '全部使用者用量',
+  'Platform usage': '平台用量',
   'resets in {d}': '{d} 後重置',
   '{n}% of the window elapsed': '視窗已過 {n}%',
   '{n} hit their quota': '{n} 人撞到配額',
@@ -652,6 +647,13 @@ export const zhHant: Record<string, string> = {
   'Everything else on this page counts this upstream only. Click the row again for all of them.': '本頁其餘部分只統計這個上游。再點這一列可恢復全部。',
   'Click a row to count only that upstream everywhere else on this page.': '點某一列，本頁其餘部分只統計那個上游。',
   'All upstreams': '全部上游',
-  'Everything else in this card counts this upstream only. Click the row again for all of them.': '本卡其餘部分只統計這個上游。再點這一列可恢復全部。',
-  'Click a row to count only that upstream everywhere else in this card.': '點某一列，本卡其餘部分只統計那個上游。',
+
+  // The console's usage tabs
+  'Deleted account': '已刪除的帳號',
+  User: '使用者',
+  'User usage': '使用者用量',
+  Accounts: '帳號管理',
+  'Usage by user': '依使用者統計用量',
+  'Click an upstream to see which models its spend went on.': '點擊某個上游，查看它的花費用在哪些模型上。',
+  'Click a user to see which models their spend went on.': '點擊某個使用者，查看其花費用在哪些模型上。',
 };

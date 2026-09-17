@@ -1501,9 +1501,11 @@ GET    /api/usage/conversations      # 按会话排行
 
 # 管理员
 GET    /api/admin/overview
+GET    /api/admin/usage              ?preset  # 平台总量 + 折线 + 上游，上游可展开到模型
+GET    /api/admin/usage-by-user      ?preset  # 同一周期按人，每个账号一行，不截断
 GET    /api/admin/users              ?q&sort
+GET    /api/admin/users/:id/usage-by-agent   ?preset  # 单个账号，按 agent × 模型
 PATCH  /api/admin/users/:id          额度、状态、角色；第一个账号不能降级或停用
-POST   /api/admin/users/:id/reset-usage
 POST   /api/admin/users/:id/container/restart
 GET    /api/admin/invites
 POST   /api/admin/invites

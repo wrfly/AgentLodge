@@ -662,17 +662,40 @@ export interface AdminOverview {
 
 export type PlatformPreset = 'window' | 'weekWindow' | 'today' | 'last7' | 'last30' | 'month' | 'all';
 
+/** One model's share of one upstream. `providerId` is empty for the rows with no upstream of ours. */
+export interface UpstreamModelUsage extends UsageTotals {
+  providerId: string;
+  model: string;
+}
+
 export interface PlatformUsage {
   range: { from: string; to: string; label: string };
   currency: string;
-  /** The upstream everything but `byUpstream` is narrowed to, or null for all of them */
-  upstream: string | null;
   totals: UsageTotals;
   series: SeriesPoint[];
   seriesUnit: 'hour' | 'day';
-  topUsers: Array<UsageTotals & { userId: string; username: string; email: string }>;
-  /** Every upstream over the range, never narrowed — the list being chosen from */
+  /** Every upstream over the range */
   byUpstream: UpstreamUsage[];
+  /**
+   * Every (upstream, model) pair over the same range, for the page to reveal under the
+   * upstream it belongs to. Sent whole rather than fetched per expansion: it is a couple of
+   * dozen rows, and coming from the same scan as `byUpstream` is what guarantees an
+   * upstream's models add up to the row they open from.
+   */
+  byUpstreamModel: UpstreamModelUsage[];
+}
+
+/**
+ * Every account that spent anything over a period, heaviest first.
+ *
+ * Not a top N: `rows` is meant to account for the period, so it adds up to `totals`. Accounts
+ * that spent nothing are left out — a row of zeroes is noise in a list of where money went.
+ */
+export interface UsersUsage {
+  range: { from: string; to: string; label: string };
+  currency: string;
+  totals: UsageTotals;
+  rows: Array<UsageTotals & { userId: string; username: string; email: string }>;
 }
 
 export interface PricingRow {
@@ -988,9 +1011,11 @@ export interface AuditEntry {
 
 export const admin = {
   overview: () => request<AdminOverview>('/api/admin/overview'),
-  /** `upstream` narrows everything but the upstream breakdown; 'none' is the rows with no upstream */
-  platformUsage: (preset: PlatformPreset, upstream?: string | null) =>
-    request<PlatformUsage>(`/api/admin/usage?preset=${preset}${upstream ? `&upstream=${encodeURIComponent(upstream)}` : ''}`),
+  platformUsage: (preset: PlatformPreset) =>
+    request<PlatformUsage>(`/api/admin/usage?preset=${preset}`),
+  /** The same period asked about people rather than upstreams — the user usage tab */
+  usageByUser: (preset: PlatformPreset) =>
+    request<UsersUsage>(`/api/admin/usage-by-user?preset=${preset}`),
   users: () => request<AdminUser[]>('/api/admin/users'),
   /**
    * One account's per-model breakdown, fetched when a row in the list is opened.
@@ -999,8 +1024,11 @@ export const admin = {
    * conversations, the sessions and every memory file this user owns, none of which is on
    * screen here.
    */
-  userAgentUsage: (id: string, signal?: AbortSignal) =>
-    request<UserAgentUsage>(`/api/admin/users/${encodeURIComponent(id)}/usage-by-agent`, { signal }),
+  userAgentUsage: (id: string, preset: PlatformPreset, signal?: AbortSignal) =>
+    request<UserAgentUsage>(
+      `/api/admin/users/${encodeURIComponent(id)}/usage-by-agent?preset=${preset}`,
+      { signal },
+    ),
   updateUser: (
     id: string,
     patch: {
@@ -1043,11 +1071,6 @@ export const admin = {
   removePricing: (id: number) =>
     request<{ ok: boolean }>(`/api/admin/pricing/${id}`, { method: 'DELETE' }),
 
-  resetUsage: (id: string, undo = false) =>
-    request<{ ok: boolean; clearedTokens?: number; undone?: boolean; quota: QuotaStatus }>(
-      `/api/admin/users/${id}/reset-usage`,
-      { method: 'POST', body: JSON.stringify({ undo }) },
-    ),
   logoutAll: (id: string) =>
     request<{ ok: boolean; revoked: number }>(`/api/admin/users/${id}/logout-all`, {
       method: 'POST',

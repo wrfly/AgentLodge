@@ -103,10 +103,14 @@ interface Report {
   total: { turns: number; inputTokens: number };
 }
 
-const fetchIt = (id: string, who = root.bearer) =>
-  app.inject({ method: 'GET', url: `/api/admin/users/${id}/usage-by-agent`, headers: who });
+const fetchIt = (id: string, preset = 'month', who = root.bearer) =>
+  app.inject({
+    method: 'GET',
+    url: `/api/admin/users/${id}/usage-by-agent?preset=${preset}`,
+    headers: who,
+  });
 
-const ask = async (id: string) => (await fetchIt(id)).json() as Report;
+const ask = async (id: string, preset = 'month') => (await fetchIt(id, preset)).json() as Report;
 const rowSum = (rows: Row[]) => rows.reduce((n, r) => n + r.inputTokens, 0);
 
 console.log('\n=== What one account spent, per agent and per model ===');
@@ -134,7 +138,7 @@ console.log('\n=== What one account spent, per agent and per model ===');
     typeof d.currency === 'string' && d.currency.length > 0, String(d.currency));
   // The console prints this beside the figures; picking it there would be a second opinion
   // about what the range is
-  ok('and the range says what it is', d.range.label === 'This quota month', d.range.label);
+  ok('and the range says what it is', d.range.label === 'This month', d.range.label);
 }
 
 console.log('\n=== The breakdown comes with its own total, over its own range ===');
@@ -162,47 +166,82 @@ console.log('\n=== The breakdown comes with its own total, over its own range ==
 }
 
 /*
- * The case the label is about. "This quota month" is what the user's own usage page calls the
- * range the gate counts over, and the gate counts from a manual reset rather than from the
- * month boundary. Read from the boundary instead, this panel would have shown a just-zeroed
- * account its whole forgiven month under words the other page uses for nothing.
+ * The periods are the console's own — one list, cut on the server — so the panel and the
+ * all-users card can be read against each other. Two lists would drift, and a comparison
+ * between two differently-cut "7-day windows" is worse than no comparison.
  */
-console.log('\n=== A reset moves the range, because it moves what the gate counts ===');
+console.log('\n=== The period is chosen, and it is the same list the platform card offers ===');
 {
-  const beforeReset = await ask(bob.user.id);
-  ok('there is spend to forgive', beforeReset.total.inputTokens === 1_400,
-    String(beforeReset.total.inputTokens));
+  const month = await ask(bob.user.id, 'month');
+  const window = await ask(bob.user.id, 'window');
+  const all = await ask(bob.user.id, 'all');
 
+  ok('each preset says which period it is', window.range.label === 'This window', window.range.label);
+  /*
+   * Labels, not instants. With no observed window reset the 5-hour grid is phased on the
+   * quota anchor, so it realigns with the month boundary every five days — comparing the two
+   * `from` values fails on a correct implementation for the first five hours of roughly one
+   * month in five.
+   */
+  ok('and they are different periods', window.range.label !== month.range.label,
+    `${window.range.label} vs ${month.range.label}`);
+  ok('the rows follow the period they were asked for',
+    all.total.inputTokens === 1_600 && month.total.inputTokens === 1_400,
+    `all ${all.total.inputTokens}, month ${month.total.inputTokens}`);
+  ok('and the total follows with them', rowSum(all.rows) === all.total.inputTokens,
+    `${rowSum(all.rows)} vs ${all.total.inputTokens}`);
+  // The row moved out of the month earlier in this file; all-time is where it still is
+  ok('the row from before the month is back under all time',
+    all.rows.some((r) => r.agent === 'codex'), JSON.stringify(all.rows.map((r) => r.agent)));
+
+  /*
+   * A typo must not be a different period. The query string is not typed, and the switch in
+   * `platformRange` has a `default:` — so an unvalidated preset used to answer 'Today' while
+   * omitting the parameter answered the route's own default, which made `?preset=moth` return
+   * something plausible-looking and wrong.
+   */
+  const unknown = await ask(bob.user.id, 'not-a-preset');
+  const omitted = (await (await app.inject({
+    method: 'GET', url: `/api/admin/users/${bob.user.id}/usage-by-agent`, headers: root.bearer,
+  })).json()) as Report;
+  ok('an unknown preset falls back to what omitting it would give',
+    unknown.range.label === omitted.range.label, `${unknown.range.label} vs ${omitted.range.label}`);
+  ok('which is this route\'s own default', omitted.range.label === 'Today', omitted.range.label);
+}
+
+/*
+ * These are reporting ranges: the same instants for every account. An old `reset_at` could
+ * still move what the *gate* counts for one user — that is the quota bar's business, and it is
+ * shown there — but it must not move what this panel reports, or two accounts' "This month"
+ * would be different months.
+ */
+console.log('\n=== One account\'s counting start does not move the period ===');
+{
+  const before = await ask(bob.user.id);
   users.resetUsage(bob.user.id);
+  const after = await ask(bob.user.id);
 
-  const afterReset = await ask(bob.user.id);
-  ok('the rows start again from the reset', afterReset.rows.length === 0,
-    JSON.stringify(afterReset.rows));
-  ok('and so does the total', afterReset.total.inputTokens === 0,
-    String(afterReset.total.inputTokens));
-  ok('the range starts at the reset, not at the month',
-    new Date(afterReset.range.from) > quota.boundsOf('month').start,
-    `${afterReset.range.from} vs ${quota.boundsOf('month').start.toISOString()}`);
-  // What the console draws an `Empty` for — an account with a range but nothing in it
-  ok('which is an empty breakdown, not an error', afterReset.range.label === 'This quota month',
-    afterReset.range.label);
+  ok('the range is where it was', after.range.from === before.range.from,
+    `${after.range.from} vs ${before.range.from}`);
+  ok('and so are the figures', after.total.inputTokens === before.total.inputTokens,
+    `${after.total.inputTokens} vs ${before.total.inputTokens}`);
+  ok('rows included', rowSum(after.rows) === rowSum(before.rows),
+    `${rowSum(after.rows)} vs ${rowSum(before.rows)}`);
 
   users.undoResetUsage(bob.user.id);
-  const undone = await ask(bob.user.id);
-  ok('undoing the reset brings the month back', undone.total.inputTokens === 1_400,
-    String(undone.total.inputTokens));
-  ok('rows included', rowSum(undone.rows) === 1_400, String(rowSum(undone.rows)));
 }
 
 console.log('\n=== An account that has never spent anything ===');
 {
+  // What the console draws its `Empty` for: a range with nothing in it, not an error
   const quiet = await signedIn('q@example.com', 'quiet', 'user');
   const d = await ask(quiet.user.id);
   ok('no rows', d.rows.length === 0, JSON.stringify(d.rows));
   ok('a zeroed total rather than a missing one', d.total.inputTokens === 0 && d.total.turns === 0,
     JSON.stringify(d.total));
-  ok('and still a currency to format it in', typeof d.currency === 'string' && d.currency.length > 0,
-    String(d.currency));
+  ok('and still a range and a currency to label it with',
+    d.range.label === 'This month' && typeof d.currency === 'string' && d.currency.length > 0,
+    `${d.range.label} / ${d.currency}`);
 }
 
 console.log('\n=== A turn that called two models is one turn, and the total says so ===');
@@ -223,7 +262,7 @@ console.log('\n=== A turn that called two models is one turn, and the total says
 
 console.log('\n=== It is the console, so it is for administrators ===');
 {
-  const refused = await fetchIt(bob.user.id, alice.bearer);
+  const refused = await fetchIt(bob.user.id, 'month', alice.bearer);
   ok('a standard user is refused: 403', refused.statusCode === 403, String(refused.statusCode));
   const missing = await fetchIt('no-such-user');
   ok('an account that does not exist: 404', missing.statusCode === 404, String(missing.statusCode));
