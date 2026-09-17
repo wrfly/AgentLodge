@@ -24,9 +24,18 @@ export interface ModelFacts {
   context: number;
   /** Largest `max_tokens` a single request can ask for */
   maxOutput?: number;
-  /** List price per million tokens */
+  /**
+   * List price per million tokens, in `currency`.
+   *
+   * Each vendor's own published list, not converted: Anthropic publishes dollars and DeepSeek
+   * publishes yuan, and a converted figure here would disagree with what the price table
+   * charges the moment a rate moved. The two are cross-checked by scripts/check-pricing.mjs —
+   * one is what a user is told a model costs and the other is what they are charged.
+   */
   inPrice?: number;
   outPrice?: number;
+  /** ISO code for the two prices above. Absent means USD. */
+  currency?: string;
   /** SWE-bench Verified, as a percentage */
   swe?: number;
   /** Anything the numbers alone would misrepresent */
@@ -58,16 +67,17 @@ const FACTS: Record<string, ModelFacts> = {
   // The prices below are the off-peak ones, which is exactly what `note` is for: a reader
   // comparing $0.15 against Claude's $3 has to know the number is conditional, and a
   // source comment tells nobody.
-  'deepseek-flash': { context: M, maxOutput: 384 * K, inPrice: 0.15, outPrice: 0.6, note: PEAK },
-  'deepseek-v4-pro': { context: M, maxOutput: 384 * K, inPrice: 0.66, outPrice: 1.98, note: PEAK },
+  'deepseek-flash': { context: M, maxOutput: 384 * K, inPrice: 1, outPrice: 4, currency: 'CNY', note: PEAK },
+  'deepseek-v4-pro': { context: M, maxOutput: 384 * K, inPrice: 4.5, outPrice: 13.5, currency: 'CNY', note: PEAK },
   // Retired 2026-09-10. The name still answers, but what answers is V4.1-Flash — so the
   // price is that model's, and the 78.6 SWE-bench figure this entry used to carry is gone
   // with the model that earned it rather than transplanted onto its replacement.
   'deepseek-v4-flash': {
     context: M,
     maxOutput: 384 * K,
-    inPrice: 0.15,
-    outPrice: 0.6,
+    inPrice: 1,
+    outPrice: 4,
+    currency: 'CNY',
     note: `retired — served by V4.1-Flash; ${PEAK}`,
   },
 };
@@ -81,6 +91,7 @@ export function factsFor(name: string): ModelFacts | undefined {
 }
 
 /** $5 and $0.435 both read as themselves, without trailing zeros */
-export function price(n: number): string {
-  return `$${Number(n.toFixed(3))}`;
+export function price(n: number, currency = 'USD'): string {
+  const sym = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : `${currency} `;
+  return `${sym}${Number(n.toFixed(3))}`;
 }

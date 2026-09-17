@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import clsx from 'clsx';
-import { fmtMoney, me, type QuotaScope, type RangePreset, type SeriesPoint, type UsageReport } from '../lib/api';
+import { fmtCost,
+  fmtMoney, me, type QuotaScope, type RangePreset, type SeriesPoint, type UsageReport } from '../lib/api';
 import { navigate } from '../lib/route';
 import {
   Banner,
@@ -290,17 +291,17 @@ export function UsagePage() {
             <Stat
               label={t('Today')}
               value={fmtTokens(data.quick.today.billableTokens)}
-              sub={`${fmtMoney(data.quick.today.costMicro, data.quota.currency)} · ${t('{n} turns', { n: data.quick.today.turns })}`}
+              sub={`${fmtCost(data.quick.today.cost, data.quota.currency)} · ${t('{n} turns', { n: data.quick.today.turns })}`}
             />
             <Stat
               label={t('This month')}
               value={fmtTokens(data.quick.month.billableTokens)}
-              sub={`${fmtMoney(data.quick.month.costMicro, data.quota.currency)} · ${t('{n} turns', { n: data.quick.month.turns })}`}
+              sub={`${fmtCost(data.quick.month.cost, data.quota.currency)} · ${t('{n} turns', { n: data.quick.month.turns })}`}
             />
             <Stat
               label={t('All time')}
               value={fmtTokens(data.quick.allTime.billableTokens)}
-              sub={`${fmtMoney(data.quick.allTime.costMicro, data.quota.currency)} · ${t('{n} turns', { n: data.quick.allTime.turns })}`}
+              sub={`${fmtCost(data.quick.allTime.cost, data.quota.currency)} · ${t('{n} turns', { n: data.quick.allTime.turns })}`}
             />
           </div>
 
@@ -361,7 +362,7 @@ export function UsagePage() {
                 {data.totals.billableTokens.toLocaleString()}
               </span>
               <span className="font-mono text-[13px] text-muted">
-                {fmtMoney(data.totals.costMicro, data.quota.currency)}
+                {fmtCost(data.totals.cost, data.quota.currency)}
               </span>
               {/* Cache is read plus creation, the same split the table below and the chat
                   header use. It used to quote the read alone, so the two cards on this page
@@ -430,7 +431,7 @@ export function UsagePage() {
                             {r.billableTokens.toLocaleString()}
                           </td>
                           <td className="py-2 text-right font-mono tabular-nums">
-                            {fmtMoney(r.costMicro, data.quota.currency)}
+                            {fmtCost(r.cost, data.quota.currency)}
                           </td>
                         </tr>
                       );

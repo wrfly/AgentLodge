@@ -246,11 +246,29 @@ console.log('\n=== The breakdown adds up to the total printed above it ===');
     rows.reduce((n, r) => n + (r[k] ?? 0), 0);
 
   for (const field of ['inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens',
-                       'billableTokens', 'costMicro', 'calls'] as const) {
+                       'billableTokens', 'calls'] as const) {
     ok(`${field} adds up across models`, add(byAgent as never, field) === totals[field],
       `${add(byAgent as never, field)} vs ${totals[field]}`);
     ok(`${field} adds up across buckets`, add(hourly as never, field) === totals[field],
       `${add(hourly as never, field)} vs ${totals[field]}`);
+  }
+
+  /*
+   * Money is a map now, one entry per currency, so it adds up per currency rather than as one
+   * number — which is the property that actually matters: a breakdown that lost a currency
+   * would still balance if the two were summed first.
+   */
+  type Money = Record<string, number>;
+  const addMoney = (rows: Array<{ cost: Money }>): Money => {
+    const out: Money = {};
+    for (const r of rows) for (const [c, v] of Object.entries(r.cost)) out[c] = (out[c] ?? 0) + v;
+    return out;
+  };
+  for (const [label, rows] of [['models', byAgent], ['buckets', hourly]] as const) {
+    const summed = addMoney(rows);
+    ok(`cost adds up across ${label}, currency by currency`,
+      JSON.stringify(summed) === JSON.stringify(totals.cost),
+      `${JSON.stringify(summed)} vs ${JSON.stringify(totals.cost)}`);
   }
   ok('input is input alone, not input plus cache', totals.inputTokens === 310, String(totals.inputTokens));
   ok('and the cache is both halves of it',

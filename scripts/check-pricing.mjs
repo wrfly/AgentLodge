@@ -21,20 +21,33 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
-/** model → {in, out} from the picker's table */
+/**
+ * model → {in, out, currency} from the picker's table.
+ *
+ * The currency matters as much as the number now that vendors are held at their own list:
+ * a picker saying $1 beside a table charging ¥1 is wrong in a way neither figure reveals.
+ */
 const facts = new Map();
 for (const m of read('apps/web/src/lib/model-facts.ts').matchAll(
-  /'([\w.-]+)':\s*\{[^}]*?inPrice:\s*([\d.]+)[^}]*?outPrice:\s*([\d.]+)/g,
+  /'([\w.-]+)':\s*\{[^}]*?inPrice:\s*([\d.]+)[^}]*?outPrice:\s*([\d.]+)([^}]*)/g,
 )) {
-  facts.set(m[1], { in: Number(m[2]), out: Number(m[3]) });
+  const currency = /currency:\s*'([A-Z]{3})'/.exec(m[4] ?? '')?.[1] ?? 'USD';
+  facts.set(m[1], { in: Number(m[2]), out: Number(m[3]), currency });
 }
 
-/** model → {in, out} from the seed's `rate(input, output)` calls */
+/**
+ * model → {in, out, currency} from the seed's `rate(input, output)` calls.
+ *
+ * `currency` is optional and comes before the spread, which is why it is matched separately
+ * rather than by widening the one pattern: a row that gained a field the pattern did not
+ * expect used to stop matching altogether, and a parser that silently matches nothing passes
+ * while checking nothing. The count assertion below is the backstop for exactly that.
+ */
 const seeded = new Map();
 for (const m of read('apps/server/src/core/db/pricing.ts').matchAll(
-  /\{ model: '([\w.*-]+)', \.\.\.rate\(([\d.]+), ([\d.]+)/g,
+  /\{ model: '([\w.*-]+)',\s*(currency: '([A-Z]{3})',\s*)?\.\.\.rate\(([\d.]+), ([\d.]+)/g,
 )) {
-  seeded.set(m[1], { in: Number(m[2]), out: Number(m[3]) });
+  seeded.set(m[1], { in: Number(m[4]), out: Number(m[5]), currency: m[3] ?? 'USD' });
 }
 
 // A parser that quietly matched nothing would pass while checking nothing
@@ -53,9 +66,11 @@ for (const [model, a] of seeded) {
   const b = facts.get(model);
   if (!b) continue;
   compared += 1;
-  if (a.in !== b.in || a.out !== b.out) {
+  const sym = (c) => (c === 'CNY' ? '¥' : c === 'USD' ? '$' : `${c} `);
+  if (a.in !== b.in || a.out !== b.out || a.currency !== b.currency) {
     problems.push(
-      `  ${model}: the seed bills $${a.in}/$${a.out} per MTok, the picker says $${b.in}/$${b.out}`,
+      `  ${model}: the seed bills ${sym(a.currency)}${a.in}/${sym(a.currency)}${a.out} per MTok, `
+        + `the picker says ${sym(b.currency)}${b.in}/${sym(b.currency)}${b.out}`,
     );
   }
 }

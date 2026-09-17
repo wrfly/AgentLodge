@@ -1,5 +1,5 @@
 import { all, get, localDay, nowIso, run } from './index.js';
-import { quotaAnchor, quotaWeights } from './settings.js';
+import { getString, quotaAnchor, quotaWeights } from './settings.js';
 import {
   periodEndAt,
   periodStartAt,
@@ -33,39 +33,26 @@ export interface RecordInput {
 }
 
 /**
- * Convert to billable tokens: what the turn cost, expressed as a count.
+ * Convert to billable tokens: a turn's weight against a **token** ceiling.
  *
- * A plain sum of tokens is badly distorted in two directions. Within one turn, a cache hit
- * costs a fraction of ordinary input and output costs several times more. Across models, the
- * prices differ by a factor of ten over a single vendor's range — Claude Fable is $10/$50
- * per MTok against Haiku's $1/$5 — so counting tokens alike means somebody on the expensive
- * model spends ten times as much and draws exactly as much quota.
+ * A plain sum is distorted within a turn — a cache hit costs a fraction of ordinary input and
+ * output costs several times more — so the four counts are weighted, and the weights are
+ * configurable. That is the whole of it: this is a count, and it stays a count.
  *
- * Both come out of the price table, which is where the real numbers already are. The turn is
- * costed, then divided by what one input token costs at the catch-all price — the `*` row,
- * which every table has and which nothing else moves. So a billable token means "one input
- * token at the standard rate", every model converts at the ratio of its own prices, and the
- * awkward cases need no configuring: Claude Fable reads its cache at a fortieth of its input
- * price where the rest of the range is at a tenth, which one global weight cannot say.
+ * It used to be derived from money: the turn was costed from the price table and divided by
+ * the catch-all's input price, so an expensive model drew proportionally more quota. That is a
+ * good property and it is **not** a property a token count can have once two vendors bill in
+ * two currencies. Deriving it from money means either dividing each turn by the catch-all of
+ * its own currency — which makes DeepSeek's cheapest model draw exactly what Opus draws,
+ * because it *is* the yuan catch-all — or converting at a rate, which makes every user's quota
+ * move when an exchange rate does. Neither is a token count.
  *
- * The weights below are what is left when the table cannot answer — no rows at all, or a
- * model priced at zero. Falling through to zero instead would let a mispriced table quietly
- * make a model free.
+ * So the two questions are separated. A ceiling that should track what a model costs is a
+ * **cost** ceiling — `limitKind: 'cost'`, counted in the settlement currency, which is where
+ * an exchange rate legitimately belongs because a limit is one number. A token ceiling counts
+ * tokens, weighted, in no currency at all.
  */
-export function billable(u: TurnUsage, model?: string | null, providerId?: string | null): number {
-  /*
-   * Whether the table can price this, not whether the price rounded to something. Gating on
-   * a rounded cost put a cliff in the middle of the scale: on an upstream whose input token
-   * is 0.435 of a micro-unit, one token billed 1 (rounded to zero, so the weights answered),
-   * two through five billed 0, and six billed 1 again. The gateway writes a row per upstream
-   * call, so short calls met it one after another.
-   */
-  const priced = pricing.resolve(model, undefined, providerId);
-  const unit = pricing.resolve('*');
-  if (priced && unit && unit.priceInput > 0) {
-    return Math.round(pricing.costMicroExact(model, u, undefined, providerId) / (unit.priceInput / 1_000_000));
-  }
-
+export function billable(u: TurnUsage, _model?: string | null, _providerId?: string | null): number {
   const w = quotaWeights();
   return Math.round(
     u.inputTokens * w.input +
@@ -77,14 +64,21 @@ export function billable(u: TurnUsage, model?: string | null, providerId?: strin
 
 export function record(input: RecordInput): void {
   const u = input.usage;
+  /*
+   * The currency this turn's money is in: the one on the price row that priced it, so that
+   * `cost_micro` and `cost_currency` always come from the same row. Read here rather than
+   * from a global setting, because the whole point is that two upstreams bill in two
+   * different currencies at the same time.
+   */
+  const priced = pricing.resolve(input.model, undefined, input.providerId);
   // A failed turn with no usage still gets a row, for debugging, but is not billed
   run(
     `insert into usage_records
        (user_id, conversation_id, turn_id, agent, model, provider_id, effort,
         input_tokens, cache_read_tokens, cache_creation_tokens, output_tokens,
-        billable_tokens, cost_usd, cost_micro, duration_ms, num_turns, status, created_at, day,
-        source, queue_wait_ms, ttft_ms, api_key_id)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        billable_tokens, cost_usd, cost_micro, cost_currency, duration_ms, num_turns, status,
+        created_at, day, source, queue_wait_ms, ttft_ms, api_key_id)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.userId,
     input.conversationId ?? null,
     input.turnId ?? null,
@@ -99,6 +93,7 @@ export function record(input: RecordInput): void {
     u ? billable(u, input.model, input.providerId) : 0,
     u?.costUsd ?? 0,
     u ? pricing.costMicro(input.model, u, undefined, input.providerId) : 0,
+    priced?.currency ?? 'USD',
     u?.durationMs ?? null,
     u?.numTurns ?? null,
     input.status,
@@ -111,7 +106,169 @@ export function record(input: RecordInput): void {
   );
 }
 
+/**
+ * Recost every usage row from the price table, once.
+ *
+ * Two things left the stored money wrong, and neither can be fixed by pricing new turns
+ * correctly: a table that never got its Claude rows charged every Claude model at the
+ * catch-all for months, and `cost_currency` did not exist, so nothing recorded which money a
+ * figure was in. Both are recoverable, because the tokens were always right — the cost is
+ * derived, and deriving it again is all this does. No token count is touched.
+ *
+ * Each row is priced **at its own `created_at`**, not at now. That is what makes a peak-hour
+ * DeepSeek turn cost double and an older turn cost whatever the table said when it happened:
+ * `resolve()` already takes the instant, filters on `effective_from <= at`, and applies the
+ * vendor's peak windows to it. Pricing everything at now would quietly restate history at
+ * today's rates.
+ *
+ * Guarded by a settings flag rather than by looking at the data: "has this run" cannot be
+ * inferred from rows that new usage keeps changing, which is the lesson the whole migration
+ * layer was rebuilt around.
+ */
+export function repriceHistory(): void {
+  if (repriceMark() === 'done') return;
+
+  const rows = all<{
+    id: number; model: string | null; provider_id: string | null; created_at: string;
+    input_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
+    output_tokens: number; cost_micro: number;
+  }>(`select id, model, provider_id, created_at, input_tokens, cache_read_tokens,
+             cache_creation_tokens, output_tokens, cost_micro
+        from usage_records`);
+
+  let changed = 0;
+  const before: Money = {};
+  const after: Money = {};
+  for (const r of rows) {
+    const u: TurnUsage = {
+      inputTokens: r.input_tokens,
+      cacheReadTokens: r.cache_read_tokens,
+      cacheCreationTokens: r.cache_creation_tokens,
+      outputTokens: r.output_tokens,
+      costUsd: 0,
+      durationMs: 0,
+      numTurns: 1,
+    };
+    const priced = pricing.resolve(r.model, r.created_at, r.provider_id);
+    const currency = priced?.currency ?? 'USD';
+    const costMicro = pricing.costMicro(r.model, u, r.created_at, r.provider_id);
+    const billableTokens = billable(u, r.model, r.provider_id);
+
+    before['(before)'] = (before['(before)'] ?? 0) + r.cost_micro;
+    after[currency] = (after[currency] ?? 0) + costMicro;
+    if (costMicro !== r.cost_micro) changed++;
+
+    run(
+      'update usage_records set cost_micro = ?, cost_currency = ?, billable_tokens = ? where id = ?',
+      costMicro, currency, billableTokens, r.id,
+    );
+  }
+
+  repriceMark('done');
+  if (rows.length) {
+    const say = (m: Money) => Object.entries(m).map(([c, v]) => `${c} ${(v / 1e6).toFixed(4)}`).join(' + ');
+    console.log(
+      `[usage] recosted ${rows.length} row(s) from the price table, ${changed} of them changed. ` +
+        `Was ${say(before)}, now ${say(after)}.`,
+    );
+  }
+}
+
+/**
+ * One flag, so the recost above runs once and is not inferred from data that keeps moving.
+ *
+ * Written straight to the settings table rather than through `setSetting`, which validates
+ * against the declared spec and would put this in the console among things an operator is
+ * meant to change. This is bookkeeping: it records that a one-off job has run.
+ */
+const REPRICED_KEY = 'usage.repricedAt';
+
+function repriceMark(value?: string): string {
+  if (value !== undefined) {
+    run(
+      `insert into settings (key, value, updated_at) values (?, ?, ?)
+       on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+      REPRICED_KEY, value, nowIso(),
+    );
+    return value;
+  }
+  return get<{ value: string }>('select value from settings where key = ?', REPRICED_KEY)?.value ?? '';
+}
+
 /* ---------------- Aggregates ---------------- */
+
+/**
+ * Money, per currency, in micro-units.
+ *
+ * Never one number. Vendors price in their own currency — Anthropic in dollars, DeepSeek in
+ * yuan — and the price table holds each at its own published list so an invoice can be
+ * checked against it line by line. Adding those together would produce a figure nothing in
+ * the world corresponds to, so they are kept apart all the way to the screen, and the
+ * interface prints "¥12.34 + $5.67" rather than inventing a rate to hide one of them.
+ *
+ * A currency with nothing spent in it is absent rather than zero, so `Object.keys` is the
+ * list of currencies actually used in whatever was asked about.
+ */
+export type Money = Record<string, number>;
+
+export const isEmptyMoney = (m: Money): boolean => Object.keys(m).length === 0;
+
+/** The currency a single money figure — a ceiling, a quota bar — is expressed in */
+export const settlementCurrency = (): string => getString('billing.currency', 'USD');
+
+/**
+ * Collapse money into one number, in the settlement currency.
+ *
+ * Only for the places that genuinely cannot show two: a ceiling is one number, so comparing
+ * spend against it is one number too. Everything that reports rather than enforces keeps the
+ * `Money` map and prints both.
+ *
+ * The rates live in one setting because they are one decision with a date on it, and they
+ * apply from the moment they are set — no stored figure is restated when a rate moves, so
+ * history stays what it was. A currency with no rate is counted at par and said out loud,
+ * which is wrong but visible; silently dropping it would let spend vanish from a ceiling.
+ */
+export function settle(m: Money): number {
+  const to = settlementCurrency();
+  const rates = settlementRates();
+  let out = 0;
+  for (const [currency, micro] of Object.entries(m)) {
+    if (currency === to) { out += micro; continue; }
+    const rate = rates[currency];
+    if (rate === undefined) {
+      warnMissingRate(currency, to);
+      out += micro;
+      continue;
+    }
+    out += micro * rate;
+  }
+  return Math.round(out);
+}
+
+/** `{"USD": 6.75}` when settling in CNY: how many settlement units one unit of that currency is */
+export function settlementRates(): Record<string, number> {
+  try {
+    const raw = JSON.parse(getString('billing.rates', '{}')) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) out[k] = n;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+const warned = new Set<string>();
+function warnMissingRate(from: string, to: string): void {
+  if (warned.has(from)) return;
+  warned.add(from);
+  console.warn(
+    `[usage] no billing.rates entry for ${from} → ${to}; it is being counted at par against ` +
+      'ceilings, which under-charges. Set one in the console.',
+  );
+}
 
 export interface Totals {
   /** Upstream calls — more than the number of turns, when counted by the gateway */
@@ -122,8 +279,16 @@ export interface Totals {
   outputTokens: number;
   billableTokens: number;
   costUsd: number;
-  /** Cost from the price table, in micro-units */
-  costMicro: number;
+  /** Cost from the price table, in micro-units, per currency */
+  cost: Money;
+  /**
+   * The same money collapsed into the settlement currency at the configured rates.
+   *
+   * Only meaningful where a single number is unavoidable — a quota bar, a ceiling, a share.
+   * Anything that reports rather than enforces should read `cost` and print every currency,
+   * because this one hides which money was actually spent and goes stale when a rate moves.
+   */
+  costSettled: number;
   turns: number;
 }
 
@@ -134,9 +299,34 @@ interface TotalsRow {
   output_tokens: number | null;
   billable_tokens: number | null;
   cost_usd: number | null;
-  cost_micro: number | null;
   turns: number | null;
   calls: number | null;
+  /**
+   * `money_<CODE>` columns, one per currency the table prices in — see SUM().
+   *
+   * Not `cost_<CODE>`: SQLite matches column names case-insensitively, so `cost_USD` and the
+   * CLI's own `cost_usd` are one name to it, and a query selecting both is ambiguous.
+   */
+  [moneyColumn: string]: number | null | undefined;
+}
+
+/** ISO 4217-shaped, which is also what makes it safe to interpolate into a column name */
+const CODE = /^[A-Z]{3}$/;
+
+/**
+ * The currencies to emit a cost column for.
+ *
+ * Read from the price table rather than from `usage_records`: it is a handful of rows with an
+ * index behind it, where a `select distinct` over every usage row ever written is a full scan
+ * on the one table that grows without bound. Every row's currency comes from a price row, so
+ * the two agree — and 'USD' is always included, because it is what `record()` falls back to
+ * when nothing priced a turn at all.
+ */
+function pricedCurrencies(): string[] {
+  const rows = all<{ c: string }>('select distinct currency as c from model_pricing');
+  const set = new Set(rows.map((r) => r.c).filter((c) => CODE.test(c)));
+  set.add('USD');
+  return [...set].sort();
 }
 
 /**
@@ -144,6 +334,12 @@ interface TotalsRow {
  *
  * They have to be table-qualified: in a query with a JOIN, a bare id/turn_id collides
  * with the same column on the joined table — measured, as "ambiguous column name: id".
+ *
+ * Money is emitted as one conditional sum per currency rather than by grouping on the
+ * currency, and that is deliberate: grouping would split every row of every breakdown in two
+ * and, worse, `turns` is `count(distinct turn_id)` — a turn that called Claude and then
+ * DeepSeek would be counted once in each half and twice in their sum. Conditional columns
+ * leave the group-by of all twenty-odd aggregates exactly as it was.
  */
 const SUM = (a = ''): string => `
   coalesce(sum(${a}input_tokens),0)          as input_tokens,
@@ -152,20 +348,39 @@ const SUM = (a = ''): string => `
   coalesce(sum(${a}output_tokens),0)         as output_tokens,
   coalesce(sum(${a}billable_tokens),0)       as billable_tokens,
   coalesce(sum(${a}cost_usd),0)              as cost_usd,
-  coalesce(sum(${a}cost_micro),0)            as cost_micro,
+  ${pricedCurrencies()
+    .map((c) => `coalesce(sum(case when ${a}cost_currency = '${c}' then ${a}cost_micro else 0 end),0) as money_${c}`)
+    .join(',\n  ')},
   -- The gateway records a row per upstream call, the CLI one per turn.
   -- De-duplicating on turn_id is what makes "turns" mean the same thing either way
   count(distinct coalesce(${a}turn_id, cast(${a}id as text))) as turns,
   count(*)                                   as calls`;
 
-const toTotals = (r?: TotalsRow): Totals => ({
+/** The `money_<CODE>` columns, folded back into a map with the empty currencies left out */
+function toMoney(r?: TotalsRow): Money {
+  const out: Money = {};
+  if (!r) return out;
+  for (const key of Object.keys(r)) {
+    if (!key.startsWith('money_')) continue;
+    const code = key.slice(6);
+    if (!CODE.test(code)) continue;
+    const micro = Number(r[key] ?? 0);
+    if (micro) out[code] = micro;
+  }
+  return out;
+}
+
+const toTotals = (r?: TotalsRow): Totals => totalsFrom(toMoney(r), r);
+
+const totalsFrom = (money: Money, r?: TotalsRow): Totals => ({
   inputTokens: r?.input_tokens ?? 0,
   cacheReadTokens: r?.cache_read_tokens ?? 0,
   cacheCreationTokens: r?.cache_creation_tokens ?? 0,
   outputTokens: r?.output_tokens ?? 0,
   billableTokens: r?.billable_tokens ?? 0,
   costUsd: r?.cost_usd ?? 0,
-  costMicro: r?.cost_micro ?? 0,
+  cost: money,
+  costSettled: settle(money),
   turns: r?.turns ?? 0,
   calls: r?.calls ?? 0,
 });
@@ -791,7 +1006,7 @@ const keyOf = (d: Date, unit: 'hour' | 'day'): string =>
 
 const EMPTY_TOTALS: Totals = {
   calls: 0, inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0,
-  billableTokens: 0, costUsd: 0, costMicro: 0, turns: 0,
+  billableTokens: 0, costUsd: 0, cost: {}, costSettled: 0, turns: 0,
 };
 
 /** Everybody's series over a range, one point per bucket, empty ones included */

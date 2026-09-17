@@ -44,6 +44,7 @@
     "test:translate": "tsx src/gateway/translate.test.ts",
     "test:relay": "tsx src/gateway/relay.test.ts",
     "test:billable": "tsx src/core/db/billable.test.ts",
+    "test:currency": "tsx src/core/db/currency.test.ts",
     "test:refusal": "tsx src/core/db/refusal.test.ts",
     "test:series": "tsx src/core/db/series.test.ts",
     "test:edit-retry": "tsx src/app/edit-retry.test.ts",

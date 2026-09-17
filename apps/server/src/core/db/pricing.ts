@@ -252,6 +252,20 @@ export function inputMicroPerToken(model: string, at?: string, providerId?: stri
  * that into 0, and a caller that then treats 0 as "cannot price this" gets a cliff: quota
  * measured this way billed one token as 1, two through five as 0, and six as 1 again.
  */
+/**
+ * The catch-all row for one currency.
+ *
+ * `billable()` divides a turn's cost by this to express quota as a token count, and the
+ * division is only meaningful within a currency — so each currency the table prices in needs
+ * one. Falls back to the unscoped `*` when a currency has none, which is right for a
+ * single-currency deployment and visible as a wrong figure in a mixed one; `seedDefaults`
+ * writes a row per currency it seeds.
+ */
+export function catchAllIn(currency: string): Pricing | undefined {
+  const rows = all<Row>("select * from model_pricing where model = '*'").map(toPricing);
+  return rows.find((r) => r.currency === currency) ?? rows[0];
+}
+
 export function costMicroExact(
   model: string | null | undefined,
   u: TokenCounts,
@@ -310,53 +324,21 @@ export const DEEPSEEK_RETIRED =
  * console before going live — the interface says so too.
  */
 /**
- * The one row the table cannot be without.
+ * The published list prices, each in the currency its vendor publishes it in.
  *
- * `billable()` divides a turn's cost by this to express quota in "one input token at the
- * standard rate", and `resolve()` hands it to every model with no row of its own. Missing,
- * both fail quietly: costMicro returns 0 and quota drops back to the flat weights.
+ * Units are micro-units per million tokens, so `$10 / MTok` is 10_000_000.
  *
- * Checked separately from the seed because the seed's own question — "is the table empty" —
- * is not this one. A data migration that writes a pricing row makes the table non-empty
- * before seedDefaults() ever looks, and then it seeds nothing; that happened once already
- * (migration 13), and the guard added for it protects a fresh file, not a file left
- * half-built by a process that died between schema.sql and migrate().
+ * Anthropic prices in dollars and DeepSeek in yuan, and both are kept at their own list
+ * rather than converted: a converted number cannot be checked against an invoice, and it goes
+ * stale the day the rate moves even though the vendor's price did not. `usage_records`
+ * carries the currency of the row that priced it, so the amounts are never added across.
+ *
+ * Cache writes are the standard 1.25× input on Anthropic and free on DeepSeek — a miss there
+ * is simply the input price. Cache reads are **not** a standard multiple, which is exactly the
+ * sort of thing a table can hold and one global weight cannot.
  */
-function ensureCatchAll(): void {
-  if (resolve('*')) return;
-  const rate = 5;
-  add({
-    model: '*',
-    priceInput: rate * MICRO,
-    priceCacheRead: (rate / 10) * MICRO,
-    priceCacheWrite: rate * 1.25 * MICRO,
-    priceOutput: rate * 5 * MICRO,
-    note: 'Restored: the table had no catch-all, which quota is counted in',
-  });
-  console.log("[pricing] no '*' catch-all in the price table — one was added, check the rate in the console");
-}
-
-export function seedDefaults(): void {
-  if (get('select 1 as x from model_pricing limit 1')) {
-    // Non-empty is not the same as complete; see ensureCatchAll
-    ensureCatchAll();
-    return;
-  }
+function seedRows(): UpsertInput[] {
   const now = nowIso();
-  /*
-   * Units are micro-units per million tokens, so `$10 / MTok` is 10_000_000.
-   *
-   * The published rates, which is more use than a placeholder: quota counts what a turn
-   * cost, so an empty table would weigh every model alike, which is the thing that needed
-   * fixing. Cache writes are the standard 1.25× input; cache reads are **not** a standard
-   * multiple — Claude Fable reads at a fortieth of its input price where the rest of the
-   * range is at a tenth, and that is exactly the sort of thing a table can hold and a
-   * global weight cannot.
-   *
-   * An upstream that is not Anthropic — DeepSeek, a local model, a reseller — needs a row
-   * of its own; until it has one it is costed at the catch-all below, which is Claude Opus
-   * 5's rate. Every row here is in one currency on purpose: the amounts are summed.
-   */
   /*
    * Published list prices, in US dollars per million tokens.
    *
@@ -383,8 +365,17 @@ export function seedDefaults(): void {
     priceOutput: Math.round(output * 1_000_000),
   });
   const seed: UpsertInput[] = [
+    /*
+     * The 0.025× cache read is **5.1's alone** — the pricing table's own footnote says so:
+     * "Cache hits and refreshes on Claude Fable 5.1 and Claude Mythos 5.1 are priced at
+     * 0.025x the base input price. All other models use the standard 0.1x multiplier."
+     *
+     * Both rows used to carry $0.25, which billed Fable 5's cache reads at a quarter of what
+     * they cost. Worth spelling out rather than deriving, because the two rows are otherwise
+     * identical and the next person to add a Fable will copy whichever line they see first.
+     */
     { model: 'claude-fable-5-1', ...rate(10, 50, 0.25) },
-    { model: 'claude-fable-5', ...rate(10, 50, 0.25) },
+    { model: 'claude-fable-5', ...rate(10, 50) },
     { model: 'claude-opus-5', ...rate(5, 25) },
     { model: 'claude-opus-4-8', ...rate(5, 25) },
     { model: 'claude-opus-4-7', ...rate(5, 25) },
@@ -405,21 +396,132 @@ export function seedDefaults(): void {
      * serving peak hours is undercharging by half until the price table grows a time
      * dimension.
      */
-    { model: 'deepseek-flash', ...rate(0.15, 0.6, 0.003, 0.15), ...PEAK, note: DEEPSEEK_OFF_PEAK },
-    { model: 'deepseek-v4-pro', ...rate(0.66, 1.98, 0.022, 0.66), ...PEAK, note: DEEPSEEK_OFF_PEAK },
+    { model: 'deepseek-flash', currency: 'CNY', ...rate(1, 4, 0.02, 1), ...PEAK, note: DEEPSEEK_OFF_PEAK },
+    { model: 'deepseek-v4-pro', currency: 'CNY', ...rate(4.5, 13.5, 0.15, 4.5), ...PEAK, note: DEEPSEEK_OFF_PEAK },
     // Retired on 2026-09-10. The name still resolves, and what answers is V4.1-Flash at
     // the flash price — so the row that keeps the bill right is the flash row, not the one
     // this model used to have. Written on one line like the rest because check-pricing.mjs
     // reads this shape, and a row it cannot parse is a row it silently stops comparing.
-    { model: 'deepseek-v4-flash', ...rate(0.15, 0.6, 0.003, 0.15), ...PEAK, note: DEEPSEEK_RETIRED },
+    { model: 'deepseek-v4-flash', currency: 'CNY', ...rate(1, 4, 0.02, 1), ...PEAK, note: DEEPSEEK_RETIRED },
     {
       // Also the unit quota is counted in: one billable token is one input token at this rate
       model: '*',
       ...rate(5, 25),
       note: 'The catch-all, used by any model without a price of its own — and the unit billable tokens are counted in',
     },
-  ].map((r) => ({ ...r, currency: 'USD', effectiveFrom: now }));
-  for (const s of seed) add(s);
-  setSetting('billing.currency', 'USD');
-  console.log('[pricing] price table seeded in USD — check the rates in the console, and add a row for any upstream that is not Anthropic');
+    /*
+     * A catch-all per currency, because `billable()` divides a turn's cost by one and the
+     * division only means anything inside a single currency. Without this row a DeepSeek turn
+     * would be divided by a dollar price, which is an exchange rate nobody chose.
+     *
+     * Priced at flash's input rate rather than pro's: it is what an unpriced model on a
+     * yuan-billed upstream most likely is.
+     */
+    {
+      model: '*',
+      currency: 'CNY',
+      ...rate(1, 4, 0.02, 1),
+      note: 'The catch-all for yuan-priced upstreams — quota inside this currency is counted in it',
+    },
+  ].map((r) => ({ currency: 'USD', ...r, effectiveFrom: now }));
+  return seed;
+}
+
+export function seedDefaults(): void {
+  if (get('select 1 as x from model_pricing limit 1')) {
+    // Non-empty is not the same as complete; see ensureSeedRows
+    ensureSeedRows();
+    return;
+  }
+  for (const s of seedRows()) add(s);
+  /*
+   * A starting rate between the two currencies the seed prices in.
+   *
+   * It has to exist, because the two lists are not comparable without one: quota counts what
+   * a turn cost, and a deployment settling in dollars has to be able to say what a yuan of
+   * DeepSeek is worth against a dollar of Opus. Both directions are written so the same map
+   * serves either settlement currency — only the entry for a currency that is *not* the
+   * settlement one is ever read.
+   *
+   * Derived from the vendors' own two lists rather than from a market quote: DeepSeek
+   * publishes flash at $0.15 and ¥1 per MTok for the same tokens, which is the rate it is
+   * willing to be paid at. Check it in the console; a rate is a decision with a date on it and
+   * this one is only a default.
+   */
+  ensureRates();
+  console.log(
+    "[pricing] price table seeded — Claude in USD and DeepSeek in CNY, each at its vendor's own list. " +
+      'Check the rates in the console, and add a row for any upstream that is neither.',
+  );
+}
+
+/**
+ * Fill in the seed's rows that this table has never had.
+ *
+ * "Is the table empty" was the wrong question, and it cost a deployment its Claude prices:
+ * migration 13 wrote three DeepSeek rows into an empty table, `seedDefaults()` saw a row and
+ * returned, and the install then ran for months charging every Claude model at the catch-all
+ * — opus and haiku, whose published prices differ fivefold, billed identically. The guard
+ * added at the time patched the single worst symptom, the missing `*` row; this asks the
+ * question that was meant all along.
+ *
+ * Only models with **no row at all** are added. A rate an operator has edited is theirs: the
+ * published list is a starting point, not a correction to reapply on every start — reapplying
+ * it is how the old migration layer used to rewrite working configurations.
+ */
+/**
+ * A starting rate between the currencies the seed prices in, if there is none.
+ *
+ * It has to exist the moment a table holds two currencies: quota counts what a turn cost, and
+ * without a rate a dollar of Opus and a yuan of DeepSeek are counted as the same money —
+ * which under-charges the dollar side by most of its value and is only visible as a quota
+ * that never bites.
+ *
+ * Derived from the vendors' own two lists rather than a market quote: DeepSeek publishes
+ * flash at $0.15 and ¥1 per MTok for the same tokens, which is the rate it is willing to be
+ * paid at. Both directions are written so the same map serves either settlement currency —
+ * only the entry for a currency that is *not* the settlement one is ever read.
+ *
+ * Never overwritten. A rate is a decision with a date on it, and an operator who has set one
+ * has made that decision.
+ */
+function ensureRates(): void {
+  const current = getString('billing.rates', '').trim();
+  if (current && current !== '{}') return;
+  setSetting('billing.rates', JSON.stringify({ USD: 6.75, CNY: Number((1 / 6.75).toFixed(6)) }));
+  console.log(
+    '[pricing] no exchange rate was set and the table now prices in two currencies; ' +
+      'seeded USD↔CNY at 6.75 from the vendors\' own lists. Check it in the console.',
+  );
+}
+
+export function ensureSeedRows(): void {
+  const key = (model: string, currency: string): string => `${model} ${currency}`;
+  const have = new Set(
+    all<{ model: string; currency: string }>('select model, currency from model_pricing')
+      .map((r) => key(r.model, r.currency)),
+  );
+  const missing = seedRows().filter((r) => !have.has(key(r.model, r.currency ?? 'USD')));
+  if (!missing.length) return;
+  /*
+   * Backdated, unlike the seed's own rows.
+   *
+   * `resolve()` filters on `effective_from <= at` so that a price change never restates an
+   * old bill — right for a change, wrong for a backfill. These rows are not a new price; they
+   * are the price the vendor was charging all along, for a model this table simply never had.
+   * Stamped today they would be invisible to every row already written, and recosting history
+   * would find nothing to correct — measured, on a real database: 66 rows, 0 changed.
+   */
+  const backfilled = missing.map((m) => ({
+    ...m,
+    effectiveFrom: '1970-01-01T00:00:00.000Z',
+    note: [m.note, 'Backfilled: this model had no row, so its usage was costed at the catch-all.']
+      .filter(Boolean).join(' '),
+  }));
+  for (const m of backfilled) add(m);
+  ensureRates();
+  console.log(
+    `[pricing] ${missing.length} published price row(s) had never been seeded and were added ` +
+      `(${missing.map((m) => `${m.model} ${m.currency ?? 'USD'}`).join(', ')}). Check them in the console.`,
+  );
 }

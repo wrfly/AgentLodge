@@ -296,10 +296,30 @@ export type RangePreset =
   | 'window' | 'today' | 'yesterday' | 'week' | 'weekWindow' | 'month'
   | 'last7' | 'last30' | 'quota' | 'all' | 'custom';
 
+/**
+ * Money, per currency, in micro-units — never one number.
+ *
+ * Vendors price in their own currency, and the price table holds each at its own published
+ * list rather than converting, so a figure can be checked against an invoice. Adding dollars
+ * to yuan would produce a number nothing corresponds to, so they stay apart all the way here
+ * and `fmtMoney` prints "¥12.34 + $5.67".
+ *
+ * A currency with nothing spent in it is absent rather than zero.
+ */
+export type Money = Record<string, number>;
+
 export interface UsageTotals {
   calls: number;
-  /** Cost from the price table, in micro-units of `currency` (1e6 = one unit) */
-  costMicro: number;
+  /** Cost from the price table, per currency, in micro-units (1e6 = one unit) */
+  cost: Money;
+  /**
+   * The same money collapsed into the settlement currency at the rates the console configures.
+   *
+   * Only for the places where a single number is unavoidable — a quota bar has one ceiling, so
+   * what is drawn against it is one figure. Anything that reports rather than enforces should
+   * render `cost`, which says which money was actually spent.
+   */
+  costSettled: number;
   inputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
@@ -456,7 +476,7 @@ export interface TraceDetail extends Omit<TraceSummary, 'status' | 'durationMs' 
 export interface ApiKeyUsage {
   calls: number;
   billableTokens: number;
-  costMicro: number;
+  cost: Money;
 }
 
 export interface ApiKeyRow {
@@ -1316,8 +1336,29 @@ export const MICRO = 1_000_000;
  */
 export function fmtMoney(micro: number | null | undefined, currency: string): string {
   if (micro === null || micro === undefined) return '—';
-  const sym = currency === 'CNY' ? '¥' : '$';
+  const sym = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : `${currency} `;
   const v = micro / MICRO;
   // Small amounts need more places, or a single turn reads as ¥0.00 and looks like nothing happened
   return `${sym}${v < 1 ? v.toFixed(4) : v.toFixed(2)}`;
 }
+
+/**
+ * Money as the interface says it: one amount per currency, joined.
+ *
+ * Two upstreams billing in two currencies cannot be added, so a figure that spans both is
+ * printed as both — "¥12.34 + $5.67". Nothing spent reads as a zero in the currency the
+ * deployment settles in, because a blank where a number belongs reads as a bug.
+ *
+ * The order is fixed rather than whatever the object happens to iterate in, so the same
+ * figure does not swap ends between two renders of the same page.
+ */
+export function fmtCost(cost: Money | null | undefined, fallbackCurrency = 'USD'): string {
+  const entries = Object.entries(cost ?? {}).filter(([, v]) => v);
+  if (!entries.length) return fmtMoney(0, fallbackCurrency);
+  entries.sort(([a], [b]) => a.localeCompare(b));
+  return entries.map(([c, v]) => fmtMoney(v, c)).join(' + ');
+}
+
+/** The currencies a figure spans, for deciding whether one line is enough */
+export const costCurrencies = (cost: Money | null | undefined): string[] =>
+  Object.entries(cost ?? {}).filter(([, v]) => v).map(([c]) => c).sort();

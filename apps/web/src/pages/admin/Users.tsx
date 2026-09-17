@@ -117,7 +117,12 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
   const byCost = user.quota.limitKind === 'cost';
   // The list shows the 5-hour window: it is the one that bites first, and usage.period is
   // measured over exactly that window on the server
-  const used = byCost ? user.usage.period.costMicro : user.usage.period.billableTokens;
+  /*
+   * `costSettled`, not the per-currency map: the bar is drawn against one ceiling, so what is
+   * drawn has to be one number. It is the same figure the gate compares, converted at the
+   * rates the console configures — which is why the bar and a refusal cannot disagree.
+   */
+  const used = byCost ? user.usage.period.costSettled : user.usage.period.billableTokens;
   // The effective ceiling, not the configured one: a live top-up raises what the gate lets
   // through, and a bar drawn against the raw number reads past 100% while it still does
   const cap = user.quota.windowCeiling;

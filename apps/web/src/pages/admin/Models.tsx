@@ -202,7 +202,7 @@ export function ModelsCard() {
                           <td className="py-1.5 pr-3 text-right tabular-nums text-faint">
                             {f?.inPrice !== undefined && f.outPrice !== undefined ? (
                               <span title={f.note}>
-                                {`${price(f.inPrice)} / ${price(f.outPrice)}`}
+                                {`${price(f.inPrice, f.currency)} / ${price(f.outPrice, f.currency)}`}
                                 {f.note && <span className="ml-1 text-[10px]">*</span>}
                               </span>
                             ) : (

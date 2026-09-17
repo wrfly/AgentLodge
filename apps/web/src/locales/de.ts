@@ -566,7 +566,6 @@ export const de: Record<string, string> = {
 
   // Billing currency and the fallback weights
   'Currency': 'Währung',
-  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'Die Währung der Preistabelle. Eine Änderung beschriftet nur neu und rechnet nichts um — passen Sie die Zeilen selbst an.',
   'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Nur für ein Modell, das die Preistabelle nicht bepreisen kann. Sonst zählt das Kontingent, was ein Zug gekostet hat.',
   'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Abrechenbare Token sind die tatsächlichen Kosten eines Zuges, ausgedrückt in Eingabetoken zum Standardtarif — ein teureres Modell verbraucht mehr desselben Kontingents',
 
@@ -653,4 +652,10 @@ export const de: Record<string, string> = {
   'Usage by user': 'Verbrauch nach Benutzer',
   'Click an upstream to see which models its spend went on.': 'Auf einen Upstream klicken, um zu sehen, auf welche Modelle seine Ausgaben entfielen.',
   'Click a user to see which models their spend went on.': 'Auf einen Benutzer klicken, um zu sehen, auf welche Modelle seine Ausgaben entfielen.',
+
+  // Settlement, for the places a limit forces a single number
+  'Settlement currency': 'Abrechnungswährung',
+  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'Worin kostenbasierte Obergrenzen gezählt werden. Preise bleiben in der Währung, die der jeweilige Anbieter veröffentlicht; umgerechnet wird nur, wenn eine Grenze eine einzelne Zahl braucht.',
+  'Exchange rates': 'Wechselkurse',
+  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, Währung → wie viele Einheiten der Abrechnungswährung eine Einheit wert ist, z. B. {"USD": 6.75} bei Abrechnung in CNY. Nur dort verwendet, wo eine Grenze eine einzelne Zahl erzwingt.',
 };

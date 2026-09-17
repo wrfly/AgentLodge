@@ -566,7 +566,6 @@ export const fr: Record<string, string> = {
 
   // Billing currency and the fallback weights
   'Currency': 'Devise',
-  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'La devise de la table des prix. La changer ne fait que réétiqueter, sans rien convertir : réécrivez les lignes en conséquence.',
   'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Uniquement pour un modèle que la table des prix ne sait pas tarifer. Le quota compte normalement ce qu\'un tour a coûté.',
   'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Les tokens facturés sont le coût réel d\'un tour, exprimé en tokens d\'entrée au tarif standard : un modèle plus cher consomme davantage du même quota',
 
@@ -653,4 +652,10 @@ export const fr: Record<string, string> = {
   'Usage by user': 'Utilisation par utilisateur',
   'Click an upstream to see which models its spend went on.': 'Cliquez sur un amont pour voir sur quels modèles ses dépenses sont allées.',
   'Click a user to see which models their spend went on.': 'Cliquez sur un utilisateur pour voir sur quels modèles ses dépenses sont allées.',
+
+  // Settlement, for the places a limit forces a single number
+  'Settlement currency': 'Devise de règlement',
+  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'Devise dans laquelle sont comptés les plafonds en argent. Les prix restent dans la devise publiée par chaque fournisseur ; la conversion n\'a lieu que lorsqu\'un plafond exige un seul nombre.',
+  'Exchange rates': 'Taux de change',
+  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, devise → combien d\'unités de règlement vaut une unité, par exemple {"USD": 6.75} pour un règlement en CNY. Utilisé uniquement là où un plafond impose un seul nombre.',
 };
