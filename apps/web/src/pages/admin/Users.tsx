@@ -4,9 +4,9 @@
  * Split out of AdminPage.tsx, which had grown to 2700 lines; one file per tab now.
  */
 import { useEffect, useState } from 'react';
-import { Gauge, RotateCcw, Wallet } from 'lucide-react';
+import { BarChart3, Gauge, RotateCcw, Wallet } from 'lucide-react';
 import clsx from 'clsx';
-import { admin, type AdminUser, fmtMoney, type QuotaScope } from '../../lib/api';
+import { admin, type AdminUser, type AdminUserDetail, fmtMoney, type QuotaScope } from '../../lib/api';
 import {
   Banner,
   Button,
@@ -22,10 +22,58 @@ import {
   mToTokens,
   tokensToM,
 } from '../../components/ui';
+import { AgentModelTable } from '../../components/AgentModelTable';
 import { useT } from '../../lib/i18n';
 import { WithUnit } from './shared';
 
 /* ---------------- Users ---------------- */
+
+/**
+ * The same per-model table the user's own usage page shows, about somebody else.
+ *
+ * Fetched when the panel opens rather than with the list: the breakdown is a grouped scan
+ * per account, and the list renders every account on the deployment. An operator opens one
+ * row at a time.
+ *
+ * The quota month, because that is the range the route's breakdown already answers for —
+ * and the one an operator adjusting a monthly ceiling is looking at.
+ */
+function UsagePanel({ userId }: { userId: string }) {
+  const t = useT();
+  const [data, setData] = useState<AdminUserDetail | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    // The row can be closed before the request lands, and a user can be searched away
+    let live = true;
+    admin
+      .user(userId)
+      .then((d) => live && setData(d))
+      .catch((e) => live && setErr(e instanceof Error ? e.message : String(e)));
+    return () => {
+      live = false;
+    };
+  }, [userId]);
+
+  return (
+    <div className="mt-3 rounded-lg border border-line bg-elevated p-3">
+      <div className="mb-2 text-[12.5px] font-medium">
+        {`${t('By agent and model')} · ${t('This quota month')}`}
+      </div>
+      {err ? (
+        <Banner tone="error">{err}</Banner>
+      ) : !data ? (
+        <Spinner />
+      ) : (
+        <AgentModelTable
+          rows={data.usage.byAgent}
+          totals={data.usage.month}
+          currency={data.quota.currency}
+        />
+      )}
+    </div>
+  );
+}
 
 /**
  * A top-up lifts one window's ceiling until that window resets.
@@ -97,6 +145,7 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
   const t = useT();
   const [editing, setEditing] = useState(false);
   const [topup, setTopup] = useState(false);
+  const [usage, setUsage] = useState(false);
   // Typed in millions; the API takes the quota's own unit
   const asM = (v: number | null) => (v === null ? '' : tokensToM(v));
   const [limitWindow, setLimitWindow] = useState(asM(user.quota.window));
@@ -240,6 +289,13 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
             words on every row to say what the layout already says. */}
         <div className="flex flex-col items-end gap-1">
           <div className="flex flex-wrap items-center justify-end gap-1.5">
+            {/* First of the three: it is the one that is only ever read. The row already
+                says what this account has spent — this says what it spent it on, which is
+                the question the bar beside it cannot answer. */}
+            <Button variant="ghost" onClick={() => setUsage((v) => !v)}>
+              <BarChart3 size={12} />
+              {t('Usage')}
+            </Button>
             <Button variant="ghost" onClick={() => setTopup((v) => !v)}>
               <Wallet size={12} />
               {t('Top up')}
@@ -311,6 +367,8 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
           </Button>
         </div>
       )}
+
+      {usage && <UsagePanel userId={user.id} />}
 
       {topup && <TopupPanel user={user} onDone={() => { setTopup(false); onChange(); }} />}
 

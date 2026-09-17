@@ -64,13 +64,25 @@ export function register(app: FastifyInstance): void {
     const user = usersRepo.findById(id);
     if (!user) return reply.code(404).send({ error: tr(req, 'No such user') });
     const q = usersRepo.getQuota(id);
+    /*
+     * One instant for the breakdown and for its total. Read twice, a request that straddles
+     * the month boundary would hand the console a table whose footer counts a different
+     * month from its rows — and a total that disagrees with the rows is precisely the
+     * reading the footer exists to settle.
+     */
+    const monthStart = quota.boundsOf('month').start.toISOString();
     return {
       ...usersRepo.toPublic(user),
       quota: q,
       quotaStatus: quota.status(id),
       usage: {
         daily: usageRepo.dailyForUser(id, 30),
-        byAgent: usageRepo.byAgentForUser(id, quota.boundsOf('month').start.toISOString()),
+        byAgent: usageRepo.byAgentForUser(id, monthStart),
+        /**
+         * `byAgent`'s total over `byAgent`'s range — not a second period, and not the sum of
+         * the rows: a turn that called two models belongs to both rows and is one turn here.
+         */
+        month: usageRepo.totalsForUser(id, monthStart),
         byConversation: usageRepo.byConversationForUser(id, 10),
         allTime: usageRepo.totalsForUser(id),
       },

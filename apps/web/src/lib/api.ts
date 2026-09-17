@@ -567,6 +567,27 @@ export interface AdminUser extends PublicUser {
   conversations: number;
 }
 
+/**
+ * One account, as `GET /api/admin/users/:id` answers it.
+ *
+ * Typed to what the console reads rather than to everything the route returns — it also
+ * carries a 30-day daily series, the heaviest conversations, the live session count and
+ * memory stats, and no page renders those yet. Declaring fields nothing reads would make
+ * this look like a contract the console depends on.
+ *
+ * Not an `AdminUser`: the list maps the quota row into ceilings plus a `windowCeiling` the
+ * bar is drawn against, and this route returns the row itself.
+ */
+export interface AdminUserDetail extends PublicUser {
+  quota: { limitKind: 'tokens' | 'cost'; currency: string };
+  usage: {
+    byAgent: Array<UsageTotals & { agent: string; model: string | null }>;
+    /** `byAgent`'s own total, over `byAgent`'s own range — the quota month */
+    month: UsageTotals;
+    allTime: UsageTotals;
+  };
+}
+
 export interface InviteCode {
   id: string;
   code: string;
@@ -966,6 +987,8 @@ export const admin = {
   platformUsage: (preset: PlatformPreset, upstream?: string | null) =>
     request<PlatformUsage>(`/api/admin/usage?preset=${preset}${upstream ? `&upstream=${encodeURIComponent(upstream)}` : ''}`),
   users: () => request<AdminUser[]>('/api/admin/users'),
+  /** One account in full — fetched when a row in the list is opened, not with the list */
+  user: (id: string) => request<AdminUserDetail>(`/api/admin/users/${id}`),
   updateUser: (
     id: string,
     patch: {
