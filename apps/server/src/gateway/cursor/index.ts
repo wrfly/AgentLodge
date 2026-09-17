@@ -1,71 +1,106 @@
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { accessToken, CursorAuthError } from './auth.js';
+import type { Egress } from './bidi.js';
 import { decode, encode } from './codec.js';
-import { envelope } from './connect.js';
-import { buildChatRequest, type ChatRequest } from './request.js';
-import { CursorToChat, PLAIN } from './stream.js';
+import { AgentSession, type AgentEvent } from './session.js';
+import { buildRunRequest, toolResults, type ChatRequest } from './request.js';
+import { ChatStream } from './stream.js';
 import { BUNDLE_VERSION } from './schema.generated.js';
+import { park, resume } from './turns.js';
 
 /**
  * The Cursor upstream.
  *
- * Cursor has no HTTP API to point an `ANTHROPIC_BASE_URL` at: its clients speak
- * Connect-RPC with protobuf bodies to api2.cursor.sh, over a schema that is published
- * nowhere and read out of the client instead (scripts/extract-cursor-schema.mjs). This
- * module is the whole of that conversation — build the request, frame it, read the stream
- * back — and it hands the rest of the gateway something it already knows how to handle: a
- * Chat Completions SSE response.
+ * Cursor has no HTTP API to point an `ANTHROPIC_BASE_URL` at: its client speaks Connect-RPC
+ * with protobuf bodies, over a schema that is published nowhere and read out of the client
+ * instead (scripts/extract-cursor-schema.mjs). This module is the whole of that conversation,
+ * and it hands the rest of the gateway something it already knows how to handle: a Chat
+ * Completions SSE response.
  *
- * That last part is the design. `resolveUpstream` gives a Cursor provider `wire: 'chat'`,
- * so gateway/translate.ts has already turned Claude Code's Messages or Codex's Responses
- * into Chat Completions on the way in, and turns the stream back on the way out. Both CLIs
- * work against Cursor without either of them, or the relay between them, knowing it.
+ * That last part is the design. `resolveUpstream` gives a Cursor provider `wire: 'chat'`, so
+ * gateway/translate.ts has already turned Claude Code's Messages or Codex's Responses into
+ * Chat Completions on the way in, and turns the stream back on the way out. Both CLIs work
+ * against Cursor without either of them, or the relay between them, knowing it.
  *
- * ## What this is not
+ * ## Which protocol, and why this one
  *
- * Not the `cursor-agent` CLI's protocol. That one (`agent.v1.AgentService`) runs the agent
- * loop on Cursor's side and calls back for tool execution — the opposite of what a client
- * holding its own tools needs. This uses the IDE's chat RPC, where the model answers and
- * the caller keeps its loop.
+ * `agent.v1.AgentService` — the protocol Cursor's own CLI speaks. The IDE's chat RPC
+ * (`aiserver.v1.ChatService/StreamUnifiedChat`) would be the simpler bridge, and this used to
+ * use it, but it is gone: the CLI bundle stopped carrying those messages in 2026.09, and a
+ * schema that cannot be regenerated cannot be kept honest across a Cursor release.
+ *
+ * Agent mode is also the better bridge, for two reasons that matter to a gateway:
+ *
+ *   **Token counts are real.** Every turn ends with the counts Cursor itself measured. The
+ *   chat RPC reported none, so this upstream used to meter a character estimate — the quota
+ *   gate, the usage report and every price derived from them, all guesses.
+ *
+ *   **Tools are native, both ways.** A caller's own tools go out as MCP definitions and are
+ *   called as tools rather than coaxed out of a prompt. And Cursor's side of the loop — read
+ *   this file, run this command — is handed back to the caller to run in its own checkout.
+ *
+ * The cost is that a turn is a conversation rather than a request, and the APIs this gateway
+ * speaks end a response at a tool call. See turns.ts for what keeps the turn alive in between.
  */
 
 /** Where Cursor's API lives when a provider does not say otherwise */
 export const CURSOR_API = 'https://api2.cursor.sh';
 
-/** The plain server-streaming chat RPC: one POST, one stream back */
-export const CHAT_RPC = '/aiserver.v1.ChatService/StreamUnifiedChat';
+/**
+ * And where its agent lives, which is not the same host.
+ *
+ * Cursor advertises this through `GetServerConfig`; pinned here to what it advertises today,
+ * because a gateway that resolved it per request would be asking a second service whether the
+ * first one is reachable.
+ */
+export const CURSOR_AGENT_API = 'https://agentn.us.api5.cursor.sh';
 
-/** The model list, a unary call on the same service family */
+/** The turn, and the model list, which is a plain unary call on the API host */
+export { RUN_SSE_RPC, APPEND_RPC } from './bidi.js';
 const MODELS_RPC = '/aiserver.v1.AiService/AvailableModels';
+
+/** What the caller's workspace is called, for the one field that has to name one */
+const WORKSPACE = '/workspace';
 
 /**
  * How this client describes itself.
  *
- * The CLI's own shape, not the IDE's: the credential behind this is an account API key,
- * which is what the CLI authenticates with, and the IDE additionally sends an
- * `x-cursor-checksum` built from a machine identity this process does not have and should
- * not invent.
+ * The CLI's shape, not the IDE's: the credential behind this is an account API key, which is
+ * what the CLI authenticates with.
+ *
+ * `x-cursor-checksum` is derived from the credential rather than from this host. Cursor's own
+ * clients build it from a machine identity, which this process does not have and should not
+ * fabricate — but the header is not optional, so what goes out is a stable per-credential
+ * value: one identity per configured upstream, the same on every request, tied to no machine.
  */
-function clientHeaders(token: string): Record<string, string> {
+export function clientHeaders(token: string, requestId: string): Record<string, string> {
   return {
     authorization: `Bearer ${token}`,
     'connect-protocol-version': '1',
     'x-cursor-client-type': 'cli',
     'x-cursor-client-version': `cli-${BUNDLE_VERSION}`,
-    'x-request-id': crypto.randomUUID(),
-    // Cursor's own switch for "do not keep this". A gateway relaying other people's work
-    // has no standing to opt their code into anything, so it is on and not configurable.
+    'x-cursor-client-os': process.platform === 'win32' ? 'win32' : process.platform,
+    'x-cursor-client-arch': process.arch === 'x64' ? 'x64' : process.arch,
+    'x-cursor-client-os-version': os.release(),
+    'x-cursor-client-device-type': 'desktop',
+    'x-cursor-checksum': checksum(token),
+    'x-cursor-timezone': process.env['TZ'] || 'UTC',
+    'x-request-id': requestId,
+    // Cursor's own switch for "do not keep this". A gateway relaying other people's work has
+    // no standing to opt their code into anything, so it is on and not configurable.
     'x-ghost-mode': 'true',
   };
 }
 
-/** Where a request actually goes: the audit proxy when one is in use. null means refuse to send. */
-export type Egress = (url: string) => { url: string; headers: Record<string, string> } | null;
+const checksum = (token: string): string => crypto.createHash('sha256').update(token).digest('hex');
+
+export type { Egress };
 
 const direct: Egress = (url) => ({ url, headers: {} });
 
 export interface FetchOptions {
-  /** The provider's base url, or CURSOR_API when it is blank */
+  /** The provider's base url, or Cursor's own when it is blank */
   baseUrl?: string;
   /** The credential as configured: a Cursor API key, or an access token already */
   secret: string;
@@ -81,13 +116,36 @@ export interface FetchOptions {
 /**
  * One turn against Cursor, as a Chat Completions response.
  *
- * Returns a Response rather than a stream so the relay in gateway/index.ts needs no branch
- * of its own: a stream comes back as `text/event-stream` and a refusal as the JSON error
- * body that the same code path already knows how to relay and translate.
+ * Returns a Response rather than a stream so the relay in gateway/index.ts needs no branch of
+ * its own: a stream comes back as `text/event-stream` and a refusal as the JSON error body
+ * that the same code path already knows how to relay and translate.
  */
 export async function fetchCursor(opts: FetchOptions): Promise<Response> {
   const base = (opts.baseUrl || CURSOR_API).replace(/\/+$/, '');
+  // A provider pointed at a relay sends both calls through it; otherwise the agent lives on
+  // its own host and only the API base is configurable
+  const agentBase = opts.baseUrl ? base : CURSOR_AGENT_API;
   const route = opts.egress ?? direct;
+
+  /*
+   * A request answering a tool call resumes the turn that asked for it, if that turn is still
+   * here. When it is not — it expired, or this process restarted — the transcript carries the
+   * whole history including the tool results, so starting again is a worse answer rather than
+   * a wrong one.
+   */
+  const results = toolResults(opts.body.messages ?? []);
+  const parked = results.length ? resume(results.map((r) => r.callId)) : undefined;
+
+  if (parked) {
+    const answer = results.find((r) => r.callId === parked.callId)!;
+    try {
+      await parked.session.submit(answer.callId, answer.text);
+    } catch (e) {
+      await parked.session.close().catch(() => {});
+      return jsonError(502, `Could not return a tool result to Cursor: ${(e as Error).message}`);
+    }
+    return relay(parked.events, parked.session, parked.controller, opts, parked.model);
+  }
 
   let token: string;
   try {
@@ -98,84 +156,164 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
     return jsonError(e instanceof CursorAuthError ? 401 : 502, (e as Error).message);
   }
 
-  const message = buildChatRequest(opts.body, {
+  const { request, delegate } = buildRunRequest(opts.body, {
     model: opts.model,
     conversationId: opts.conversationId,
   });
-  const payload = envelope(encode('aiserver.v1.StreamUnifiedChatRequest', message));
-  const promptChars = JSON.stringify(opts.body ?? {}).length;
 
-  const send = async (bearer: string): Promise<Response> => {
-    const out = route(`${base}${CHAT_RPC}`);
-    if (!out) return jsonError(503, 'This upstream has no audit proxy configured, so the request was refused');
-    return fetch(out.url, {
-      method: 'POST',
-      headers: {
-        ...clientHeaders(bearer),
-        'content-type': 'application/connect+proto',
-        ...out.headers,
-      },
-      body: payload,
-      signal: opts.signal,
+  const start = async (bearer: string) => {
+    const controller = new AbortController();
+    const session = new AgentSession({
+      apiBase: base,
+      agentBase,
+      token: bearer,
+      headers: (requestId) => clientHeaders(bearer, requestId),
+      egress: (url) => route(url),
+      signal: controller.signal,
+      workspace: WORKSPACE,
+      delegate,
     });
+    const events = session.run(request);
+    // Pulled here rather than in relay(): while nothing has been written, a refusal can still
+    // be a status, which is the difference between a client retrying and a client giving up
+    const first = await events.next();
+    return { session, events, controller, first };
   };
 
-  let res: Response;
-  try {
-    res = await send(token);
-    /*
-     * A token that was refused. It may have been revoked rather than aged out — the cache
-     * cannot tell the difference — so the one retry mints a new one and tries again. Only
-     * once: a key that is genuinely invalid would otherwise be exchanged on every request.
-     */
-    if (res.status === 401 || res.status === 403) {
-      const fresh = await accessToken(opts.secret, base, { force: true, signal: opts.signal });
-      if (fresh !== token) res = await send(fresh);
-    }
-  } catch (e) {
-    if (opts.signal.aborted) throw e; // the caller's own abort, which it reports its own way
-    return jsonError(502, `Could not reach Cursor: ${(e as Error).message}`);
+  let run = await start(token);
+  /*
+   * A token that was refused. It may have been revoked rather than aged out — the cache cannot
+   * tell the difference — so the one retry mints a new one and tries again. Only once: a key
+   * that is genuinely invalid would otherwise be exchanged on every request.
+   */
+  if (unauthorised(run.first.value)) {
+    run.controller.abort();
+    const fresh = await accessToken(opts.secret, base, { force: true, signal: opts.signal }).catch(() => token);
+    if (fresh !== token) run = await start(fresh);
   }
 
-  if (!res.ok || !res.body) {
-    const detail = (await res.text().catch(() => '')).slice(0, 500);
-    return jsonError(res.status || 502, detail || `Cursor returned ${res.status}`);
+  const event = run.first.value;
+  if (event?.kind === 'error') {
+    run.controller.abort();
+    await run.session.close().catch(() => {});
+    return jsonError(event.status ?? 502, event.message);
   }
 
-  const conv = new CursorToChat({ model: opts.model, promptChars, responseType: PLAIN });
-  const reader = res.body.getReader();
+  return relay(run.events, run.session, run.controller, opts, opts.model, event);
+}
+
+const unauthorised = (event?: AgentEvent): boolean =>
+  event?.kind === 'error' && (event.status === 401 || event.status === 403);
+
+/**
+ * The turn, as it arrives, until it ends or needs the caller.
+ *
+ * Three ways out, and the one in the middle is the whole reason turns.ts exists:
+ *
+ *   the turn ended        usage, `finish_reason: stop`, done
+ *   a tool call           the call goes to the client, the turn is parked, and this response
+ *                         ends at `finish_reason: tool_calls` — the client answers in a new
+ *                         request, which resumes the same turn
+ *   the upstream refused  said in band, because the status is long gone
+ */
+function relay(
+  events: AsyncGenerator<AgentEvent>,
+  session: AgentSession,
+  controller: AbortController,
+  opts: FetchOptions,
+  model: string,
+  first?: AgentEvent,
+): Response {
+  const out = new ChatStream(model);
   const encoder = new TextEncoder();
+  let parkedHere = false;
+
+  /*
+   * The client going away aborts the turn — unless the turn has been parked, in which case the
+   * response ending is the normal way this request finishes and the turn belongs to the next
+   * one. Without that exception, handing over a tool call would kill the turn it was handed
+   * over from.
+   */
+  const onAbort = () => {
+    if (!parkedHere) controller.abort();
+  };
+  opts.signal.addEventListener('abort', onAbort, { once: true });
+
+  const finish = () => {
+    opts.signal.removeEventListener('abort', onAbort);
+    if (!parkedHere) void session.close().catch(() => {});
+  };
+
+  let queued = first;
 
   const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      let chunk: { done?: boolean; value?: Uint8Array };
-      try {
-        chunk = await reader.read();
-      } catch (e) {
-        // The connection died mid-answer. end() says so in band, which is the only way
-        // left to tell a client that has already had its 200
-        controller.enqueue(encoder.encode(conv.end() || sseError((e as Error).message)));
-        controller.close();
+    async pull(controllerOut) {
+      const write = (text: string) => {
+        if (text) controllerOut.enqueue(encoder.encode(text));
+      };
+
+      let event: AgentEvent | undefined;
+      if (queued) {
+        event = queued;
+        queued = undefined;
+      } else {
+        let step;
+        try {
+          step = await events.next();
+        } catch (e) {
+          write(out.error(`Cursor stopped answering: ${(e as Error).message}`));
+          controllerOut.close();
+          finish();
+          return;
+        }
+        if (step.done) {
+          // The generator ended without saying how, which nothing in session.ts does; saying
+          // `stop` here would tell the client the model finished
+          write(out.error('the upstream ended the turn without finishing'));
+          controllerOut.close();
+          finish();
+          return;
+        }
+        event = step.value;
+      }
+
+      if (event.kind === 'text') {
+        write(out.text(event.text));
         return;
       }
-      if (chunk.done || !chunk.value) {
-        const tail = conv.end();
-        if (tail) controller.enqueue(encoder.encode(tail));
-        controller.close();
+
+      if (event.kind === 'tool') {
+        write(out.tool(event.callId, event.name, event.input));
+        /*
+         * No usage on this one. Cursor reports the turn's counts once, when the turn ends, so
+         * every request but the last in a tool chain books nothing — which is also what those
+         * requests cost upstream, since they are the same turn.
+         */
+        write(out.done());
+        parkedHere = true;
+        park({ session, events, controller, callId: event.callId, model });
+        controllerOut.close();
+        finish();
         return;
       }
-      const out = conv.push(chunk.value);
-      if (out) controller.enqueue(encoder.encode(out));
+
+      if (event.kind === 'error') {
+        write(out.error(event.message));
+        controllerOut.close();
+        finish();
+        return;
+      }
+
+      write(out.done(event.usage));
+      controllerOut.close();
+      finish();
     },
-    cancel(reason) {
-      void reader.cancel(reason).catch(() => {});
+    cancel() {
+      finish();
     },
   });
 
-  return new Response(stream, {
-    status: 200,
-    headers: { 'content-type': 'text/event-stream' },
-  });
+  return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
 /** A refusal in the shape the relay reads: JSON, under a status, with the upstream's words */
@@ -186,16 +324,11 @@ function jsonError(status: number, message: string): Response {
   });
 }
 
-/** The same thing once a stream has begun and there is no status left to say it with */
-function sseError(message: string): string {
-  return `data: ${JSON.stringify({ error: { message, type: 'upstream_error' } })}\n\n`;
-}
-
 /**
  * What models this account can use.
  *
- * A unary Connect call — `application/proto`, the bare message, no envelopes — which is
- * the one shape on this protocol that is not framed.
+ * A unary Connect call — `application/proto`, the bare message, no envelopes — which is the
+ * one shape on this protocol that is not framed.
  */
 export async function fetchCursorModels(
   secret: string,
@@ -210,7 +343,11 @@ export async function fetchCursorModels(
     const token = await accessToken(secret, base);
     const res = await fetch(out.url, {
       method: 'POST',
-      headers: { ...clientHeaders(token), 'content-type': 'application/proto', ...out.headers },
+      headers: {
+        ...clientHeaders(token, crypto.randomUUID()),
+        'content-type': 'application/proto',
+        ...out.headers,
+      },
       body: encode('aiserver.v1.AvailableModelsRequest', { is_nightly: false }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -220,9 +357,9 @@ export async function fetchCursorModels(
     }
     const body = decode('aiserver.v1.AvailableModelsResponse', new Uint8Array(await res.arrayBuffer()));
     /*
-     * Two lists, and the structured one is the better answer: `model_names` is the flat
-     * legacy field, while `models[]` carries what each name actually is. Falling back to
-     * the flat one keeps this working if the structured field goes away.
+     * Two lists, and the structured one is the better answer: `model_names` is the flat legacy
+     * field, while `models[]` carries what each name actually is. Falling back to the flat one
+     * keeps this working if the structured field goes away.
      */
     const detailed = Array.isArray(body['models']) ? (body['models'] as Array<Record<string, unknown>>) : [];
     const names = detailed

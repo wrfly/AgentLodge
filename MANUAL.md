@@ -79,21 +79,52 @@ DeepSeek API Key    随便填（网关只要求非空）
 
 ### Cursor 订阅
 
-Cursor 没有可以填进 `ANTHROPIC_BASE_URL` 的 HTTP API：它的客户端跟 `api2.cursor.sh` 说
-Connect-RPC，body 是 protobuf，schema 没公开过，是从客户端里读出来的
+Cursor 没有可以填进 `ANTHROPIC_BASE_URL` 的 HTTP API：它的客户端说 Connect-RPC，body 是
+protobuf，schema 没公开过，是从 `cursor-agent` 自己的 bundle 里读出来的
 （`scripts/extract-cursor-schema.mjs`）。网关把这段对话整个包在 `gateway/cursor/` 里，对外
 交出一条 Chat Completions 流 —— 所以 `claude` 和 `codex` 都能用，两边都不知道背后是 Cursor。
 
+走的是 `cursor-agent` CLI 自己那条协议（`agent.v1.AgentService`），不是 IDE 的聊天 RPC ——
+后者在 2026.09 之后已经不在客户端里了。好处是 token 数是 Cursor 自己报的真实数字，工具调用
+两个方向都是原生的；代价见下面第三条。
+
 配置：kind 选 `cursor`，Base URL 留空（要经过前面的中转才填），凭据填一个在 cursor.com 上创建
 的 **Cursor API key**。网关拿它换访问令牌（`/auth/exchange_user_api_key`），令牌不落盘，过期
-自己换。模型清单可以「从上游拉取」，问的是 Cursor 的 `AvailableModels`。
+自己换。模型清单可以「从上游拉取」，问的是 Cursor 的 `AvailableModels`；模型名用 Cursor 自己的
+那套（`composer-2.5-fast`、`claude-opus-5-thinking-high`），slug 末尾的 variant 网关会拆开发。
 
-两个跟别的上游不一样的地方，配之前要知道：
+配之前要知道的几件事：
 
-- **token 数是估的。** Cursor 按请求记自己的账，它的聊天协议里根本没有 token 计数，所以用量、
-  配额闸门、以及由它们算出来的价格，对这条上游来说都是按字符数估出来的（约 3 字符 1 token）。
-- **thinking 不往下传。** Cursor 会流式发思考内容，Chat Completions 没有这个字段，翻译层也
-  不读任何厂商自创的那几种，所以这条上游的思考在界面上是空的。
+- **要放开两个域名。** 一个 turn 分两个调用：消息发到 `api2.cursor.sh`，回来的流从 agent host
+  （默认 `agentn.us.api5.cursor.sh`）读。有 egress allowlist 的部署两个都要放。上游填了
+  Base URL 的话两个都走那一个地址。
+- **thinking 不往下传。** Cursor 单独发思考内容，Chat Completions 没有这个字段，翻译层也不读
+  任何厂商自创的那几种，所以这条上游的思考在界面上是空的。
+- **Cursor 会反过来要求执行工具，跑在用户自己的机器上。** agent 协议里服务端会让客户端读文件、
+  跑命令；网关没有工作区，也不在服务器上跑模型写的命令，所以这些请求被翻成**调用方自己的**
+  工具调用（`Read` / `Write` / `Edit` / `Bash` / `Grep` / `Glob`，就是 Claude Code 的内置工具），
+  在用户自己的 checkout 里、按用户自己的权限提示执行。换句话说：**用 Cursor 上游跑一个
+  agent 任务，Cursor 的 agent 循环会驱动用户本地的 CLI 去动文件和跑命令** —— 跟用户自己让
+  Claude Code 干活是同一套权限提示，但发起方是上游的模型。只有客户端自己带了工具时才会这样；
+  没带工具的请求（普通问答）发出去的是 ASK 模式，不会有工具请求。
+- **一次一个工具调用。** 模型想同时叫两个，网关会把它们拆成两轮。
+- **turn 会在服务端挂着，最多 10 分钟。** 客户端拿到工具调用、在下一个请求里把结果带回来，
+  网关按 tool call id 把那半个 turn 接上。超过 10 分钟没回来就丢掉（下一次从头再来一轮，
+  多花一次套餐里的请求），同时最多挂 64 个。
+- **计量有两处折叠。** cache write 按普通 input 记；reasoning token 报出来但不计入总数
+  （`output_tokens` 有没有含它这边看不出来，宁可少记也不重复收费）。所以带思考的模型在用量
+  报表里可能偏低。
+
+连通性自检（要一个真 key，会花掉一次请求）：
+
+```bash
+CURSOR_API_KEY=key_… npm -w @agentlodge/server run cursor:probe -- --models
+CURSOR_API_KEY=key_… npm -w @agentlodge/server run cursor:probe -- "what is 2 + 2"
+CURSOR_API_KEY=key_… npm -w @agentlodge/server run cursor:probe -- --tools "search for X"
+CURSOR_API_KEY=key_… npm -w @agentlodge/server run cursor:probe -- --raw "hello"
+```
+
+`--tools` 会连工具循环一起跑通，`--raw` 打印解码后的原始帧 —— 来了网关不认识的东西时看这个。
 
 多条上游同时生效，没有「当前上游」这个开关了。模型那张卡里一行是（模型名，上游）：
 

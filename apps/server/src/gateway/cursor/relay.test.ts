@@ -1,15 +1,16 @@
 /**
  * A Cursor upstream, driven through the gateway the way a CLI drives it.
  *
- * The unit tests cover each half of the bridge; this covers the seam none of them can — a
- * real request through buildGateway(), resolved to a `cursor` provider, authenticated by
- * exchanging a key, framed, answered in protobuf, and translated back into whichever
- * protocol asked. Both CLIs are driven, because "both CLIs work against Cursor" is the
- * claim the whole design rests on and it is the kind of claim that quietly stops being
- * true.
+ * The unit tests cover each half of the bridge; this covers the seam none of them can — a real
+ * request through buildGateway(), resolved to a `cursor` provider, authenticated by exchanging
+ * a key, posted through BidiAppend, answered over RunSSE in protobuf, and translated back into
+ * whichever protocol asked. Both CLIs are driven, because "both CLIs work against Cursor" is
+ * the claim the whole design rests on and it is the kind that quietly stops being true.
  *
- * The upstream here is an ordinary http server that speaks Connect: the bridge cannot tell
- * it from api2.cursor.sh, which is the point.
+ * The upstream here is an ordinary http server speaking Cursor's agent protocol, and it
+ * answers rather than replays: it asks the client for workspace context, stores a blob and
+ * asks for it back, and asks for a file to be read — so the tool loop, which is the part that
+ * spans two client requests, is exercised rather than described.
  *
  * Run: npm -w @agentlodge/server run test:cursor-relay
  */
@@ -17,6 +18,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { decodeAppend } from './bidi.js';
 import { decode, encode, type Message } from './codec.js';
 import { envelope, FLAG_END_STREAM } from './connect.js';
 
@@ -34,22 +36,47 @@ const manager = http.createServer((req, res) => {
 });
 await new Promise<void>((r) => manager.listen(process.env.CREDENTIAL_MANAGER_SOCKET!, r));
 
-/** What the fake Cursor answers with next, and what it saw */
-let frames: Uint8Array[] = [];
-let seen: { path?: string; auth?: string; clientType?: string; request?: Message } = {};
+const SERVER = 'agent.v1.AgentServerMessage';
+
+/** One server message, framed as Connect wants it */
+const frame = (body: Message): Uint8Array => envelope(encode(SERVER, body));
+const trailer = (body: unknown = {}): Uint8Array =>
+  envelope(new TextEncoder().encode(JSON.stringify(body)), FLAG_END_STREAM);
+
+const text = (t: string): Uint8Array => frame({ interaction_update: { text_delta: { text: t } } });
+const ended = (usage: Record<string, number>): Uint8Array => frame({ interaction_update: { turn_ended: usage } });
+
+/* ---------------- The upstream ---------------- */
+
+/** What the client has said so far, in order */
+let said: Message[] = [];
+/** What the upstream does each time the client says something */
+let script: (message: Message, push: (bytes: Uint8Array) => void) => void = () => {};
+let seen: { runSSE?: string; append?: string; auth?: string; clientType?: string; requestId?: string } = {};
 let exchanges = 0;
+
+/** The open RunSSE response, and anything written before it was open */
+let open: http.ServerResponse | undefined;
+let queued: Uint8Array[] = [];
+
+function push(bytes: Uint8Array): void {
+  if (open) open.write(Buffer.from(bytes));
+  else queued.push(bytes);
+}
+
+function endStream(): void {
+  push(trailer());
+  open?.end();
+  open = undefined;
+}
 
 const cursor = http.createServer((req, res) => {
   const chunks: Buffer[] = [];
   req.on('data', (c: Buffer) => chunks.push(c));
   req.on('end', () => {
     const body = Buffer.concat(chunks);
-    seen = {
-      path: req.url,
-      auth: req.headers.authorization,
-      clientType: req.headers['x-cursor-client-type'] as string | undefined,
-      request: seen.request,
-    };
+    seen.auth = req.headers.authorization;
+    seen.clientType = req.headers['x-cursor-client-type'] as string | undefined;
 
     if (req.url === '/auth/exchange_user_api_key') {
       exchanges++;
@@ -60,15 +87,59 @@ const cursor = http.createServer((req, res) => {
       return;
     }
 
-    // The request as the bridge built it: five bytes of envelope, then the message
-    seen.request = decode('aiserver.v1.StreamUnifiedChatRequest', new Uint8Array(body.subarray(5)));
-    res.writeHead(200, { 'content-type': 'application/connect+proto' });
-    for (const f of frames) res.write(Buffer.from(f));
-    res.end();
+    if (req.url === '/aiserver.v1.BidiService/BidiAppend') {
+      seen.append = req.url;
+      const { message, requestId } = decodeAppend(new Uint8Array(body));
+      seen.requestId = requestId;
+      said.push(message);
+      res.writeHead(200, { 'content-type': 'application/proto' });
+      res.end(Buffer.from(encode('aiserver.v1.BidiAppendResponse', {})));
+      script(message, push);
+      return;
+    }
+
+    if (req.url === '/agent.v1.AgentService/RunSSE') {
+      seen.runSSE = req.url;
+      // The id is the one the appends carry, sent as this call's only message
+      const asked = decode('aiserver.v1.BidiRequestId', new Uint8Array(body.subarray(5)));
+      if (String(asked['request_id'] ?? '') !== seen.requestId && seen.requestId) {
+        res.writeHead(400).end('request id mismatch');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/connect+proto' });
+      open = res;
+      for (const bytes of queued) res.write(Buffer.from(bytes));
+      queued = [];
+      return;
+    }
+
+    if (req.url === '/aiserver.v1.AiService/AvailableModels') {
+      res.writeHead(200, { 'content-type': 'application/proto' });
+      res.end(
+        Buffer.from(
+          encode('aiserver.v1.AvailableModelsResponse', {
+            models: [{ name: 'composer-2.5-fast' }, { name: 'claude-opus-5-thinking-high' }],
+          }),
+        ),
+      );
+      return;
+    }
+
+    res.writeHead(404).end();
   });
 });
 await new Promise<void>((r) => cursor.listen(0, '127.0.0.1', r));
 const cursorUrl = `http://127.0.0.1:${(cursor.address() as { port: number }).port}`;
+
+/** Reset between scenarios, so one turn's leftovers cannot answer the next */
+function reset(next: typeof script): void {
+  said = [];
+  queued = [];
+  open?.end();
+  open = undefined;
+  seen = { ...seen, requestId: undefined };
+  script = next;
+}
 
 const { initDb } = await import('../../core/db/index.js');
 initDb();
@@ -78,6 +149,8 @@ const models = await import('../../core/db/models.js');
 const usage = await import('../../core/db/usage.js');
 const { signRuntimeToken } = await import('../../core/runtime-token.js');
 const { buildGateway } = await import('../index.js');
+const { fetchCursorModels } = await import('./index.js');
+const turns = await import('./turns.js');
 
 let pass = 0;
 let fail = 0;
@@ -105,115 +178,286 @@ const token = await signRuntimeToken(
   60_000,
 );
 
-const response = (body: Message): Uint8Array =>
-  envelope(encode('aiserver.v1.StreamUnifiedChatResponse', body));
-const trailer = (body: unknown = {}): Uint8Array =>
-  envelope(new TextEncoder().encode(JSON.stringify(body)), FLAG_END_STREAM);
+/** The run request out of whatever the client has said, for asserting on what went out */
+const runRequest = (): Message => said.map((m) => m['run_request'] as Message).find(Boolean) ?? {};
 
-const asClaude = () =>
+/** Whichever client message carries this field, decoded */
+const sentWith = (field: string): Message | undefined =>
+  said
+    .map((m) => (m['exec_client_message'] ?? m['kv_client_message'] ?? m['exec_client_control_message']) as Message)
+    .filter(Boolean)
+    .find((m) => m[field] !== undefined);
+
+const TOOLS = [{ name: 'Search', description: 'search the web', input_schema: { type: 'object' } }];
+
+const asClaude = (payload: Record<string, unknown>) =>
   app.inject({
     method: 'POST',
     url: '/v1/messages',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    payload: {
-      model: 'cursor-model',
-      max_tokens: 1024,
-      system: 'be brief',
-      messages: [{ role: 'user', content: 'what is 2 + 2' }],
-      tools: [{ name: 'Read', description: 'read a file', input_schema: { type: 'object' } }],
-    },
+    payload: { model: 'cursor-model', max_tokens: 1024, ...payload },
   });
 
-const asCodex = () =>
+const asCodex = (payload: Record<string, unknown>) =>
   app.inject({
     method: 'POST',
     url: '/v1/responses',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    payload: {
-      model: 'cursor-model',
-      instructions: 'be brief',
-      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'what is 2 + 2' }] }],
-    },
+    payload: { model: 'cursor-model', ...payload },
   });
 
 async function run(): Promise<void> {
   console.log('\n=== Claude Code gets an answer out of a Cursor upstream ===');
   {
-    frames = [response({ text: 'four' }), trailer()];
-    const res = await asClaude();
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(text('four'));
+      out(ended({ input_tokens: 120, output_tokens: 8, cache_read_tokens: 30 }));
+      endStream();
+    });
+
+    const res = await asClaude({ system: 'be brief', messages: [{ role: 'user', content: 'what is 2 + 2' }] });
 
     ok('the turn succeeds', res.statusCode === 200, String(res.statusCode));
     ok('the key was exchanged for a token', exchanges === 1, String(exchanges));
     ok('which is what authenticates the call', seen.auth?.startsWith('Bearer ey.') === true, seen.auth);
-    ok('the RPC is the chat one', seen.path === '/aiserver.v1.ChatService/StreamUnifiedChat', seen.path);
-    ok('and we present as the client the credential belongs to', seen.clientType === 'cli', seen.clientType);
+    ok('the turn is read back over RunSSE', seen.runSSE === '/agent.v1.AgentService/RunSSE', seen.runSSE);
+    ok('and each message goes out through BidiAppend', seen.append === '/aiserver.v1.BidiService/BidiAppend', seen.append);
+    ok('we present as the client the credential belongs to', seen.clientType === 'cli', seen.clientType);
 
     ok('the client is answered in Anthropic frames', res.body.includes('event: message_start'), res.body.slice(0, 200));
     ok('carrying the text', res.body.includes('four'), res.body);
     ok('and a stop reason', res.body.includes('"stop_reason":"end_turn"'), res.body);
 
-    const sent = seen.request!;
-    ok('the system prompt travelled as explicit context', (sent['explicit_context'] as Message)?.['context'] === 'be brief');
-    ok('the question travelled as the human turn', (sent['conversation'] as Message[])?.[0]?.['text'] === 'what is 2 + 2');
-    ok("Claude Code's tool travelled as an MCP tool", (sent['mcp_tools'] as Message[])?.[0]?.['name'] === 'Read');
-    ok('and the model name is the one the row names', (sent['model_details'] as Message)?.['model_name'] === 'cursor-model');
+    const sent = runRequest();
+    const message = ((sent['action'] as Message)?.['user_message_action'] as Message)?.['user_message'] as Message;
+    ok('the question travelled as the prompt', String(message?.['text']).includes('what is 2 + 2'), JSON.stringify(message));
+    ok('the system prompt travelled as a custom one', sent['custom_system_prompt'] === 'be brief', String(sent['custom_system_prompt']));
+    ok('the model name is the one the row names', (sent['requested_model'] as Message)?.['model_id'] === 'cursor-model');
+    ok('and with no tools of its own the caller gets an asked turn', message?.['mode'] === 2, String(message?.['mode']));
   }
 
   console.log('\n=== The token is not exchanged again for the next turn ===');
   {
-    frames = [response({ text: 'still four' }), trailer()];
-    await asClaude();
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(text('still four'));
+      out(ended({ input_tokens: 10, output_tokens: 3 }));
+      endStream();
+    });
+    await asClaude({ messages: [{ role: 'user', content: 'again' }] });
     ok('one exchange has served both turns', exchanges === 1, String(exchanges));
   }
 
-  console.log('\n=== A tool call comes back as a tool_use block ===');
+  console.log('\n=== The turn is booked from the counts Cursor reported ===');
   {
-    frames = [
-      response({ text: 'let me look' }),
-      response({ tool_call: { tool_call_id: 'c1', name: 'Read', raw_args: '{"path":"a.ts"}' } }),
-      trailer(),
-    ];
-    const res = await asClaude();
-    ok('the block is a tool_use', res.body.includes('"type":"tool_use"') && res.body.includes('"name":"Read"'), res.body);
-    ok('its input arrives as json', res.body.includes('input_json_delta'), res.body);
-    ok('and the turn stops for the tool', res.body.includes('"stop_reason":"tool_use"'), res.body);
+    const totals = usage.totalsForUser(user.id);
+    // 120 fresh + 30 cached in the first turn, 10 in the second
+    ok('fresh input is counted', totals.inputTokens === 130, JSON.stringify(totals));
+    ok('cache reads are counted apart from it', totals.cacheReadTokens === 30, JSON.stringify(totals));
+    ok('output is counted', totals.outputTokens === 11, JSON.stringify(totals));
+    ok(
+      'and it is attributed to this upstream',
+      usage.byUpstreamForUser(user.id).some((u) => u.providerId === provider.id),
+      JSON.stringify(usage.byUpstreamForUser(user.id)),
+    );
+  }
+
+  console.log('\n=== The housekeeping a turn does not progress without ===');
+  {
+    const blobId = new Uint8Array([1, 2, 3]);
+    const blob = new TextEncoder().encode('the conversation so far');
+    reset((message, out) => {
+      if (message['run_request']) {
+        out(frame({ exec_server_message: { id: 1, exec_id: 'e1', request_context_args: { use_cached: false } } }));
+        return;
+      }
+      const exec = message['exec_client_message'] as Message | undefined;
+      if (exec?.['request_context_result']) {
+        out(frame({ kv_server_message: { id: 2, set_blob_args: { blob_id: blobId, blob_data: blob } } }));
+        return;
+      }
+      const kv = message['kv_client_message'] as Message | undefined;
+      if (kv?.['set_blob_result']) {
+        out(frame({ kv_server_message: { id: 3, get_blob_args: { blob_id: blobId } } }));
+        return;
+      }
+      if (kv?.['get_blob_result']) {
+        out(text('context in hand'));
+        out(ended({ input_tokens: 1, output_tokens: 1 }));
+        endStream();
+      }
+    });
+
+    const res = await asClaude({ messages: [{ role: 'user', content: 'go' }] });
+    const context = sentWith('request_context_result')?.['request_context_result'] as Message;
+    const env = ((context?.['success'] as Message)?.['request_context'] as Message)?.['env'] as Message;
+    ok('the workspace question is answered', Boolean(env), JSON.stringify(context));
+    ok('with somewhere to be', Array.isArray(env?.['workspace_paths']), JSON.stringify(env?.['workspace_paths']));
+
+    const returned = sentWith('get_blob_result')?.['get_blob_result'] as Message;
+    ok('a blob the server stored comes back byte for byte', Buffer.from((returned?.['blob_data'] as Uint8Array) ?? []).equals(Buffer.from(blob)), JSON.stringify(returned));
+    ok('and the turn gets to its answer', res.body.includes('context in hand'), res.body);
+  }
+
+  console.log("\n=== Cursor asks the caller to read a file, across two requests ===");
+  {
+    reset((message, out) => {
+      if (message['run_request']) {
+        out(text('let me look'));
+        out(frame({ exec_server_message: { id: 7, exec_id: 'e7', pi_read_args: { path: '/repo/a.ts' } } }));
+        return;
+      }
+      const exec = message['exec_client_message'] as Message | undefined;
+      if (exec?.['pi_read_result']) {
+        out(text('it exports a'));
+        out(ended({ input_tokens: 5, output_tokens: 4 }));
+        endStream();
+      }
+    });
+
+    const first = await asClaude({ messages: [{ role: 'user', content: 'what does a.ts do' }], tools: TOOLS });
+    ok('the text so far reaches the client', first.body.includes('let me look'), first.body);
+    ok("Cursor's own request becomes a tool_use block", first.body.includes('"type":"tool_use"'), first.body);
+    ok("named after the caller's own tool", first.body.includes('"name":"Read"'), first.body);
+    ok('with the path it asked for', first.body.includes('/repo/a.ts'), first.body);
+    ok('and the turn stops for the tool', first.body.includes('"stop_reason":"tool_use"'), first.body);
+    ok('the turn is parked rather than dropped', turns.parkedCount() === 1, String(turns.parkedCount()));
+
+    const callId = /"id":"([^"]+)","name":"Read"/.exec(first.body)?.[1] ?? '';
+    ok('the call has an id to answer under', callId.length > 0, first.body);
+
+    const second = await asClaude({
+      messages: [
+        { role: 'user', content: 'what does a.ts do' },
+        { role: 'assistant', content: [{ type: 'tool_use', id: callId, name: 'Read', input: { file_path: '/repo/a.ts' } }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: callId, content: 'export const a = 1' }] },
+      ],
+      tools: TOOLS,
+    });
+
+    const answered = sentWith('pi_read_result')?.['pi_read_result'] as Message;
+    ok("the caller's result reaches Cursor", String((answered?.['success'] as Message)?.['output']) === 'export const a = 1', JSON.stringify(answered));
+    ok('no second turn was started', said.filter((m) => m['run_request']).length === 1, String(said.filter((m) => m['run_request']).length));
+    ok('the answer continues the same turn', second.body.includes('it exports a'), second.body);
+    ok('which now finishes', second.body.includes('"stop_reason":"end_turn"'), second.body);
+    ok('and nothing is left parked', turns.parkedCount() === 0, String(turns.parkedCount()));
+  }
+
+  console.log("\n=== A tool the caller declared is called by name ===");
+  {
+    reset((message, out) => {
+      if (message['run_request']) {
+        out(frame({
+          exec_server_message: {
+            id: 9,
+            exec_id: 'e9',
+            mcp_args: { name: 'client__Search', tool_name: 'client__Search', tool_call_id: 'mcp-1', args: { query: { string_value: 'cursor rpc' } } },
+          },
+        }));
+        return;
+      }
+      const exec = message['exec_client_message'] as Message | undefined;
+      if (exec?.['mcp_result']) {
+        out(text('found it'));
+        out(ended({ input_tokens: 2, output_tokens: 2 }));
+        endStream();
+      }
+    });
+
+    const first = await asClaude({ messages: [{ role: 'user', content: 'look it up' }], tools: TOOLS });
+    ok('it is offered to Cursor under a prefixed name', ((runRequest()['mcp_tools'] as Message)?.['mcp_tools'] as Message[])?.[0]?.['name'] === 'client__Search');
+    ok('and comes back to the caller under its own', first.body.includes('"name":"Search"'), first.body);
+    ok('with the arguments Cursor chose', first.body.includes('cursor rpc'), first.body);
+
+    const second = await asClaude({
+      messages: [
+        { role: 'user', content: 'look it up' },
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'mcp-1', name: 'Search', input: { query: 'cursor rpc' } }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'mcp-1', content: 'an rfc' }] },
+      ],
+      tools: TOOLS,
+    });
+    const result = sentWith('mcp_result')?.['mcp_result'] as Message;
+    const block = ((result?.['success'] as Message)?.['content'] as Message[])?.[0];
+    ok("the caller's answer goes back as MCP content", String((block?.['text'] as Message)?.['text']) === 'an rfc', JSON.stringify(result));
+    ok('and the turn carries on', second.body.includes('found it'), second.body);
+  }
+
+  console.log('\n=== A request nothing here can run is refused, not left hanging ===');
+  {
+    reset((message, out) => {
+      if (message['run_request']) {
+        /*
+         * `grep_args` as raw bytes, because it is not in the tables — which is the point: this
+         * is a request the bridge can see the shape of and not answer.
+         */
+        out(frame({ exec_server_message: { id: 11, exec_id: 'e11', grep_args: new Uint8Array(0) } }));
+        return;
+      }
+      if (message['exec_client_control_message']) {
+        out(text('never mind'));
+        out(ended({ input_tokens: 1, output_tokens: 1 }));
+        endStream();
+      }
+    });
+
+    const res = await asClaude({ messages: [{ role: 'user', content: 'find the todos' }], tools: TOOLS });
+    const thrown = sentWith('throw')?.['throw'] as Message;
+    ok('the exec is thrown rather than ignored', Boolean(thrown), JSON.stringify(said));
+    ok('under the id that asked', Number(thrown?.['id']) === 11, JSON.stringify(thrown));
+    ok('and the turn gets to finish', res.body.includes('never mind'), res.body);
   }
 
   console.log('\n=== Codex gets the same upstream as a Responses stream ===');
   {
-    frames = [response({ text: 'four' }), trailer()];
-    const res = await asCodex();
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(text('four'));
+      out(ended({ input_tokens: 9, output_tokens: 1 }));
+      endStream();
+    });
+
+    const res = await asCodex({
+      instructions: 'be brief',
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'what is 2 + 2' }] }],
+    });
     ok('the turn succeeds', res.statusCode === 200, String(res.statusCode));
     ok('it opens as a response', res.body.includes('event: response.created'), res.body.slice(0, 200));
     ok('the text arrives as output_text', res.body.includes('response.output_text.delta') && res.body.includes('four'), res.body);
     ok('and it completes', res.body.includes('event: response.completed'), res.body);
-    ok(
-      'the instructions travelled as explicit context',
-      (seen.request!['explicit_context'] as Message)?.['context'] === 'be brief',
-      JSON.stringify(seen.request!['explicit_context']),
-    );
+    ok('the instructions travelled as the system prompt', runRequest()['custom_system_prompt'] === 'be brief', String(runRequest()['custom_system_prompt']));
   }
 
   console.log('\n=== What Cursor refuses, the client is told ===');
   {
-    frames = [trailer({ error: { code: 'resource_exhausted', message: 'you have run out of fast requests' } })];
-    const res = await asClaude();
-    ok('the refusal reaches the client as an error event', res.body.includes('event: error'), res.body);
-    ok("with Cursor's own sentence", res.body.includes('you have run out of fast requests'), res.body);
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(trailer({ error: { code: 'resource_exhausted', message: 'you have run out of fast requests' } }));
+      open?.end();
+      open = undefined;
+    });
+
+    const res = await asClaude({ messages: [{ role: 'user', content: 'again' }] });
+    // Refused before a byte of the answer, so it can still be a status — which is what the
+    // client retries on and what the gate reads to decide whether to back off
+    ok('the Connect code becomes the status that means it', res.statusCode === 429, String(res.statusCode));
+    ok("Cursor's own sentence reaches the client", res.body.includes('you have run out of fast requests'), res.body);
     ok('and the turn is not closed as a finished answer', !res.body.includes('message_stop'), res.body);
   }
 
-  console.log('\n=== The turn is booked, from the estimate ===');
+  console.log('\n=== The model list is the one the account can use ===');
   {
-    const totals = usage.totalsForUser(user.id);
-    ok('something was recorded', totals.inputTokens > 0 && totals.outputTokens > 0, JSON.stringify(totals));
-    ok('and it is attributed to this upstream', usage.byUpstreamForUser(user.id).some((u) => u.providerId === provider.id), JSON.stringify(usage.byUpstreamForUser(user.id)));
+    const out = await fetchCursorModels('cursor-api-key-cursor', cursorUrl);
+    ok('it comes back from the upstream', JSON.stringify(out.models) === '["composer-2.5-fast","claude-opus-5-thinking-high"]', JSON.stringify(out));
   }
 }
 
 try {
   await run();
 } finally {
+  turns.clear();
+  open?.end();
   cursor.close();
   manager.close();
   fs.rmSync(box, { recursive: true, force: true });

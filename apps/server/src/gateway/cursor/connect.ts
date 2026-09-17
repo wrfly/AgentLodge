@@ -95,6 +95,39 @@ export class FrameReader {
   }
 }
 
+/**
+ * What a Connect error code means in HTTP terms.
+ *
+ * Worth translating rather than calling everything a 502: the gate reads the status to decide
+ * whether to back off (429, 503, 529) and the client reads it to decide whether to retry at
+ * all, so `resource_exhausted` arriving as a generic upstream fault loses both.
+ *
+ * These are the mappings Connect itself specifies.
+ */
+export function statusOf(code: string | undefined): number {
+  switch (code) {
+    case 'invalid_argument':
+    case 'failed_precondition':
+    case 'out_of_range':
+      return 400;
+    case 'unauthenticated':
+      return 401;
+    case 'permission_denied':
+      return 403;
+    case 'not_found':
+    case 'unimplemented':
+      return 404;
+    case 'resource_exhausted':
+      return 429;
+    case 'unavailable':
+      return 503;
+    case 'deadline_exceeded':
+      return 504;
+    default:
+      return 502;
+  }
+}
+
 /** The trailing frame's JSON, or undefined if it is not one */
 export function endOfStream(frame: Frame): EndOfStream | undefined {
   if (!(frame.flags & FLAG_END_STREAM)) return undefined;

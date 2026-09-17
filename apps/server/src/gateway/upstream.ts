@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { config } from '../core/config.js';
 import * as models from '../core/db/models.js';
 import * as providers from '../core/db/providers.js';
-import { CHAT_RPC as CURSOR_CHAT_RPC, CURSOR_API } from './cursor/index.js';
+import { CURSOR_AGENT_API, RUN_SSE_RPC } from './cursor/index.js';
 import type { Wire } from './usage-parser.js';
 
 /**
@@ -81,11 +81,13 @@ export async function resolveUpstream(
    * already rely on carries the rest, and nothing downstream needs a Cursor branch.
    *
    * The address is where the request really goes, which is what the audit gate asks about.
-   * The bridge builds its own URLs from the same base; a blank one means Cursor's own.
+   * A turn is several calls across two hosts and the bridge asks the gate about each one as it
+   * makes it; this names the one that carries the turn, which is the agent host unless the
+   * provider points both at a relay of its own.
    */
   if (p.kind === 'cursor') {
     return {
-      url: `${(base || CURSOR_API).replace(/\/+$/, '')}${CURSOR_CHAT_RPC}`,
+      url: `${(base || CURSOR_AGENT_API).replace(/\/+$/, '')}${RUN_SSE_RPC}`,
       wire: 'chat',
       translate: wire !== 'chat',
       apiKey,

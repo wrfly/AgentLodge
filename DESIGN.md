@@ -382,9 +382,9 @@ schema 没有公开的 `.proto`。于是这条上游是**唯一一条 ③ 自己
 `fetch` 一个 JSON 出去。
 
 ```
-claude → Messages ┐                                        ┌ StreamUnifiedChatRequest（protobuf）
-                  ├→ translate.ts →  Chat Completions  →  ─┤   Connect 帧 → api2.cursor.sh
-codex  → Responses┘                        ↑              └ StreamUnifiedChatResponse 帧流
+claude → Messages ┐                                        ┌ AgentRunRequest（protobuf）
+                  ├→ translate.ts →  Chat Completions  →  ─┤   BidiAppend → api2.cursor.sh
+codex  → Responses┘                        ↑              └ RunSSE 帧流 ← agentn.…cursor.sh
                                            └───────────────── cursor/stream.ts 再翻回 chat SSE
 ```
 
@@ -392,18 +392,102 @@ codex  → Responses┘                        ↑              └ StreamUnifie
 两个 CLI 一起有，而且要写对的只有一处而不是两处。`resolveUpstream` 给 cursor 上游的 wire
 就是 `chat`，所以嗅探 usage、翻译回客户端协议、keep-alive 这些全都没有 cursor 分支。
 
-几件定下来的事：
+#### 走哪个 RPC：`agent.v1.AgentService`，也就是 CLI 自己那条
+
+一开始走的是 IDE 的聊天 RPC（`aiserver.v1.ChatService/StreamUnifiedChat`）—— 桥接确实更简单，
+一问一答，客户端自己拿着工具。**但它没了**：2026.09 以后 CLI bundle 里不再带
+`StreamUnifiedChatRequest` / `Response`，连 `ChatService` 都不在了。schema 是从 bundle 里读出来的，
+读不到就没法在 Cursor 下次发版时保持正确，所以这条路只能放弃。
+
+换过去之后反倒有两件事变好了，都是网关在意的：
+
+- **token 数是真的。** 每个 turn 结束时 `turn_ended` 带 input / output / cache read / cache write /
+  reasoning。聊天 RPC 一个都不报，所以这条上游过去是**按字符估**的 —— 配额闸门、用量报表、
+  由它们算出来的价格，全是估算。
+- **两个方向的工具都是原生的。** 调用方的工具作为 MCP 定义发出去，模型当工具调，而不是靠 prompt
+  哄它吐 JSON；Cursor 那一侧的循环（读这个文件、跑这条命令）则交回给调用方执行。
+
+代价是：一个 turn 是一场对话，而网关对外的两种协议都在工具调用处**结束一次响应**。
+下面几小节就是这个代价怎么付的。
+
+#### 双向流，用的是两个单向请求（`cursor/bidi.ts`）
+
+`Run` 是 bidi streaming：客户端在服务端往回推的同时还要继续发（工具结果、blob、心跳）。
+这需要 HTTP/2 request streaming —— `fetch` 表达不了，前面挂审计代理时也活不下来。
+
+Cursor 自己的客户端里就有出路，因为它在企业代理后面遇到同样的问题：同一个 turn 可以用两个
+普通请求驱动，靠一个 id 关联起来。
+
+| 调用 | 形态 | 去哪 |
+|---|---|---|
+| `aiserver.v1.BidiService/BidiAppend` | unary，一次一条 `AgentClientMessage`，带递增 seqno | API host |
+| `agent.v1.AgentService/RunSSE` | server-streaming，请求体只有那个 id，回来是整个 turn | **agent host** |
+
+id 是这边生成的 uuid，两个请求的 `x-request-id` 都是它 —— Cursor 自己的客户端就是从这个头里读的。
+两个调用都只是「POST 一个 protobuf」，所以审计代理、egress 闸门、abort 信号全都跟别的上游一样有效。
+
+> ⚠️ **这条上游要出两个域名。** 有 egress allowlist 的部署要同时放开 `api2.cursor.sh` 和
+> agent host（默认 `agentn.us.api5.cursor.sh`，Cursor 通过 `GetServerConfig` 公布，这里按当前值写死）。
+> 上游配了 Base URL 的话两个都走那一个地址。
+
+#### 一个 turn 会反过来要三样东西（`cursor/session.ts`）
+
+Cursor 的 agent 协议不是一问一答：turn 进行中服务端会朝客户端要东西，要不到就停在那儿。
+
+| 要什么 | 怎么答 |
+|---|---|
+| 会话状态（`kv_server_message`） | 服务端把自己的状态以 blob 形式存在客户端。turn 期间放内存里，要的时候还回去。**不是可选的** —— 要的 blob 没回去，turn 就停 |
+| 工作区上下文（`request_context_args`） | 什么系统、什么 shell、哪个目录。这里直接答 |
+| 工具执行（`*_args`） | 交给**调用方**跑 —— 这个进程没有工作区，也不该跑模型写的命令 |
+
+#### 工具，两个方向（`cursor/exec-bridge.ts`、`cursor/mcp.ts`）
+
+**调用方的工具 → Cursor**：进 `mcp_tools`（name / description / JSON schema）。`ExecServerMessage`
+里其余都是 Cursor 自己那套固定工具，调用方的工具不在那个目录里、也永远不会在；MCP 那一支是唯一能
+带任意名字和 schema 的。
+
+出去的时候**加 `client__` 前缀**：Cursor 的 model provider 那边已经注册了叫 `Read`、`Write`、
+`WebFetch`、`WebSearch` 的工具，重名会让它 400 掉整个请求（表现成 `ERROR_PROVIDER_ERROR`，
+看起来像桥接写错了而不是撞名）—— 而 Claude Code 的内置工具正好就是这几个名字。回到调用方之前改回来。
+
+**Cursor 的工具 → 调用方**：`pi_read_args` → `Read`、`shell_stream_args` → `Bash`、
+`pi_edit_args` → `Edit`…… 名字是 Claude Code 内置工具的名字，故意的：它在自己的 checkout 里、
+按自己的权限提示执行，回来的纯文本再翻成 agent 在等的那个 protobuf result。
+
+所以**只有调用方自己带了工具**时才会往回交 —— 它这时才有循环可以跑、有办法回答。没带工具的请求
+发出去的是 `ASK` 模式的 turn；万一还是来了 exec 请求，用 `ExecClientControlMessage.throw` 顶掉。
+桥不了的（`ls_args`、`grep_args`，结果是目录树和 per-file 匹配表，纯文本变不出来）也是 throw：
+**不答不是让 turn 失败，是让它停住**，客户端还在等，而且没有任何话说明为什么。
+
+#### 跨请求的 turn（`cursor/turns.ts`）
+
+Cursor 在等工具结果时把 turn 挂着，而网关对外的协议在工具调用处就把响应结束了、结果在**下一个**
+请求里来。于是挂起的 turn 按它在等的那个 tool call id 存起来，下一个带着这个 id 的请求接回同一场对话。
+
+丢了不致命 —— 找不到就从 transcript 重开一轮，那也是别的上游每次都在做的事 —— 但会丢掉 agent 服务端
+那边的上下文，再花一次套餐里的请求。
+
+两个上限，都是刻意的：一个 parked turn 是一条活过了原请求的 HTTP 流，**在并发闸门的账外**。
+
+- **TTL 10 分钟**：客户端拿了工具调用就再也不回来（崩了、用户 ctrl-c），否则这条流挂到进程重启
+- **总数 64**：所有上游合计，超了从最老的开始踢
+
+#### 其余定下来的事
 
 | 事 | 怎么做的 | 为什么 |
 |---|---|---|
-| 走哪个 RPC | `aiserver.v1.ChatService/StreamUnifiedChat` | IDE 的聊天 RPC。`cursor-agent` CLI 走的 `agent.v1.AgentService` 是**服务端跑 agent 循环、回头叫客户端执行工具**，跟「客户端自己有工具」正好相反 |
-| 调用方的工具 | 塞进 `mcp_tools`（name / description / JSON schema） | `supported_tools` 是 Cursor 自己那套固定工具（read_file、run_terminal_command…），实现在一个这里不存在的工作区上；MCP 那一支是唯一能带任意名字和 schema 的 |
 | 凭据 | Cursor API key → `/auth/exchange_user_api_key` 换访问令牌 | 令牌几小时就过期，key 是人能创建和吊销的那个。令牌只在内存里，401 时强制重换一次 |
 | schema | 从 CLI bundle 里提取，提取结果进版本库 | 字段号挪了是**静默**的：请求照样被接受，只是意思变了。所以产物提交上来，diff 就是报警 |
-| token 数 | 按字符估（约 3 字符 1 token） | Cursor 的聊天协议里没有 token 计数。记 0 的话这条上游看起来免费，配额窗口永远不动 |
+| 模型名 | `claude-opus-5-thinking-high` 拆成 `model_id` + `parameters` | slug 里带 variant，线上要分开。`-max` 是 mode 不是 parameter，而且它更贵，所以只有 slug 里写了才开 |
+| 出错的 code | Connect 的 code 翻成 HTTP status | `resource_exhausted` 变成 429，闸门才会真的退让；一律 502 的话 AIMD 和客户端重试都失效 |
+| thinking | 丢掉 | Cursor 单独一条 channel 发（这点比聊天 RPC 好），但 Chat Completions 没有这个字段。掺进 `content` 更糟：推理会以答案的口气混在答案里，还没有边界 |
+| 一次一个工具调用 | 交出去一个就挂起等 | 接回来时要能把结果对上，一个 id 一个答案最省事。模型想同时叫两个，就被问两次 |
 
-> ⚠️ **这条上游的计量是估的**，用量、配额、价格全部由上面那个估算派生。别的上游是「上游报什么记什么」，
-> 这条不是。
+计量上有两处折叠，因为 Chat Completions 能放数字的地方比 Cursor 报的数字少：
+
+- **cache write 按普通 input 记。** 这条线上没有它的字段，而它本来就是「顺便被存下来的 input」。
+- **reasoning 报但不加进总数。** `output_tokens` 到底有没有把它算进去，这边看不出来；同一批 token
+  收两次钱是两个错误里更糟的那个。所以带思考的模型在这里可能**少记**。
 
 ### 2.5 审计代理（`trace-proxy/`）—— 位置 A，默认关
 
