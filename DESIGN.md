@@ -557,7 +557,9 @@ refresh token）。订阅可以在控制台登录（authorization code + PKCE，
 具体列以那个文件为准 —— 把 DDL 抄进设计文档，抄的那份迟早会漂。
 
 旧库靠 `db/index.ts` 里的 `migrate()` 补齐，开关是 `pragma user_version`，一步只加自己
-缺的东西，在新库上是空转。**它跑在 schema.sql 之前。** schema.sql 里有建在迁移列上的索引
+缺的东西，在新库上是空转。**能加就别删**：删过的那一步回滚不回去 —— 退回旧镜像时
+`user_version` 已经在前面，`migrate()` 直接返回，旧代码撞上少了列的表。真要退版本得连库
+一起还原（`cli/backup-db.ts` 负责那份拷贝）。第 17 步是目前唯一的删除步。**它跑在 schema.sql 之前。** schema.sql 里有建在迁移列上的索引
 （`conversations(parent_id)`、`usage_records(provider_id)`），列还没加时 `create index`
 会报错，schema.sql 报错就不往下走，`migrate()` 也就不执行，列永远补不上，每次启动都死在
 同一行。空库没有东西要补，由 schema.sql 一次建全。`upgrade.test.ts` 守这条：把新库的迁移

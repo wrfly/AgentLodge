@@ -20,10 +20,11 @@ export function register(app: FastifyInstance): void {
     const now = new Date();
     const windowBounds = quota.boundsOf('window', now);
     const firstId = usersRepo.firstId();
+    // The 5-hour window is the one that bites first, so it is the one the list shows — and it
+    // is the same window for every row, which is what lets it be read once out here
+    const windowStart = windowBounds.start.toISOString();
     return usersRepo.list().map((u) => {
       const q = usersRepo.getQuota(u.id);
-      // The 5-hour window is the one that bites first, so it is the one the list shows
-      const windowStart = windowBounds.start.toISOString();
       return {
         ...usersRepo.toPublic(u),
         // Always an active administrator, so the list offers no way to demote or disable it
@@ -90,10 +91,10 @@ export function register(app: FastifyInstance): void {
    * that one account and everybody can be read against each other — an operator moving between
    * the two cards is comparing, and two lists of presets would drift.
    *
-   * They are **reporting** ranges: what was spent between two instants. The gate's own
-   * counting can begin later for one account, and the quota bar in the manage panel is where
-   * that is shown. The range comes back with the rows, label included, because a label picked
-   * on one side of the wire from a range computed on the other is how the two drift apart.
+   * The range comes back with the rows, label included, because a label picked on one side of
+   * the wire from a range computed on the other is how the two drift apart — and an
+   * unrecognised preset falls back to this route's own default rather than to whatever the
+   * switch's last branch happens to be.
    */
   app.get('/api/admin/users/:id/usage-by-agent', guard, async (req, reply) => {
     const { id } = req.params as { id: string };

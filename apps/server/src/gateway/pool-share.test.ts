@@ -231,10 +231,10 @@ console.log('\n=== The arithmetic ===');
 }
 {
   /*
-   * A numerator larger than the denominator is reachable: an administrator's reset_at moves
-   * a user's counting forward, and quota's own figures can be recomputed against a window
-   * the totals query does not cut the same way. Whatever the cause, a user must never be
-   * shown more than the pool has spent.
+   * A numerator larger than the denominator is reachable: the pool total is filtered to one
+   * upstream and the user's own figure is not, so anybody who also spent elsewhere counts in
+   * the first and not the second. Whatever the cause, a user must never be shown more than
+   * the pool has spent.
    */
   pool();
   const s = poolShare(q({ window: { used: 999_999 } }), ANTHROPIC);

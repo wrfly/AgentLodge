@@ -251,13 +251,18 @@ console.log('\n=== The console can ask about the seven days the quota is countin
     `${seven.range.from} vs ${rolling.range.from}`);
 
   /*
-   * The window is the platform\'s, so asking again is asking about the same stretch of time.
-   * There is nothing per-account left that could move it: zeroing one account's usage was the
-   * only thing that ever did, and it is retired.
+   * The user card reports over this same window. Zeroing an account was the only thing that
+   * could ever have made the two disagree, and it is retired — so what is worth pinning is
+   * that the figures line up, not that a removed feature no longer fires.
    */
-  const again = await askPreset('weekWindow');
-  ok('the window is the platform\'s, so it does not move per account',
-    again.range.from === rolling.range.from, `${again.range.from} vs ${rolling.range.from}`);
+  const inWindow = (await askUsers('weekWindow')).json() as UserReport;
+  ok('the user card accounts for the same window',
+    sum(inWindow.rows) === inWindow.totals.inputTokens,
+    `${sum(inWindow.rows)} vs ${inWindow.totals.inputTokens}`);
+  const everything = (await askUsers()).json() as UserReport;
+  ok('and over all time it has each account\'s whole spend',
+    everything.rows.find((r) => r.username === 'alice')?.inputTokens === 1_200,
+    JSON.stringify(everything.rows.map((r) => [r.username, r.inputTokens])));
 }
 
 console.log('\n=== It is the console, so it is for administrators ===');

@@ -127,6 +127,13 @@ function hasTables(d: DatabaseSync): boolean {
  *
  * A step only ever adds what is missing: schema.sql already builds a new database complete,
  * so the same code has to be a no-op there and a repair on an older file.
+ *
+ * Step 17 is the first that takes something away, and it is the reason to say what that costs:
+ * a removal cannot be rolled back into. Stepping back to an earlier image leaves
+ * `user_version` ahead of it, so this function returns without restoring anything, and the
+ * older code then runs against a table it expects a column on. Reverting past a removal means
+ * restoring the database with the image — `cli/backup-db.ts` is what makes that copy. Prefer
+ * an additive step whenever one will do.
  */
 const SCHEMA_VERSION = 17;
 
@@ -656,18 +663,80 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
      * a top-up, which says what it is, raises the ceiling rather than hiding the spend, and
      * expires on the window's own boundary.
      *
-     * Dropping rather than leaving it null. A column nothing writes and three things read is
-     * how a value comes back: `countStartOf` on the gate's path, the admin list's bar, and
-     * the usage page's "counting from" caption all consulted it, and all of them are gone in
-     * the same change. Leaving the column would keep the shape of the feature around for the
-     * next person to wire back up.
+     * Removed rather than left null. A column nothing writes and three things read is how a
+     * value comes back: `countStartOf` on the gate's path, the admin list's bar and the usage
+     * page's "counting from" caption all consulted it, and all of them go in this change.
      *
-     * Any value still in here is forgiveness an operator granted under the old rules. It
-     * stops applying the moment this runs, which for a window still open means that account's
-     * count goes back to the whole window — the same count everyone else already had.
+     * **This is the first step here that takes something away, so it is the first that cannot
+     * be rolled back into.** Going back to the previous image leaves `user_version` at 17, so
+     * `migrate()` returns immediately and never puts the column back — and the old top-up
+     * route writes to it, which is then a 500 on every grant. Going back means restoring the
+     * database alongside the image; `cli/backup-db.ts` is what makes that copy.
+     *
+     * Rebuilt rather than `alter table drop column`. SQLite implements the drop by deleting a
+     * span of the stored CREATE TABLE text, and the span runs from the column's name to the
+     * next one — which here swallows `warned_period`'s comment and leaves this column's
+     * comment sitting on top of it. Measured on a real file. The table is small and rebuilding
+     * it leaves a definition that still matches schema.sql.
      */
     if (columns(d, 'user_quotas').has('reset_at')) {
-      d.exec('alter table user_quotas drop column reset_at');
+      /*
+       * Said out loud, with a count, because this is forgiveness being taken back: an account
+       * zeroed inside a window still running goes back to counting the whole window, which can
+       * put it over its ceiling on the next turn. Nobody can reconstruct the list afterwards,
+       * so the number has to be printed before the column goes.
+       */
+      const [row] = d
+        .prepare('select count(*) as n from user_quotas where reset_at is not null')
+        .all() as Array<{ n: number }>;
+      const forgiven = row?.n ?? 0;
+      if (forgiven > 0) {
+        console.log(
+          `[db] ${forgiven} account(s) had a manual usage reset; it no longer applies and ` +
+            'they now count the whole window. Top up anyone this puts over their ceiling.',
+        );
+      }
+
+      /*
+       * The twelve columns schema.sql declares, in its order. An upgraded file also carries
+       * six from the quota model this one replaced — `token_limit`, `period`, `period_hours`,
+       * `cycle_start`, `auto_renew`, `cost_limit_micro` — which migration 1 drained into the
+       * three ceilings and nothing has read since. Naming the live set carries them out too,
+       * which is the point of rebuilding rather than dropping one column at a time.
+       *
+       * `pragma foreign_keys` is never turned on in this process, so `drop table` here cannot
+       * cascade into anything; the `references` clause is documentation either way.
+       */
+      d.exec(`
+        create table user_quotas_new (
+          user_id      text primary key references users(id) on delete cascade,
+          -- tokens limits by billable tokens; cost limits by money in micro-units
+          limit_kind   text not null default 'tokens',
+          -- Three ceilings, all in the unit named above, all null-means-unlimited, all over
+          -- windows that are the platform's rather than each user's
+          window_limit integer,
+          week_limit   integer,
+          month_limit  integer,
+          hard_stop    integer not null default 1,
+          -- A top-up raises one window's ceiling, and expires with that window
+          boost_scope  text,                    -- window | week | month
+          boost_amount integer,
+          boost_until  text,                    -- the window's end at the moment it was granted
+          -- Which window a warning email has gone out for, so one window does not nag twice
+          warned_period text,
+          updated_at   text not null,
+          updated_by   text
+        );
+        insert into user_quotas_new
+          (user_id, limit_kind, window_limit, week_limit, month_limit, hard_stop,
+           boost_scope, boost_amount, boost_until, warned_period, updated_at, updated_by)
+        select
+           user_id, limit_kind, window_limit, week_limit, month_limit, hard_stop,
+           boost_scope, boost_amount, boost_until, warned_period, updated_at, updated_by
+        from user_quotas;
+        drop table user_quotas;
+        alter table user_quotas_new rename to user_quotas;
+      `);
     }
   }
 

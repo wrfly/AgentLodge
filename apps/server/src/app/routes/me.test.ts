@@ -267,18 +267,24 @@ console.log('\n=== What falls either side of the boundary ===');
     String(seven.totals.inputTokens));
 
   /*
-   * The range is the window's own boundary, and nothing per-account moves it.
+   * The range is the gate's own window, and two people asking on the same afternoon are
+   * asking about the same stretch of time.
    *
-   * It used to follow `countsFrom`, which a manual reset pushed forward for one account —
-   * so two people asking for "this 7-day window" on the same afternoon could be asking about
-   * two different stretches of time. Zeroing is retired; the report and the gate now count
-   * the same interval because there is only one interval to count.
+   * It used to follow `countsFrom`, which a manual reset pushed forward for one account, so
+   * they were not. Zeroing is retired and the coupling to the quota stays — for the other
+   * reason, which is the one that was always load-bearing: the boundary comes from what the
+   * upstream reported, and a report recomputing it would disagree with what is enforced.
    */
-  const again = await ask('weekWindow');
-  ok('asking twice gives the same window', again.range.from === rolling.range.from,
-    `${again.range.from} vs ${rolling.range.from}`);
-  ok('and it is the boundary, not something per-account',
-    again.range.from === boundary.toISOString(), `${again.range.from} vs ${boundary.toISOString()}`);
+  const asCarol = await ask('weekWindow');
+  // bob has spent nothing in it; the window he is told about is still carol's window
+  const asBob = (await app.inject({
+    method: 'GET', url: '/api/me/usage?preset=weekWindow', headers: bob.bearer,
+  })).json() as { range: { from: string } };
+  ok('two accounts get the same window', asBob.range.from === asCarol.range.from,
+    `${asBob.range.from} vs ${asCarol.range.from}`);
+  ok('and it is the one the gate is enforcing',
+    asCarol.range.from === boundary.toISOString(),
+    `${asCarol.range.from} vs ${boundary.toISOString()}`);
 }
 
 console.log('\n=== Which upstream it went out through, and on whose credential ===');

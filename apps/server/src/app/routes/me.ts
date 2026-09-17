@@ -67,10 +67,11 @@ function resolveRange(
 
   switch (preset) {
     /*
-     * The five-hour window: the one that refuses first, and the one somebody asks about
-     * the moment they are told to wait. Its boundaries are the platform's rather than a
-     * rolling five hours from now, and it counts from wherever the quota counts from — a
-     * manual reset moves that forward — so both come from the quota, not from the clock.
+     * The five-hour window: the one that refuses first, and the one somebody asks about the
+     * moment they are told to wait. Its boundaries are the platform's rather than a rolling
+     * five hours from now, and they come from the quota rather than from the clock — the
+     * upstream states when its window resets and the gate cuts there, so a report that
+     * recomputed the boundary here would disagree with what is being enforced.
      */
     case 'window': {
       const w = quotaStatus.windows.window;
@@ -96,8 +97,9 @@ function resolveRange(
      * numbers; what was missing was the one the quota card at the top of the same page is
      * showing, so the two could be read against each other.
      *
-     * Built from the window rather than recomputed, exactly as the 5-hour one is: it counts
-     * from wherever the quota counts from, which a manual reset moves forward.
+     * Built from the window rather than recomputed, exactly as the 5-hour one is: once an
+     * upstream states its own weekly cadence the window phase-locks to that instant, and a
+     * page cutting it on the calendar would report a period the gate is not enforcing.
      */
     case 'weekWindow': {
       const w = quotaStatus.windows.week;

@@ -11,10 +11,10 @@
  * - it must not be their sum, because a turn that called two models is one turn and belongs
  *   to both rows. The console says so out loud when the two differ, which it can only do if
  *   the server counts the total rather than adding up what it already sent;
- * - and the range has to be the one the title claims. "This quota month" is what the user's
- *   own usage page calls the range *the gate* counts over, which a manual reset moves. Read
- *   from the month boundary instead, the console would show a just-zeroed account its whole
- *   forgiven month under the words the other page uses for nothing.
+ * - and the range has to be the one the title claims, which is why both come from the server.
+ *   A label chosen on one side of the wire from a range computed on the other is how the two
+ *   drift apart — and a typo in the preset must land on the same period as omitting it, or
+ *   `?preset=moth` answers a different question under an authoritative-looking label.
  *
  * Run: npm -w @agentlodge/server run test:admin-usage-by-agent
  */

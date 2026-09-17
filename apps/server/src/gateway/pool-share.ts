@@ -118,11 +118,12 @@ export function poolShare(
     /*
      * Nobody has spent anything yet, so neither has this user.
      *
-     * The clamp is for the numerator and denominator not being cut identically: an
-     * administrator's manual reset moves one user's counting start forward inside a window
-     * the total still spans whole. That understates their share, which is the harmless
-     * direction — but the clamp is what makes "never more than the pool" true by
-     * construction rather than by argument.
+     * The clamp is for the numerator and denominator not counting the same rows. They are
+     * cut over the same instants now that nothing moves a window per account — but the
+     * denominator is filtered to this upstream and `w.used` is not, so somebody who also
+     * spent through a second upstream is in the numerator and missing from the total below
+     * it. The clamp is what makes "never more than the pool" true by construction rather
+     * than by argument.
      */
     const share = total <= 0 ? 0 : Math.min(w.used / total, 1);
 
