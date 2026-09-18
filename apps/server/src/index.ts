@@ -125,13 +125,34 @@ if (config.hostDataDir && !path.isAbsolute(config.hostDataDir)) {
 
 initDb();
 importLegacy();
-pricing.seedDefaults();
 /*
- * Both after the seed, and in this order. `repriceHistory` costs every stored row from the
- * price table, so the table has to be complete first — recosting against a table still
- * missing its Claude rows would write the catch-all price in and then mark the job done.
+ * Both of these are one-off repairs, and neither is worth failing to start over.
+ *
+ * `app` and `gateway` are two processes over one SQLite file and they start together, so both
+ * reach this line at once. The first to arrive takes the write lock for as long as the recost
+ * runs — twenty-one thousand rows on the deployment this was written for — and the second
+ * exceeded `busy_timeout` and threw, which killed it. Compose restarted it, it raced again,
+ * and that repeated ten times until the first one finished. The service came up correct and
+ * the log looked like a disaster.
+ *
+ * Caught rather than serialised: the work is idempotent and marks itself done only on success,
+ * so whichever process loses simply skips it and the next start finishes whatever is left. A
+ * lock is the expected outcome here, not an error.
  */
-usageRepo.repriceHistory();
+try {
+  pricing.seedDefaults();
+  /*
+   * After the seed, and in this order: `repriceHistory` costs every stored row from the price
+   * table, so the table has to be complete first — recosting against a table still missing its
+   * Claude rows would write the catch-all price in and then mark the job done.
+   */
+  usageRepo.repriceHistory();
+} catch (err) {
+  console.warn(
+    `[startup] the price seed or the recost did not finish (${err instanceof Error ? err.message : String(err)}). ` +
+      'Both are idempotent and neither marks itself done unless it succeeded, so the next start picks up where this left off.',
+  );
+}
 providersRepo.seedFromSettings();
 // Move the model list from global settings onto the provider (idempotent; the old rows are
 // deleted afterwards)

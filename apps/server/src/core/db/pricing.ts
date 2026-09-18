@@ -500,10 +500,17 @@ export function ensureSeedRows(): void {
    * backdated to 1970, claiming to have priced all of history.
    */
   if (seedMark() === 'done') return;
-  const key = (model: string, currency: string): string => `${model} ${currency}`;
+  /*
+   * Keyed on the model alone, not on the model and its currency.
+   *
+   * A deployment that already prices `deepseek-flash` in dollars does not want a second row
+   * for it in yuan: `resolve()` has no notion of currency and takes whichever is newer, so the
+   * pair is not two prices but one price and one decoy — and the console shows both. Measured
+   * in production, which had its own USD DeepSeek rows and got three CNY duplicates.
+   */
   const have = new Set(
-    all<{ model: string; currency: string }>('select model, currency from model_pricing')
-      .map((r) => key(r.model, r.currency)),
+    all<{ model: string }>('select model from model_pricing where provider_id is null')
+      .map((r) => r.model),
   );
   /*
    * The catch-all is skipped when this table already has one, in any currency.
@@ -513,13 +520,14 @@ export function ensureSeedRows(): void {
    * it for every unpriced model, and stamps them in a currency somebody else chose. A table
    * with a `*` already has the row this backfill is for.
    */
-  const hasCatchAll = have.size > 0
-    && all<{ n: number }>("select count(*) as n from model_pricing where model = '*' and provider_id is null")[0]!.n > 0;
+  const hasCatchAll = have.has('*');
   const missing = seedRows()
-    .filter((r) => !have.has(key(r.model, r.currency ?? 'USD')))
+    .filter((r) => !have.has(r.model))
     .filter((r) => !(hasCatchAll && r.model === '*'));
-  seedMark('done');
-  if (!missing.length) return;
+  if (!missing.length) {
+    seedMark('done');
+    return;
+  }
   /*
    * Backdated, unlike the seed's own rows.
    *
@@ -536,6 +544,9 @@ export function ensureSeedRows(): void {
       .filter(Boolean).join(' '),
   }));
   for (const m of backfilled) add(m);
+  // Only once the rows are in. Marked before them, a write that threw part way through would
+  // leave a half-seeded table that never gets the rest.
+  seedMark('done');
   console.log(
     `[pricing] ${missing.length} published price row(s) had never been seeded and were added ` +
       `(${missing.map((m) => `${m.model} ${m.currency ?? 'USD'}`).join(', ')}). Check them in the console.`,
