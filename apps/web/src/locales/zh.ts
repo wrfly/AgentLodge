@@ -685,4 +685,5 @@ export const zh: Record<string, string> = {
   'Exchange rates': '汇率',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON，币种 → 一单位折合多少结算币，例如结算用 CNY 时写 {"USD": 6.75}。只在限额必须折成一个数时使用。',
   'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': '按 token 限额时就是靠这几个权重算的。金额另按价格表、分币种记；配额只看这里。',
+  'Cache written': '缓存写入',
 };

@@ -25,6 +25,7 @@ import {
   fmtDate,
   fmtTokens
 } from '../../components/ui';
+import { TokenCells, TokenHeaders, TokenSplit } from '../../components/TokenSplit';
 import { useT } from '../../lib/i18n';
 import { PLATFORM_PRESETS } from './shared';
 
@@ -193,6 +194,9 @@ function PlatformUsageCard() {
             <span className="font-mono text-[13px] text-muted tabular-nums">
               {fmtCost(data.totals.cost, data.currency)}
             </span>
+            {/* Beside the billable figure, not under it: billable is these counts *weighted*,
+                so the three do not add up to it and are not offered as if they did. */}
+            <TokenSplit totals={data.totals} />
             <span className="text-[12px] text-faint">
               {t('{n} turns', { n: data.totals.turns })}
             </span>
@@ -236,11 +240,12 @@ function PlatformUsageCard() {
               under each model beneath it — tokens and money add up, that would not, and this
               is the one table whose whole point is that its parts sum to their parent. */}
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[420px] text-[13px]">
+            <table className="w-full min-w-[620px] text-[13px]">
               <thead>
                 <tr className="border-b border-line text-left text-faint">
                   <th className="pb-1.5 font-medium">{t('Upstream')}</th>
                   <th className="pb-1.5 font-medium">{t('Credential')}</th>
+                  <TokenHeaders />
                   <th className="pb-1.5 text-right font-medium">{t('Billable tokens')}</th>
                   <th className="pb-1.5 text-right font-medium">{t('Cost')}</th>
                 </tr>
@@ -278,6 +283,7 @@ function PlatformUsageCard() {
                           {r.kind && <span className="ml-2 font-mono text-[11px] text-faint">{r.kind}</span>}
                         </td>
                         <td className="py-1.5 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
+                        <TokenCells totals={r} />
                         <td className="py-1.5 text-right font-mono tabular-nums">
                           {fmtTokens(r.billableTokens)}
                         </td>
@@ -296,6 +302,7 @@ function PlatformUsageCard() {
                             <td className="py-1 pl-6 font-mono text-[12px] text-muted" colSpan={2}>
                               {m.model || t('(default)')}
                             </td>
+                            <TokenCells totals={m} className="text-[12px]" />
                             <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
                               {fmtTokens(m.billableTokens)}
                             </td>
@@ -380,6 +387,7 @@ function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () =>
         <span className="font-mono text-[14px] text-muted tabular-nums">
           {fmtCost(w.totals.cost, data.currency)}
         </span>
+        <TokenSplit totals={w.totals} />
         <span className="text-[12.5px] text-faint">{t('{n} turns', { n: w.totals.turns })}</span>
         <span className="ml-auto text-[12.5px] text-muted">
           {rolled ? t('this window has ended') : t('resets in {d}', { d: untilText(w.endsAt, now) })}

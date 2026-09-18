@@ -658,4 +658,5 @@ export const de: Record<string, string> = {
   'Exchange rates': 'Wechselkurse',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, Währung → wie viele Einheiten der Abrechnungswährung eine Einheit wert ist, z. B. {"USD": 6.75} bei Abrechnung in CNY. Nur dort verwendet, wo eine Grenze eine einzelne Zahl erzwingt.',
   'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'Was eine Token-Obergrenze zählt. Geld wird separat und je Währung bepreist; über die Quote entscheiden allein diese Gewichte.',
+  'Cache written': 'Cache geschrieben',
 };

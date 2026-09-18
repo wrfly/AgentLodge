@@ -685,4 +685,5 @@ export const ja: Record<string, string> = {
   'Exchange rates': '為替レート',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON、通貨 → 1単位が決済通貨いくらに当たるか。例: CNY で決済するなら {"USD": 6.75}。上限が単一の数値を要する場合にのみ使われます。',
   'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'トークン上限が数えるもの。金額は価格表で通貨ごとに別途計算され、クォータを決めるのはこの重みだけです。',
+  'Cache written': 'キャッシュ書き込み',
 };
