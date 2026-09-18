@@ -332,6 +332,68 @@ console.log('\n=== A database with no catch-all to convert against ===');
   fs.rmSync(box2, { recursive: true, force: true });
 }
 
+/*
+ * Two processes opening the same file at once, which is how compose starts this service.
+ *
+ * Observed in production on the 18 → 20 upgrade: both containers read `user_version` as 18,
+ * both walked every step, and the second died on `no such column: billable_tokens` — it had
+ * asked whether the column was there a moment before the first one dropped it. The service
+ * recovered on restart only because the version was current by then; a step that had not
+ * finished would have crashed the same way again.
+ */
+console.log('\n=== Two processes migrating the same file ===');
+{
+  const box3 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-upgrade-race-')));
+  {
+    const old = new DatabaseSync(path.join(box3, 'agentlodge.db'));
+    const bare = fs
+      .readFileSync(path.join(here, 'schema.sql'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/--[^\n]*/g, '');
+    old.exec(bare);
+    old.exec("alter table user_quotas add column limit_kind text not null default 'tokens'");
+    old.exec('alter table usage_records add column billable_tokens integer not null default 0');
+    old.exec(`
+      insert into model_pricing
+        (model, currency, price_input, price_cache_read, price_cache_write, price_output,
+         effective_from, created_at)
+      values ('*', 'USD', 2000000, 200000, 2500000, 10000000,
+              '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z');
+      insert into users (id, email, username, password_hash, role, status, created_at)
+      values ('u-race', 'race@example.com', 'race', 'x', 'user', 'active', '2026-01-01T00:00:00.000Z');
+      insert into user_quotas (user_id, limit_kind, window_limit, hard_stop, updated_at)
+      values ('u-race', 'tokens', 5000000, 1, '2026-01-01T00:00:00.000Z');
+    `);
+    old.exec('pragma user_version = 18');
+    old.close();
+  }
+
+  const { execFile } = await import('node:child_process');
+  const entry = path.join(box3, 'run.ts');
+  fs.writeFileSync(entry, `import { initDb } from ${JSON.stringify(path.join(here, 'index.ts'))};\ninitDb();\n`);
+  const tsx = path.join(here, '../../../../../node_modules/.bin/tsx');
+  const start = () =>
+    new Promise<{ code: number; err: string }>((resolve) => {
+      execFile(
+        tsx, [entry],
+        { env: { ...process.env, DATA_DIR: box3, JWT_SECRET: 'test-only-not-a-real-secret' } },
+        (e, _out, stderr) => resolve({ code: e ? 1 : 0, err: stderr }),
+      );
+    });
+  const [a, b] = await Promise.all([start(), start()]);
+  ok('both processes come up', a.code === 0 && b.code === 0, `${a.err}${b.err}`.slice(0, 400));
+
+  const after = new DatabaseSync(path.join(box3, 'agentlodge.db'));
+  /*
+   * And the ceiling was multiplied once. Twice would be 20 M — the failure a transaction
+   * prevents that a retry would not, since converting again is not a no-op.
+   */
+  const q = after.prepare("select window_limit as w from user_quotas where user_id = 'u-race'").get() as { w: number };
+  ok('the ceiling was converted exactly once', q.w === 10_000_000, String(q.w));
+  after.close();
+  fs.rmSync(box3, { recursive: true, force: true });
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
