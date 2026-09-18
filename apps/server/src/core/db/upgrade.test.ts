@@ -106,14 +106,35 @@ const added = [...source.matchAll(/alter table (\w+) add column (\w+)/g)].map((m
     values ('*', 'USD', 2000000, 200000, 2500000, 10000000,
             '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z');
   `);
+  /*
+   * The pair migration 20 exists to resolve: the vendor's own CNY price, backdated the way a
+   * backfill is, and a stale USD row written the day the seed was USD-only. The stale one is
+   * newer, so `resolve()` picks it — which is the whole bug.
+   */
+  old.exec(`
+    insert into model_pricing
+      (model, currency, price_input, price_cache_read, price_cache_write, price_output,
+       effective_from, created_at)
+    values
+      ('deepseek-flash', 'CNY', 1000000, 20000, 1000000, 4000000,
+       '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z'),
+      ('deepseek-flash', 'USD', 150000, 3000, 150000, 600000,
+       '2026-09-15T18:35:56.487Z', '2026-09-15T18:35:56.487Z'),
+      ('deepseek-v4-pro', 'CNY', 4500000, 150000, 4500000, 13500000,
+       '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z'),
+      ('deepseek-v4-pro', 'USD', 660000, 22000, 660000, 1980000,
+       '2026-09-15T18:35:56.487Z', '2026-09-15T18:35:56.487Z');
+  `);
   old.exec(`
     insert into users (id, email, username, password_hash, role, status, created_at)
     values ('u-old', 'old@example.com', 'old', 'x', 'user', 'active', '2026-01-01T00:00:00.000Z');
     insert into user_quotas
       (user_id, limit_kind, window_limit, hard_stop, warned_period, reset_at, auto_renew,
-       updated_at, updated_by)
+       boost_scope, boost_amount, boost_until, updated_at, updated_by)
     values ('u-old', 'tokens', 5000000, 1, 'window:2026-01-01T00:00:00.000Z',
-            '2026-01-01T12:00:00.000Z', 1, '2026-01-01T00:00:00.000Z', 'u-admin');
+            '2026-01-01T12:00:00.000Z', 1,
+            'window', 1000000, '2099-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z', 'u-admin');
   `);
 
   old.exec('pragma user_version = 0');
@@ -181,6 +202,12 @@ if (db) {
      */
     ok('the token ceiling was re-expressed in money, not dropped',
       row?.['window_limit'] === 10_000_000, String(row?.['window_limit']));
+    /*
+     * And so is a live top-up, because `effectiveCeiling` returns `ceiling + boost` — one
+     * left in tokens would be added to a figure in money. 1 M tokens at $2/MTok is $2.
+     */
+    ok('and a live top-up with it, since it is added to that ceiling',
+      row?.['boost_amount'] === 2_000_000, String(row?.['boost_amount']));
 
     /*
      * SQLite's `drop column` removes a span of the stored CREATE TABLE text, from the column's
@@ -195,6 +222,25 @@ if (db) {
       ddl?.sql ?? '');
   }
 
+  console.log('\n=== And migration 20 leaves one price per model, in the vendor\'s own money ===');
+  {
+    const rows = (model: string) =>
+      db!.prepare('select currency, price_input from model_pricing where model = ? and provider_id is null')
+        .all(model) as Array<{ currency: string; price_input: number }>;
+    for (const model of ['deepseek-flash', 'deepseek-v4-pro']) {
+      ok(`${model} is priced once`, rows(model).length === 1, JSON.stringify(rows(model)));
+      ok(`${model} in yuan, which is what DeepSeek bills in`,
+        rows(model)[0]?.currency === 'CNY', JSON.stringify(rows(model)));
+    }
+    /*
+     * And the catch-all is untouched, whatever currency it is in. Its currency is a separate
+     * decision with a separate blast radius: deleting the only '*' row leaves every unpriced
+     * model costing nothing at all.
+     */
+    const star = db.prepare("select count(*) as n from model_pricing where model = '*'").get() as { n: number };
+    ok('the catch-all is left alone', star.n >= 1, String(star.n));
+  }
+
   console.log('\n=== The version is stamped, so the next start does none of this ===');
   {
     const [row] = db.prepare('pragma user_version').all() as Array<{ user_version: number }>;
@@ -203,6 +249,87 @@ if (db) {
   }
 
   db.close();
+}
+
+/*
+ * The same step against a price table with no catch-all in it.
+ *
+ * Not a hypothetical: seed.test.ts documents a real deployment that reached version 18 this
+ * way — migration 13 wrote its DeepSeek rows into an empty table, and seedDefaults() returns
+ * early on any row at all, so it declined to seed and the file came up with no '*'. On that
+ * database the conversion has nothing to convert against. Clearing one account's ceiling is
+ * the safe direction; clearing *every* ceiling and the global default at once, with the
+ * original numbers living only in the column about to be dropped, is not — so the step
+ * supplies a catch-all rather than going ahead without one.
+ */
+console.log('\n=== A database with no catch-all to convert against ===');
+{
+  const box2 = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-upgrade-nostar-')));
+  const file = path.join(box2, 'agentlodge.db');
+  {
+    const old = new DatabaseSync(file);
+    const bare = fs
+      .readFileSync(path.join(here, 'schema.sql'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/--[^\n]*/g, '');
+    old.exec(bare);
+    /*
+     * Built complete and stamped 18, rather than taken apart the way the fixture above is:
+     * a database that really is at 18 has every column the earlier steps added, and 19 reads
+     * some of them. Only what 19 itself removes has to be put back.
+     */
+    old.exec("alter table user_quotas add column limit_kind text not null default 'tokens'");
+    old.exec('alter table usage_records add column billable_tokens integer not null default 0');
+    // Everything the other fixture has, minus a single price row
+    old.exec(`
+      insert into users (id, email, username, password_hash, role, status, created_at)
+      values ('u-cap', 'cap@example.com', 'cap', 'x', 'user', 'active', '2026-01-01T00:00:00.000Z');
+      insert into user_quotas (user_id, limit_kind, month_limit, hard_stop, updated_at)
+      values ('u-cap', 'tokens', 20000000, 1, '2026-01-01T00:00:00.000Z');
+      insert into settings (key, value, updated_at)
+      values ('quota.defaultTokenLimit', '10000000', '2026-01-01T00:00:00.000Z');
+    `);
+    old.exec('pragma user_version = 18');
+    old.close();
+  }
+
+  const d = new DatabaseSync(file);
+  ok('the fixture really has no catch-all',
+    (d.prepare("select count(*) as n from model_pricing where model = '*'").get() as { n: number }).n === 0);
+  d.close();
+
+  // A second initDb() in one process would hand back the first database, so this one runs out
+  // of line — the migration is the unit under test, not the module's caching
+  const { execFileSync } = await import('node:child_process');
+  const entry = path.join(box2, 'run.ts');
+  fs.writeFileSync(entry, `import { initDb } from ${JSON.stringify(path.join(here, 'index.ts'))};\ninitDb();\n`);
+  const out = execFileSync(
+    path.join(here, '../../../../../node_modules/.bin/tsx'),
+    [entry],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, DATA_DIR: box2, JWT_SECRET: 'test-only-not-a-real-secret' },
+    },
+  );
+  ok('it says so rather than going ahead without one', /no '\*' catch-all/.test(out), out.trim());
+
+  const after = new DatabaseSync(file);
+  const q = (sql: string) => after.prepare(sql).get() as Record<string, unknown> | undefined;
+  ok('a catch-all now exists, at the seed\'s price',
+    q("select price_input as p, currency as c from model_pricing where model = '*'")?.['p'] === 5_000_000);
+  /*
+   * The number that matters: 20 M tokens at $5/MTok is $100. Null here would mean the
+   * account came out of the upgrade with no limit at all and no way back to the old figure.
+   */
+  ok('the ceiling was converted rather than cleared',
+    q("select month_limit as m from user_quotas where user_id = 'u-cap'")?.['m'] === 100_000_000,
+    String(q("select month_limit as m from user_quotas where user_id = 'u-cap'")?.['m']));
+  ok('and the global default with it',
+    q("select value as v from settings where key = 'quota.defaultLimit'")?.['v'] === '50000000',
+    String(q("select value as v from settings where key = 'quota.defaultLimit'")?.['v']));
+  after.close();
+  fs.rmSync(box2, { recursive: true, force: true });
 }
 
 fs.rmSync(box, { recursive: true, force: true });

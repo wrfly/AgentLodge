@@ -55,7 +55,7 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
     setBusy(true);
     try {
       await admin.topup(user.id, {
-        // Typed in millions on the token side, like every other allowance field
+        // Whole units of the settlement currency, like every other allowance field
         amount: Number(amount),
         scope,
       });

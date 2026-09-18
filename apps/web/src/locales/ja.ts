@@ -225,7 +225,7 @@ export const ja: Record<string, string> = {
   period: '期間',
   'No usage in this period': 'この期間の使用量はありません',
   'No data in this period': 'この期間のデータはありません',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} tokens · {turns} ターン · {calls} 回',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · {turns} ターン · {calls} 回',
   Quota: '利用枠',
   'warn only, not enforced': '警告のみ、遮断はしません',
   '{n} turns': '{n} ターン',

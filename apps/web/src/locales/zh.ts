@@ -225,7 +225,7 @@ export const zh: Record<string, string> = {
   period: '周期',
   'No usage in this period': '这段时间没有用量',
   'No data in this period': '这段时间没有数据',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} tokens · {turns} 轮 · {calls} 次调用',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · {turns} 轮 · {calls} 次调用',
   Quota: '额度',
   'warn only, not enforced': '仅告警，不拦截',
   '{n} turns': '{n} 轮',

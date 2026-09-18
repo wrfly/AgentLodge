@@ -135,7 +135,7 @@ function hasTables(d: DatabaseSync): boolean {
  * restoring the database with the image — `cli/backup-db.ts` is what makes that copy. Prefer
  * an additive step whenever one will do.
  */
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -786,11 +786,55 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
      * is an approximation of somebody's intent and they should check it.
      */
     if (columns(d, 'user_quotas').has('limit_kind')) {
-      const [unit] = d
+      /*
+       * One transaction around the whole step, and `begin immediate` so it takes the write
+       * lock up front.
+       *
+       * This is a **non-idempotent** transform — it multiplies each ceiling by a price — and
+       * `migrate()` is called by both the app and the gateway, which compose starts together.
+       * Autocommitted statement by statement, the second process could pass the `limit_kind`
+       * check while the first was still looping and convert the already-converted numbers a
+       * second time: a 5 M ceiling at 2 micro/token would go 10 M, then 20 M. The same thing
+       * happens after a SIGKILL between the loop and the table rebuild, since `user_version`
+       * is still 18 on restart. Inside a transaction neither can happen: the loser of the
+       * lock waits, and when it gets in, `limit_kind` is gone and the whole block is skipped.
+       */
+      d.exec('begin immediate');
+      try {
+      /*
+       * A catch-all to convert against, even on a database that has none.
+       *
+       * `seedDefaults()` does not run until the service is up, which is after this — and
+       * seed.test.ts documents a real deployment that reached this point with no '*' row at
+       * all, because migration 13 filled an empty table and the seed then declined to. On
+       * that file every ceiling would convert to null. Clearing a limit is the safe direction
+       * for *one* account, but doing it to every account and to the global default at once,
+       * unrecoverably, is not safe at all — the original numbers only exist in the column
+       * this step is about to drop.
+       *
+       * So the step supplies the row itself, at the same $5/$25 the seed uses, backdated the
+       * way a backfill is. `seedDefaults()` sees a '*' and leaves it alone.
+       */
+      let [unit] = d
         .prepare(`select price_input, currency from model_pricing
                    where model = '*' and provider_id is null
                    order by effective_from desc limit 1`)
         .all() as Array<{ price_input: number; currency: string }>;
+      if (!unit) {
+        d.prepare(
+          `insert into model_pricing
+             (model, provider_id, currency, price_input, price_cache_read, price_cache_write,
+              price_output, effective_from, note, created_at)
+           values ('*', null, 'USD', 5000000, 500000, 6250000, 25000000,
+                   '1970-01-01T00:00:00.000Z', ?, ?)`,
+        ).run(
+          'The catch-all, used by any model without a price of its own. Added by migration 19, '
+            + 'which had no price to re-express the ceilings against.',
+          new Date().toISOString(),
+        );
+        unit = { price_input: 5_000_000, currency: 'USD' };
+        console.log("[db] no '*' catch-all to convert ceilings against; seeded one at $5/$25 per MTok");
+      }
 
       /*
        * **The catch-all is not necessarily in the money a ceiling is counted in.** The
@@ -833,23 +877,37 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         );
       }
 
+      /*
+       * `boost_amount` is converted with the ceilings, because it is added to one.
+       *
+       * A top-up is granted in whatever unit the ceiling is in — `effectiveCeiling` returns
+       * `ceiling + boost` — so a live one left as a token count would be added to a figure in
+       * money. At the $5/MTok catch-all a 5 M-token top-up meant $25 and would apply as $5.
+       * It expires on its window's own boundary, so at most a few hours of them are live, but
+       * "at most a few hours" is not none.
+       */
       const rows = d
-        .prepare(`select q.user_id, us.username, q.limit_kind, q.window_limit, q.week_limit, q.month_limit
+        .prepare(`select q.user_id, us.username, q.limit_kind,
+                         q.window_limit, q.week_limit, q.month_limit, q.boost_amount
                     from user_quotas q left join users us on us.id = q.user_id
-                   where q.window_limit is not null or q.week_limit is not null or q.month_limit is not null`)
+                   where q.window_limit is not null or q.week_limit is not null
+                      or q.month_limit is not null or q.boost_amount is not null`)
         .all() as Array<{
           user_id: string; username: string | null; limit_kind: string;
           window_limit: number | null; week_limit: number | null; month_limit: number | null;
+          boost_amount: number | null;
         }>;
 
       for (const r of rows) {
         // A row already counted in money keeps its numbers; only the token ones are converted
         if (r.limit_kind === 'cost') continue;
         const to = (v: number | null): number | null =>
-          v === null ? null : perToken > 0 ? Math.round(v * perToken) : null;
+          v === null ? null : Math.round(v * perToken);
         const next = { window: to(r.window_limit), week: to(r.week_limit), month: to(r.month_limit) };
-        d.prepare('update user_quotas set window_limit = ?, week_limit = ?, month_limit = ? where user_id = ?')
-          .run(next.window, next.week, next.month, r.user_id);
+        d.prepare(`update user_quotas
+                      set window_limit = ?, week_limit = ?, month_limit = ?, boost_amount = ?
+                    where user_id = ?`)
+          .run(next.window, next.week, next.month, to(r.boost_amount), r.user_id);
         const say = (before: number | null, after: number | null) =>
           before === null ? '—' : `${before.toLocaleString()} → ${after === null ? 'unlimited' : (after / 1_000_000).toFixed(2)}`;
         console.log(
@@ -864,10 +922,10 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
        * the same conversion. The column keeps its name — renaming it is a second rebuild for
        * no behaviour — and schema.sql says what it holds.
        */
-      if (perToken > 0) {
-        d.prepare('update invite_codes set preset_token_limit = cast(preset_token_limit * ? as integer) where preset_token_limit is not null')
-          .run(perToken);
-      }
+      d.prepare(`update invite_codes
+                    set preset_token_limit = cast(round(preset_token_limit * ?) as integer)
+                  where preset_token_limit is not null`)
+        .run(perToken);
 
       /*
        * And the global default a new account starts with. Renamed as well as converted:
@@ -890,6 +948,16 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
           );
         }
       }
+
+      /*
+       * And the two weights, whose specs are gone. `listSettings()` iterates the specs, so a
+       * row without one can never be seen or cleared from the console — it just sits there
+       * looking live, describing an accounting model that no longer exists.
+       */
+      const orphans = d
+        .prepare("delete from settings where key in ('quota.weightCacheRead', 'quota.weightOutput')")
+        .run().changes;
+      if (orphans) console.log(`[db] removed ${orphans} setting(s) for the retired token weights`);
 
       /*
        * Rebuilt rather than `alter table drop column`: SQLite implements the drop by deleting
@@ -920,6 +988,11 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         drop table user_quotas;
         alter table user_quotas_new rename to user_quotas;
       `);
+      } catch (err) {
+        d.exec('rollback');
+        throw err;
+      }
+      d.exec('commit');
     }
 
     /*
@@ -930,6 +1003,52 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
      */
     if (columns(d, 'usage_records').has('billable_tokens')) {
       d.exec('alter table usage_records drop column billable_tokens');
+    }
+  }
+
+  if (from < 20) {
+    /*
+     * DeepSeek, priced twice — in two currencies, with the wrong one winning.
+     *
+     * The seed was briefly USD-only, and it wrote DeepSeek's yuan figures into USD rows:
+     * ¥1/MTok became $0.15 and so on. Correcting the seed added CNY rows, and because they
+     * are a backfill rather than a price change they are stamped 1970 so that history can be
+     * recosted against them (pricing.ts says why). But `resolve()` orders by `effective_from
+     * desc` and takes the first exact match — so the *stale* USD rows, stamped the day they
+     * were written, win over the corrected ones, for ever. Nothing looks wrong in the price
+     * table: both rows are there, and the console lists them.
+     *
+     * Verified on the deployment this was written for, with the real resolver:
+     *
+     *     deepseek-flash    -> id=3 USD in=150000     (stale)
+     *     deepseek-v4-pro   -> id=4 USD in=660000     (stale)
+     *     deepseek-v4-flash -> id=5 USD in=150000     (stale)
+     *
+     * A model has one vendor and one billing currency, so a *global* row in the wrong one is
+     * always a leftover and never a choice. Per-provider rows are left alone — the same model
+     * on two upstreams can genuinely cost two different things — and so is the '*' catch-all,
+     * whose currency is a separate decision with a separate blast radius.
+     *
+     * Named explicitly rather than derived from the seed: a migration is a statement about
+     * one historical defect, and the seed it would read is free to change underneath it.
+     */
+    const stale = d
+      .prepare(`select id, model, currency, price_input from model_pricing
+                 where provider_id is null
+                   and model in ('deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash')
+                   and currency <> 'CNY'`)
+      .all() as Array<{ id: number; model: string; currency: string; price_input: number }>;
+    for (const r of stale) {
+      console.log(
+        `[db] removing a stale ${r.currency} price for ${r.model} ` +
+          `(${r.price_input / 1_000_000} per MTok); its CNY row is the vendor's own`,
+      );
+    }
+    if (stale.length) {
+      d.prepare(
+        `delete from model_pricing
+          where id in (${stale.map(() => '?').join(', ')})`,
+      ).run(...stale.map((r) => r.id));
     }
   }
 

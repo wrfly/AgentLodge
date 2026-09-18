@@ -272,9 +272,12 @@ export interface InviteMailInput {
   link: string;
   inviterName?: string;
   expiresAt?: string;
-  /** A monthly ceiling, in micro-units of `currency` */
-  limit?: number | null;
-  currency?: string;
+  /**
+   * A monthly ceiling, already written out — `quota.amountIn()` does the writing, so this
+   * mail and a refusal cannot spell one number two ways. Null when there is no ceiling.
+   */
+  limit?: string | null;
+  unit?: string;
 }
 
 export function inviteMail(input: InviteMailInput): { subject: string; html: string; text: string } {
@@ -283,7 +286,7 @@ export function inviteMail(input: InviteMailInput): { subject: string; html: str
   const whoHtml = input.inviterName ? `${esc(input.inviterName)} ` : '';
   const quotaLine =
     input.limit != null
-      ? `<p style="${P}">Your account quota is <strong>${input.currency ?? ''} ${(input.limit / 1_000_000).toFixed(2)}</strong> per month.</p>`
+      ? `<p style="${P}">Your account quota is <strong>${esc(`${input.limit} ${input.unit ?? ''}`.trim())}</strong> per month.</p>`
       : '';
   const expiryLine = input.expiresAt
     ? `<p style="${P}">The invitation expires on ${new Date(input.expiresAt).toLocaleString('en-GB')}.</p>`

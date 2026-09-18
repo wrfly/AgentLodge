@@ -288,6 +288,35 @@ console.log('\n=== what a turn typically costs, for saying the remainder in turn
   call('t6', 0);
   ok('turns that cost nothing are left out', usageRepo.typicalTurn(carol) === 450);
 
+  /*
+   * A turn that crossed two upstreams is still one turn.
+   *
+   * Grouped by turn *and* currency it becomes two, each entering the median as its own
+   * cheaper turn — so somebody is told they have about twice the runway the gate will give
+   * them. `settle` converts CNY at the configured rate, so the yuan half is worth its rate.
+   */
+  const { setSetting } = await import('./db/settings.js');
+  setSetting('billing.currency', 'USD');
+  setSetting('billing.rates', JSON.stringify({ CNY: 0.5 }));
+  const split = (turnId: string, micro: number, currency: string) =>
+    run(
+      `insert into usage_records
+         (user_id, turn_id, agent, model, cost_micro, cost_currency, status, created_at, day, source)
+       values (?, ?, 'claude', 'm', ?, ?, 'completed', ?, ?, 'gateway')`,
+      carol, turnId, micro, currency,
+      new Date().toISOString(), new Date().toISOString().slice(0, 10),
+    );
+  const before = usageRepo.typicalTurn(carol);
+  // 400 USD-micro + 400 CNY-micro at 0.5 = 600 settled, in one turn
+  split('t7', 400, 'USD');
+  split('t7', 400, 'CNY');
+  const sample = usageRepo.typicalTurn(carol, 200);
+  ok('a turn split across two currencies is one turn, not two cheaper ones',
+    sample !== null && sample >= (before ?? 0),
+    `${before} -> ${sample}`);
+  const one = usageRepo.typicalTurn(carol, 1);
+  ok('and it is worth both halves, settled', one === 600, String(one));
+
   // A row with no turn_id — the CLI path writes one row per turn — is its own turn, not
   // lumped with every other turn-less row into one enormous one.
   const dave = makeUser('dave@example.com');

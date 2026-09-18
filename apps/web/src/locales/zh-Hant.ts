@@ -211,7 +211,7 @@ export const zhHant: Record<string, string> = {
   period: '週期',
   'No usage in this period': '這個區間沒有用量',
   'No data in this period': '這個區間沒有資料',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} tokens · {turns} 輪 · {calls} 次呼叫',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · {turns} 輪 · {calls} 次呼叫',
   Quota: '配額',
   'warn only, not enforced': '僅警告，不攔截',
   '{n} turns': '{n} 輪',

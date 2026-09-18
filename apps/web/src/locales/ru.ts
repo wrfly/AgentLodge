@@ -225,7 +225,7 @@ export const ru: Record<string, string> = {
   period: 'период',
   'No usage in this period': 'За этот период использования не было',
   'No data in this period': 'За этот период данных нет',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} токенов · ходов: {turns} · вызовов: {calls}',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · ходов: {turns} · вызовов: {calls}',
   Quota: 'Квота',
   'warn only, not enforced': 'только предупреждение, без блокировки',
   '{n} turns': 'ходов: {n}',

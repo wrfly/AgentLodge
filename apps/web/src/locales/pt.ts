@@ -210,7 +210,7 @@ export const pt: Record<string, string> = {
   period: 'período',
   'No usage in this period': 'Sem utilização neste período',
   'No data in this period': 'Sem dados neste período',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} tokens · {turns} turnos · {calls} chamadas',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · {turns} turnos · {calls} chamadas',
   Quota: 'Quota',
   'warn only, not enforced': 'apenas avisar, sem bloquear',
   '{n} turns': '{n} turnos',

@@ -258,6 +258,23 @@ function warnMissingRate(from: string, to: string): void {
   );
 }
 
+/**
+ * Heaviest first, by the settled figure.
+ *
+ * **Not `order by sum(cost_micro)`.** That adds yuan to dollars, which is the one thing this
+ * module exists to avoid: at a configured rate ¥50 is about $7, but as raw micro-units it
+ * outranks $30. The rows themselves were always right — `toTotals` splits them per currency —
+ * so a leaderboard came back correctly costed in an order that contradicted its own numbers.
+ *
+ * `costSettled` is the figure the gate compares a ceiling against, so a list ordered by it
+ * and a refusal cannot disagree about who is spending most. It is done here rather than in
+ * SQL because the conversion is a setting rather than a column; the queries order by
+ * something stable instead, and `sort` is stable, so equal spenders keep that order.
+ */
+function heaviestFirst<T extends Totals>(rows: T[]): T[] {
+  return rows.sort((a, b) => b.costSettled - a.costSettled);
+}
+
 export interface Totals {
   /** Upstream calls — more than the number of turns, when counted by the gateway */
   calls: number;
@@ -481,7 +498,9 @@ export function firstRecordFor(userId: string): string | undefined {
  * warning being useful for the other twenty.
  *
  * Zero-cost rows are left out. A failed turn still gets a row, for debugging, and counting
- * those as cheap turns would say somebody has more room than they do.
+ * those as cheap turns would say somebody has more room than they do. "Zero" is the turn's
+ * whole cost, not one currency's share of it, so a turn that spent nothing on one upstream and
+ * something on another still counts once, for what it cost.
  *
  * **Bounded to a window on purpose, and not called on the hot path.** `group by` defeats
  * the (user_id, created_at) index, so without `since` this reads every row the user has
@@ -507,11 +526,25 @@ export function typicalTurn(
    * the turn by the whole exchange rate, telling somebody they have a fraction of the turns
    * the gate will actually let them have.
    */
-  const rows = all<{ spent: number; currency: string }>(
-    `select sum(cost_micro) as spent, cost_currency as currency
+  /*
+   * Grouped by turn alone, with the currencies as conditional columns — the same trick, and
+   * for the same reason, as `SUM()`.
+   *
+   * Adding `cost_currency` to the `group by` is what a first version did, and it splits a turn
+   * that crossed two upstreams into two rows. Each half then enters the median as its own
+   * cheaper "turn", and `limit 20` samples twenty halves rather than twenty turns — so the
+   * remainder is reported as roughly twice the turns the gate will actually allow. It mattered
+   * less when only cost-limited accounts took this path; every account takes it now.
+   */
+  const cols = pricedCurrencies();
+  const rows = all<Record<string, number>>(
+    `select ${cols
+      .map((c) => `coalesce(sum(case when cost_currency = '${c}' then cost_micro else 0 end),0) as money_${c}`)
+      .join(',\n           ')},
+            sum(cost_micro) as spent
        from usage_records
       where user_id = ? and created_at >= ?
-      group by coalesce(turn_id, 'row:' || id), cost_currency
+      group by coalesce(turn_id, 'row:' || id)
      having spent > 0
       order by max(created_at) desc
       limit ?`,
@@ -521,7 +554,9 @@ export function typicalTurn(
   );
   if (!rows.length) return null;
   // The gateway writes a row per upstream call, so a turn is the group, not the row
-  const spent = rows.map((r) => settle({ [r.currency]: r.spent })).sort((a, b) => a - b);
+  const spent = rows
+    .map((r) => settle(Object.fromEntries(cols.map((c) => [c, Number(r[`money_${c}`] ?? 0)]))))
+    .sort((a, b) => a - b);
   const mid = Math.floor(spent.length / 2);
   return spent.length % 2 ? spent[mid]! : Math.round((spent[mid - 1]! + spent[mid]!) / 2);
 }
@@ -696,20 +731,19 @@ export function hourlyForUserRange(userId: string, range: Range, only?: Upstream
  * child of a child.
  */
 export function byModelForConversation(conversationId: string): Array<Totals & { model: string }> {
-  return all<TotalsRow & { model: string | null }>(
+  const rows = all<TotalsRow & { model: string | null }>(
     `select coalesce(model, '') as model, ${SUM()}
        from usage_records
       where conversation_id = ?
          or conversation_id in (select id from conversations where parent_id = ?)
       group by coalesce(model, '')
-      -- Explicit, not the bare name: SUM() stopped emitting a cost_micro alias when money
-      -- became per-currency, and SQLite would resolve the bare column to an arbitrary row of
-      -- the group. Ordering by a sum across currencies is approximate -- a conversation is
-      -- almost always one vendor -- but it is at least the group's own total.
-      order by sum(cost_micro) desc`,
+      -- A stable tie-break only; what is shown is ordered by heaviestFirst, which settles
+      -- the currencies first. SQL cannot: the rates are a setting, not a column.
+      order by coalesce(model, '')`,
     conversationId,
     conversationId,
   ).map((r) => ({ model: r.model ?? '', ...toTotals(r) }));
+  return heaviestFirst(rows);
 }
 
 export interface AgentBreakdown extends Totals {
@@ -720,15 +754,16 @@ export interface AgentBreakdown extends Totals {
 export function byAgentForUser(userId: string, range?: Range | string, only?: UpstreamFilter): AgentBreakdown[] {
   const [from, to] = bounds(range);
   const f = onlyUpstream(only);
-  return all<TotalsRow & { agent: string; model: string | null }>(
+  const rows = all<TotalsRow & { agent: string; model: string | null }>(
     `select agent, model, ${SUM()} from usage_records
      where user_id = ? and created_at >= ? and created_at < ?${f.sql}
-     group by agent, model order by sum(cost_micro) desc`,
+     group by agent, model order by agent, model`,
     userId,
     from,
     to,
     ...f.params,
   ).map((r) => ({ agent: r.agent, model: r.model, ...toTotals(r) }));
+  return heaviestFirst(rows);
 }
 
 /** Cumulative usage per API key — shown beside each key on the settings page, so it is visible which one is in use */
@@ -778,12 +813,12 @@ export function byUpstreamAll(range?: Range | string): UpstreamUsage[] {
 function byUpstream(range?: Range | string, userId?: string): UpstreamUsage[] {
   const [from, to] = bounds(range);
   const mine = userId === undefined ? '' : ' and u.user_id = ?';
-  return all<TotalsRow & { provider_id: string | null; name: string | null; kind: string | null; credential_id: string | null }>(
+  const rows = all<TotalsRow & { provider_id: string | null; name: string | null; kind: string | null; credential_id: string | null }>(
     `select u.provider_id, p.name, p.kind, p.credential_id, ${SUM('u.')}
      from usage_records u left join upstream_providers p on p.id = u.provider_id
      where u.created_at >= ? and u.created_at < ?${mine}
      group by u.provider_id
-     order by sum(cost_micro) desc`,
+     order by coalesce(p.name, '')`,
     from,
     to,
     ...(userId === undefined ? [] : [userId]),
@@ -794,6 +829,7 @@ function byUpstream(range?: Range | string, userId?: string): UpstreamUsage[] {
     credentialId: r.credential_id ?? '',
     ...toTotals(r),
   }));
+  return heaviestFirst(rows);
 }
 
 /** One model's share of one upstream — `providerId` empty for the rows with no upstream of ours */
@@ -819,12 +855,12 @@ export interface UpstreamModelUsage extends Totals {
  */
 export function byUpstreamModelAll(range?: Range | string): UpstreamModelUsage[] {
   const [from, to] = bounds(range);
-  return all<TotalsRow & { provider_id: string | null; model: string | null }>(
+  const rows = all<TotalsRow & { provider_id: string | null; model: string | null }>(
     `select u.provider_id, coalesce(u.model, '') as model, ${SUM('u.')}
      from usage_records u
      where u.created_at >= ? and u.created_at < ?
      group by u.provider_id, coalesce(u.model, '')
-     order by sum(cost_micro) desc`,
+     order by coalesce(u.provider_id, ''), coalesce(u.model, '')`,
     from,
     to,
   ).map((r) => ({
@@ -832,6 +868,7 @@ export function byUpstreamModelAll(range?: Range | string): UpstreamModelUsage[]
     model: r.model ?? '',
     ...toTotals(r),
   }));
+  return heaviestFirst(rows);
 }
 
 export function byConversationForUser(
@@ -842,18 +879,25 @@ export function byConversationForUser(
 ): ConversationUsage[] {
   const [from, to] = bounds(range);
   const f = onlyUpstream(only, 'u.');
-  return all<TotalsRow & { conversation_id: string; title: string; agent: string; updated_at: string }>(
+  /*
+   * The `limit` is applied here rather than in SQL, and that is the point of the slice.
+   *
+   * "The twenty heaviest" has to be chosen by the same figure it is then ordered by. Chosen in
+   * SQL by `sum(cost_micro)` it would be the twenty largest raw sums across currencies, and
+   * re-ordering those afterwards only rearranges a selection that already left the right
+   * conversations out. One row per conversation, per user, over one period is small enough to
+   * settle and cut here.
+   */
+  const rows = all<TotalsRow & { conversation_id: string; title: string; agent: string; updated_at: string }>(
     `select u.conversation_id, c.title, c.agent, c.updated_at, ${SUM('u.')}
      from usage_records u join conversations c on c.id = u.conversation_id
      where u.user_id = ? and u.created_at >= ? and u.created_at < ?${f.sql}
      group by u.conversation_id
-     order by sum(cost_micro) desc
-     limit ?`,
+     order by c.updated_at desc`,
     userId,
     from,
     to,
     ...f.params,
-    limit,
   ).map((r) => ({
     conversationId: r.conversation_id,
     title: r.title,
@@ -861,6 +905,7 @@ export function byConversationForUser(
     updatedAt: r.updated_at,
     ...toTotals(r),
   }));
+  return heaviestFirst(rows).slice(0, limit);
 }
 
 export interface UserLeaderRow extends Totals {
@@ -891,12 +936,12 @@ export interface UserLeaderRow extends Totals {
  */
 export function allUsersInRange(range: Range): UserLeaderRow[] {
   const [from, to] = bounds(range);
-  return all<TotalsRow & { user_id: string; username: string | null; email: string | null }>(
+  const rows = all<TotalsRow & { user_id: string; username: string | null; email: string | null }>(
     `select u.user_id, us.username, us.email, ${SUM('u.')}
      from usage_records u left join users us on us.id = u.user_id
      where u.created_at >= ? and u.created_at < ?
      group by u.user_id
-     order by sum(cost_micro) desc`,
+     order by coalesce(us.username, '')`,
     from,
     to,
   ).map((r) => ({
@@ -905,6 +950,7 @@ export function allUsersInRange(range: Range): UserLeaderRow[] {
     email: r.email ?? '',
     ...toTotals(r),
   }));
+  return heaviestFirst(rows);
 }
 
 export function dailyAllInRange(range: Range, only?: UpstreamFilter): DailyPoint[] {

@@ -39,7 +39,18 @@ const PRESETS: Array<{ id: RangePreset; label: string }> = [
 
 
 /** A minimal bar chart — not worth a charting library for one trend line */
-function Chart({ data, unit, from }: { data: SeriesPoint[]; unit: 'day' | 'hour'; from: string }) {
+function Chart({
+  data,
+  unit,
+  from,
+  currency,
+}: {
+  data: SeriesPoint[];
+  unit: 'day' | 'hour';
+  from: string;
+  /** What an empty bucket's zero is denominated in; a bare $0.00 on a CNY deployment is a lie */
+  currency: string;
+}) {
   const t = useT();
   if (!data.length) return <Empty text={t('No usage in this period')} />;
   const max = Math.max(...data.map((d) => d.costSettled), 1);
@@ -81,8 +92,8 @@ function Chart({ data, unit, from }: { data: SeriesPoint[]; unit: 'day' | 'hour'
                 {i === 0 && partial ? t('{bucket} · from {time}', { bucket: d.t, time: partial }) : d.t}
               </div>
               <div className="font-mono text-muted">
-                {t('{tokens} tokens · {turns} turns · {calls} calls', {
-                  cost: fmtCost(d.cost),
+                {t('{cost} · {turns} turns · {calls} calls', {
+                  cost: fmtCost(d.cost, currency),
                   turns: d.turns,
                   calls: d.calls,
                 })}
@@ -287,20 +298,23 @@ export function UsagePage() {
           <QuotaCard quota={data.quota} />
 
           <div className="mb-4 grid grid-cols-3 gap-3">
+            {/* The headline is the money; the line under it is what that money bought.
+                Both used to be tokens and cost, and switching the headline to cost left the
+                same figure printed twice in every tile. */}
             <Stat
               label={t('Today')}
               value={fmtCost(data.quick.today.cost, data.quota.currency)}
-              sub={`${fmtCost(data.quick.today.cost, data.quota.currency)} · ${t('{n} turns', { n: data.quick.today.turns })}`}
+              sub={t('{n} turns', { n: data.quick.today.turns })}
             />
             <Stat
               label={t('This month')}
               value={fmtCost(data.quick.month.cost, data.quota.currency)}
-              sub={`${fmtCost(data.quick.month.cost, data.quota.currency)} · ${t('{n} turns', { n: data.quick.month.turns })}`}
+              sub={t('{n} turns', { n: data.quick.month.turns })}
             />
             <Stat
               label={t('All time')}
               value={fmtCost(data.quick.allTime.cost, data.quota.currency)}
-              sub={`${fmtCost(data.quick.allTime.cost, data.quota.currency)} · ${t('{n} turns', { n: data.quick.allTime.turns })}`}
+              sub={t('{n} turns', { n: data.quick.allTime.turns })}
             />
           </div>
 
@@ -360,9 +374,6 @@ export function UsagePage() {
               <span className="font-mono text-[17px] font-semibold text-accent tabular-nums">
                 {fmtCost(data.totals.cost, data.quota.currency)}
               </span>
-              <span className="font-mono text-[13px] text-muted">
-                {fmtCost(data.totals.cost, data.quota.currency)}
-              </span>
               {/* Cache is read plus creation, the same split the table below and the chat
                   header use. It used to quote the read alone, so the two cards on this page
                   named the same thing with different numbers and neither mentioned the
@@ -378,7 +389,12 @@ export function UsagePage() {
               </span>
             </div>
 
-            <Chart data={data.series} unit={data.seriesUnit} from={data.range.from} />
+            <Chart
+              data={data.series}
+              unit={data.seriesUnit}
+              from={data.range.from}
+              currency={data.quota.currency}
+            />
           </Card>
 
           {/*

@@ -1070,7 +1070,7 @@ export const admin = {
   /** Top up: extra allowance on one of the platform's windows, gone when that window resets */
   topup: (
     id: string,
-    input: { amount?: number; tokens?: number; scope?: QuotaScope; note?: string },
+    input: { amount: number; scope?: QuotaScope; note?: string },
   ) =>
     request<{ ok: boolean; quota: QuotaStatus }>(`/api/admin/users/${id}/topup`, {
       method: 'POST',

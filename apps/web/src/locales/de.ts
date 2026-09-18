@@ -210,7 +210,7 @@ export const de: Record<string, string> = {
   period: 'Zeitraum',
   'No usage in this period': 'In diesem Zeitraum keine Nutzung',
   'No data in this period': 'In diesem Zeitraum keine Daten',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} Token · {turns} Züge · {calls} Aufrufe',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · {turns} Züge · {calls} Aufrufe',
   Quota: 'Kontingent',
   'warn only, not enforced': 'nur warnen, nicht durchsetzen',
   '{n} turns': '{n} Züge',

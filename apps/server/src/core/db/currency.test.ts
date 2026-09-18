@@ -171,6 +171,83 @@ console.log('\n=== The recost restates money and leaves every token alone ===');
     JSON.stringify(usage.totalsForUser(alice).cost));
 }
 
+console.log('\n=== A price row an operator deleted stays deleted ===');
+{
+  /*
+   * The backfill cannot tell "never seeded" from "removed on purpose" by looking at the table,
+   * so it records that it has run. Without that, deleting the retired `deepseek-v4-flash` row
+   * means deleting it again after every restart — each time backdated to 1970, so it claims to
+   * have priced all of history.
+   */
+  db.run("delete from settings where key = 'pricing.backfilledAt'");
+  pricing.seedDefaults();
+  const seeded = pricing.list().find((r) => r.model === 'claude-haiku-4-5');
+  ok('a first backfill adds the published rows', seeded !== undefined, String(seeded?.model));
+
+  pricing.remove(seeded!.id);
+  pricing.seedDefaults();
+  ok('and a second start does not put a deleted one back',
+    !pricing.list().some((r) => r.id === seeded!.id || r.model === 'claude-haiku-4-5'),
+    JSON.stringify(pricing.list().map((r) => r.model)));
+}
+
+console.log('\n=== A model that already has a price does not get a second one ===');
+{
+  /*
+   * `resolve()` has no notion of currency and takes whichever row is newer, so a model priced
+   * in dollars that also gets a yuan row has not gained a second price — it has gained a
+   * decoy, and the console lists both. Measured in production, which carried its own USD
+   * DeepSeek rows and came out of the backfill with three CNY duplicates beside them.
+   */
+  const kept = pricing.list();
+  for (const r of kept) pricing.remove(r.id);
+  db.run("delete from settings where key = 'pricing.backfilledAt'");
+  pricing.add({ model: 'deepseek-flash', currency: 'USD', priceInput: perM(0.15), priceCacheRead: 0, priceCacheWrite: 0, priceOutput: perM(0.6) });
+  pricing.add({ model: '*', currency: 'USD', priceInput: perM(5), priceCacheRead: 0, priceCacheWrite: 0, priceOutput: perM(25) });
+
+  pricing.seedDefaults();
+  const flash = pricing.list().filter((r) => r.model === 'deepseek-flash');
+  ok('the one that was there is left alone', flash.length === 1, JSON.stringify(flash.map((r) => r.currency)));
+  ok('in the currency the operator chose', flash[0]?.currency === 'USD', String(flash[0]?.currency));
+  const stars = pricing.list().filter((r) => r.model === '*');
+  ok('and the catch-all is not doubled either', stars.length === 1,
+    JSON.stringify(stars.map((r) => r.currency)));
+  ok('while a model with no row at all is added',
+    pricing.list().some((r) => r.model === 'claude-opus-5'), 'claude-opus-5');
+
+  /*
+   * Put the fixture back. Without this the next block asserts about `effective_from` against
+   * whatever the seed happens to price Opus at, and passes by coincidence — the day that list
+   * price moves it fails for a reason having nothing to do with what it tests.
+   */
+  for (const r of pricing.list()) pricing.remove(r.id);
+  for (const r of kept) {
+    pricing.add({
+      model: r.model, currency: r.currency, providerId: r.providerId,
+      priceInput: r.priceInput, priceCacheRead: r.priceCacheRead,
+      priceCacheWrite: r.priceCacheWrite, priceOutput: r.priceOutput,
+      effectiveFrom: r.effectiveFrom, note: r.note,
+    });
+  }
+}
+
+console.log('\n=== A backfilled price reaches the rows already written ===');
+{
+  /*
+   * `resolve()` filters on `effective_from <= at` so a price *change* never restates an old
+   * bill. A backfill is not a change: the vendor was charging this all along and the table
+   * simply never had the row. Stamped today it would be invisible to history — measured on a
+   * real database as "66 rows, 0 changed".
+   */
+  const at = '2020-06-01T00:00:00.000Z';
+  ok('a row effective from long ago prices an old turn',
+    pricing.resolve('claude-opus-5', at)?.priceInput === perM(5),
+    String(pricing.resolve('claude-opus-5', at)?.priceInput));
+  pricing.add({ model: 'future-model', currency: 'USD', priceInput: perM(9), priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 0 });
+  ok('and one effective from now does not', pricing.resolve('future-model', at)?.model !== 'future-model',
+    String(pricing.resolve('future-model', at)?.model));
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

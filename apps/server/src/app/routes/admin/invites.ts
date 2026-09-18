@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import * as usersRepo from '../../../core/db/users.js';
 import * as invitesRepo from '../../../core/db/invites.js';
 import * as usageRepo from '../../../core/db/usage.js';
+import * as quota from '../../../core/quota.js';
 import * as audit from '../../../core/db/audit.js';
 import { getString } from '../../../core/db/settings.js';
 import * as mail from '../../mail.js';
@@ -88,8 +89,13 @@ export function register(app: FastifyInstance): void {
       link,
       inviterName: inviter?.username,
       expiresAt,
-      limit: invite.presetLimit,
-      currency: usageRepo.settlementCurrency(),
+      // The refusal's own formatter, so a ceiling reads the same in the mail as at the gate
+      ...(invite.presetLimit === null
+        ? {}
+        : {
+            limit: quota.amountIn(usageRepo.settlementCurrency()).amount(invite.presetLimit),
+            unit: usageRepo.settlementCurrency(),
+          }),
     });
     const result = await mail.send({ to: email, ...tpl, link });
     if (result.sent) invitesRepo.markSent(invite.id);
