@@ -659,4 +659,5 @@ export const zhHant: Record<string, string> = {
   'Exchange rates': '匯率',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON，幣別 → 一單位折合多少結算幣，例如結算用 CNY 時寫 {"USD": 6.75}。僅在限額必須折成單一數字時使用。',
   'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': '按 token 限額時就是靠這幾個權重計算。金額另按價格表、分幣別記；配額只看這裡。',
+  'Cache written': '快取寫入',
 };

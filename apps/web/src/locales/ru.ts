@@ -685,4 +685,5 @@ export const ru: Record<string, string> = {
   'Exchange rates': 'Курсы валют',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, валюта → сколько единиц расчётной валюты стоит одна её единица, например {"USD": 6.75} при расчёте в CNY. Используется только там, где лимит требует одного числа.',
   'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'То, что считает лимит по токенам. Деньги считаются отдельно и по каждой валюте; квоту определяют только эти веса.',
+  'Cache written': 'Запись в кэш',
 };

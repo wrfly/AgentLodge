@@ -25,6 +25,7 @@ import {
   fmtDate,
   fmtTokens
 } from '../../components/ui';
+import { TokenCells, TokenHeaders, TokenSplit } from '../../components/TokenSplit';
 import { useT } from '../../lib/i18n';
 import { PLATFORM_PRESETS } from './shared';
 
@@ -193,15 +194,9 @@ function PlatformUsageCard() {
             <span className="font-mono text-[13px] text-muted tabular-nums">
               {fmtCost(data.totals.cost, data.currency)}
             </span>
-            {/* What the billable figure above is made of. One number cannot say whether a
-                period was cache-heavy or output-heavy, and those cost an order of magnitude
-                apart per token — which is usually the whole explanation for a month that
-                looks wrong. */}
-            <span className="font-mono text-[12px] text-faint tabular-nums">
-              {`↑${fmtTokens(data.totals.inputTokens)}`}
-              {` ⛁${fmtTokens(data.totals.cacheReadTokens + data.totals.cacheCreationTokens)}`}
-              {` ↓${fmtTokens(data.totals.outputTokens)}`}
-            </span>
+            {/* Beside the billable figure, not under it: billable is these counts *weighted*,
+                so the three do not add up to it and are not offered as if they did. */}
+            <TokenSplit totals={data.totals} />
             <span className="text-[12px] text-faint">
               {t('{n} turns', { n: data.totals.turns })}
             </span>
@@ -250,13 +245,7 @@ function PlatformUsageCard() {
                 <tr className="border-b border-line text-left text-faint">
                   <th className="pb-1.5 font-medium">{t('Upstream')}</th>
                   <th className="pb-1.5 font-medium">{t('Credential')}</th>
-                  {/* Three columns, not one. `In` used to be the only one, and a reader had no
-                      way to tell a cache-heavy workload from an output-heavy one — which is
-                      the difference between a cheap month and an expensive one, because a
-                      cache hit costs a tenth of input and an output token several times it. */}
-                  <th className="pb-1.5 text-right font-medium">{t('In')}</th>
-                  <th className="pb-1.5 text-right font-medium">{t('Cache')}</th>
-                  <th className="pb-1.5 text-right font-medium">{t('Out')}</th>
+                  <TokenHeaders />
                   <th className="pb-1.5 text-right font-medium">{t('Billable tokens')}</th>
                   <th className="pb-1.5 text-right font-medium">{t('Cost')}</th>
                 </tr>
@@ -294,15 +283,7 @@ function PlatformUsageCard() {
                           {r.kind && <span className="ml-2 font-mono text-[11px] text-faint">{r.kind}</span>}
                         </td>
                         <td className="py-1.5 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
-                        <td className="py-1.5 text-right font-mono tabular-nums text-muted">
-                          {fmtTokens(r.inputTokens)}
-                        </td>
-                        <td className="py-1.5 text-right font-mono tabular-nums text-muted">
-                          {fmtTokens(r.cacheReadTokens + r.cacheCreationTokens)}
-                        </td>
-                        <td className="py-1.5 text-right font-mono tabular-nums text-muted">
-                          {fmtTokens(r.outputTokens)}
-                        </td>
+                        <TokenCells totals={r} />
                         <td className="py-1.5 text-right font-mono tabular-nums">
                           {fmtTokens(r.billableTokens)}
                         </td>
@@ -321,15 +302,7 @@ function PlatformUsageCard() {
                             <td className="py-1 pl-6 font-mono text-[12px] text-muted" colSpan={2}>
                               {m.model || t('(default)')}
                             </td>
-                            <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
-                              {fmtTokens(m.inputTokens)}
-                            </td>
-                            <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
-                              {fmtTokens(m.cacheReadTokens + m.cacheCreationTokens)}
-                            </td>
-                            <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
-                              {fmtTokens(m.outputTokens)}
-                            </td>
+                            <TokenCells totals={m} className="text-[12px]" />
                             <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
                               {fmtTokens(m.billableTokens)}
                             </td>
@@ -414,6 +387,7 @@ function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () =>
         <span className="font-mono text-[14px] text-muted tabular-nums">
           {fmtCost(w.totals.cost, data.currency)}
         </span>
+        <TokenSplit totals={w.totals} />
         <span className="text-[12.5px] text-faint">{t('{n} turns', { n: w.totals.turns })}</span>
         <span className="ml-auto text-[12.5px] text-muted">
           {rolled ? t('this window has ended') : t('resets in {d}', { d: untilText(w.endsAt, now) })}

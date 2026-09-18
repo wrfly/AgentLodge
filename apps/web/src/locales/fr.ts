@@ -658,4 +658,5 @@ export const fr: Record<string, string> = {
   'Exchange rates': 'Taux de change',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, devise → combien d\'unités de règlement vaut une unité, par exemple {"USD": 6.75} pour un règlement en CNY. Utilisé uniquement là où un plafond impose un seul nombre.',
   'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'Ce que compte un plafond en jetons. L\'argent est tarifé séparément et par devise ; seuls ces poids décident du quota.',
+  'Cache written': 'Cache écrit',
 };
