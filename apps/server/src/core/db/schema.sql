@@ -246,6 +246,16 @@ create table if not exists usage_records (
   cost_usd              real    not null default 0,   -- as the CLI reported; usually 0 off-platform
   -- Cost from the price table, in micro-units. This is what money-based billing uses.
   cost_micro            integer not null default 0,
+  /*
+   * The currency `cost_micro` is in: the one on the price row that priced this turn.
+   *
+   * Vendors price in their own money — Anthropic in dollars, DeepSeek in yuan — and the
+   * price table holds each at its own list rather than converting, so an invoice can be
+   * checked against it line by line. That makes `sum(cost_micro)` meaningless unless it is
+   * grouped by this column, which is the whole reason it is here: a total that added dollars
+   * to yuan was a number nothing in the world corresponded to.
+   */
+  cost_currency         text    not null default 'USD',
   duration_ms           integer,
   num_turns             integer,
   status                text not null,          -- completed | error | aborted
@@ -265,6 +275,10 @@ create index if not exists idx_usage_conv on usage_records(conversation_id);
 -- every response from a user with no ceiling of their own. The two above both lead with
 -- user_id and so cannot serve a query that spans every user.
 create index if not exists idx_usage_provider_created on usage_records(provider_id, created_at);
+-- Every aggregate emits one money column per currency, and the list of currencies comes from a
+-- `select distinct` over this column. Without an index that is a full scan of the one table
+-- with no ceiling, on every aggregate query.
+create index if not exists idx_usage_cost_currency on usage_records(cost_currency);
 
 /*
  * Turns the quota gate refused, which never reach an upstream and so have no usage row.

@@ -94,7 +94,14 @@ function windowStatus(
    * to show both to be believable. Zeroing is retired, so a window now begins where it begins
    * for everybody and there is nothing left for a second figure to reconcile.
    */
-  const amountOf = (t: usageRepo.Totals) => (q.limitKind === 'cost' ? t.costMicro : t.billableTokens);
+  /*
+   * A ceiling is one number, so what is compared against it has to be one too. `settle`
+   * converts the per-currency spend into the settlement currency at the configured rates —
+   * the only place in the system that collapses money, and only because a limit leaves no
+   * choice. Everything that reports rather than enforces keeps the currencies apart.
+   */
+  const amountOf = (t: usageRepo.Totals) =>
+    (q.limitKind === 'cost' ? t.costSettled : t.billableTokens);
   const from = start.toISOString();
   const to = end.toISOString();
   const used = amountOf(usageRepo.totalsForUser(userId, { from, to }));

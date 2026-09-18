@@ -313,18 +313,56 @@ export const SETTING_SPECS: SettingSpec[] = [
   },
   {
     /*
-     * One table, one currency. Every amount in the price table is summed — into a turn's
-     * cost, a user's month, the platform's total — and a sum over two currencies is not a
-     * number. Changing this does not convert anything; it relabels, and the rows have to be
-     * rewritten to match.
+     * The currency a single money figure is expressed in — a ceiling, a quota bar, a share.
+     *
+     * The price table is **not** one currency any more: each vendor is held at its own
+     * published list, because a converted price cannot be checked against an invoice and goes
+     * stale the day a rate moves. Reports keep the currencies apart and print both. This is
+     * only for the places where one number is unavoidable, and it decides which currency the
+     * ceilings are read in.
      */
     key: 'billing.currency',
     span: 2,
-    label: 'Currency',
+    label: 'Settlement currency',
     group: 'quota',
     type: 'string',
     default: 'USD',
-    hint: 'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.',
+    hint: 'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.',
+  },
+  {
+    /*
+     * The one place an exchange rate lives, because a ceiling is one number and spend can be
+     * in two currencies. Reports never touch it: they print every currency as it was spent.
+     *
+     * Applied from the moment it is set. Nothing stored is restated when it changes, so a
+     * corrected rate does not rewrite last month's bill — it only changes what the gate
+     * counts from here on.
+     */
+    key: 'billing.rates',
+    span: 4,
+    label: 'Exchange rates',
+    group: 'quota',
+    type: 'string',
+    default: '{}',
+    hint: 'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.',
+    validate: (v: string) => {
+      if (!v.trim()) return undefined;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(v);
+      } catch {
+        return 'has to be JSON, e.g. {"USD": 6.75}';
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return 'has to be an object of currency → rate';
+      }
+      for (const [k, raw] of Object.entries(parsed as Record<string, unknown>)) {
+        if (!/^[A-Z]{3}$/.test(k)) return `"${k}" is not a three-letter currency code`;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n <= 0) return `the rate for ${k} has to be a positive number`;
+      }
+      return undefined;
+    },
   },
   {
     key: 'quota.weightCacheRead',
@@ -333,7 +371,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'quota',
     type: 'number',
     default: '0.1',
-    hint: 'Only for a model the price table cannot price. Quota normally counts what a turn cost.',
+    hint: 'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.',
   },
   {
     key: 'quota.weightOutput',
@@ -342,7 +380,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'quota',
     type: 'number',
     default: '1.5',
-    hint: 'Only for a model the price table cannot price. Quota normally counts what a turn cost.',
+    hint: 'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.',
   },
 
   // agent

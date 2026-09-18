@@ -566,8 +566,6 @@ export const es: Record<string, string> = {
 
   // Billing currency and the fallback weights
   'Currency': 'Moneda',
-  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'La moneda de la tabla de precios. Cambiarla solo reetiqueta, no convierte nada: reescribe las filas para que coincidan.',
-  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Solo para un modelo que la tabla de precios no puede tarifar. Normalmente la cuota cuenta lo que costó el turno.',
   'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Los tokens facturables son lo que costó el turno, expresado en tokens de entrada a la tarifa estándar: un modelo más caro consume más de la misma cuota',
 
   // Admin: the price table
@@ -653,4 +651,11 @@ export const es: Record<string, string> = {
   'Usage by user': 'Uso por usuario',
   'Click an upstream to see which models its spend went on.': 'Haz clic en un upstream para ver en qué modelos se gastó.',
   'Click a user to see which models their spend went on.': 'Haz clic en un usuario para ver en qué modelos gastó.',
+
+  // Settlement, for the places a limit forces a single number
+  'Settlement currency': 'Moneda de liquidación',
+  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'En qué se cuentan los límites por importe. Los precios se mantienen en la moneda que publica cada proveedor; solo se convierten cuando un límite necesita un único número.',
+  'Exchange rates': 'Tipos de cambio',
+  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, moneda → cuántas unidades de liquidación vale una unidad, por ejemplo {"USD": 6.75} al liquidar en CNY. Solo se usa donde un límite obliga a un único número.',
+  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'Lo que cuenta un límite por tokens. El dinero se tarifica aparte y por moneda; solo estos pesos deciden la cuota.',
 };

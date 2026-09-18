@@ -135,7 +135,7 @@ function hasTables(d: DatabaseSync): boolean {
  * restoring the database with the image — `cli/backup-db.ts` is what makes that copy. Prefer
  * an additive step whenever one will do.
  */
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -738,6 +738,27 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         alter table user_quotas_new rename to user_quotas;
       `);
     }
+  }
+
+  if (from < 18) {
+    /*
+     * Which money a usage row's cost is in.
+     *
+     * Vendors price in their own currency and the price table now holds each at its own list
+     * — Anthropic in dollars, DeepSeek in yuan — so `sum(cost_micro)` is only meaningful
+     * grouped by this. Additive, and the default is the currency every existing row was
+     * priced in before there was a choice.
+     *
+     * The stored amounts themselves are restated separately, at startup, by
+     * `usage.repriceHistory()`: it needs `resolve()`'s prefix matching and peak windows, which
+     * belong to pricing.ts and cannot be reached from here without a cycle.
+     */
+    if (!columns(d, 'usage_records').has('cost_currency')) {
+      d.exec("alter table usage_records add column cost_currency text not null default 'USD'");
+    }
+    // schema.sql indexes it, and schema.sql runs *after* this on an existing file — but the
+    // index has to survive a file that reaches here with the column already added
+    d.exec('create index if not exists idx_usage_cost_currency on usage_records(cost_currency)');
   }
 
   d.exec(`pragma user_version = ${SCHEMA_VERSION}`);

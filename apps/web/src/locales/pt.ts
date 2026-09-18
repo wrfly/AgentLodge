@@ -566,8 +566,6 @@ export const pt: Record<string, string> = {
 
   // Billing currency and the fallback weights
   'Currency': 'Moeda',
-  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'A moeda da tabela de preços. Alterá-la apenas reetiqueta, não converte nada: reescreva as linhas em conformidade.',
-  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Só para um modelo que a tabela de preços não consegue tarifar. Normalmente a quota conta o que o turno custou.',
   'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Os tokens faturáveis são o custo real do turno, expresso em tokens de entrada à tarifa padrão — um modelo mais caro consome mais da mesma quota',
 
   // Admin: the price table
@@ -653,4 +651,11 @@ export const pt: Record<string, string> = {
   'Usage by user': 'Utilização por utilizador',
   'Click an upstream to see which models its spend went on.': 'Clique num upstream para ver em que modelos foi gasto.',
   'Click a user to see which models their spend went on.': 'Clique num utilizador para ver em que modelos gastou.',
+
+  // Settlement, for the places a limit forces a single number
+  'Settlement currency': 'Moeda de liquidação',
+  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'Em que são contados os limites por valor. Os preços mantêm-se na moeda que cada fornecedor publica; só são convertidos quando um limite precisa de um único número.',
+  'Exchange rates': 'Taxas de câmbio',
+  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, moeda → quantas unidades de liquidação vale uma unidade, por exemplo {"USD": 6.75} ao liquidar em CNY. Usado apenas onde um limite obriga a um único número.',
+  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'O que um limite por tokens conta. O dinheiro é cobrado à parte e por moeda; só estes pesos decidem a quota.',
 };

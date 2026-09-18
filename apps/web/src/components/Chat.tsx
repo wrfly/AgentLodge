@@ -6,7 +6,8 @@ import { useChat } from '../store/chat';
 import { useAgents } from '../store/agents';
 import { AGENTS } from '../lib/route';
 import type { AgentId } from '../lib/protocol';
-import { api, fmtMoney, type UsageTotals } from '../lib/api';
+import { api, fmtCost, type Money,
+  type UsageTotals } from '../lib/api';
 import { Message } from './Message';
 import { Composer } from './Composer';
 import { FilesPanel } from './FilesPanel';
@@ -104,7 +105,10 @@ function SessionTotals() {
   const input = sum((r) => r.inputTokens);
   const cache = sum((r) => r.cacheReadTokens + r.cacheCreationTokens);
   const output = sum((r) => r.outputTokens);
-  const cost = sum((r) => r.costMicro);
+  // Per currency, like everywhere else money is shown: a conversation can touch two
+  // upstreams that bill in different money, and adding those is a number nothing matches
+  const cost: Money = {};
+  for (const r of rows) for (const [c, v] of Object.entries(r.cost)) cost[c] = (cost[c] ?? 0) + v;
   const currency = data?.currency ?? 'USD';
 
   return (
@@ -120,7 +124,7 @@ function SessionTotals() {
         <span>↑{fmtTokens(input)}</span>
         <span>⛁{fmtTokens(cache)}</span>
         <span>↓{fmtTokens(output)}</span>
-        <span>{fmtMoney(cost, currency)}</span>
+        <span>{fmtCost(cost, currency)}</span>
       </button>
 
       {open && (
@@ -146,7 +150,7 @@ function SessionTotals() {
                     {fmtTokens(r.cacheReadTokens + r.cacheCreationTokens)}
                   </td>
                   <td className="py-1.5 text-right font-mono tabular-nums">{fmtTokens(r.outputTokens)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{fmtMoney(r.costMicro, currency)}</td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{fmtCost(r.cost, currency)}</td>
                 </tr>
               ))}
             </tbody>

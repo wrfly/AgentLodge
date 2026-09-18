@@ -16,8 +16,6 @@ export const ru: Record<string, string> = {
   'Missing model name': 'Не указано имя модели',
   'Prices have to be numbers, written with a dot': 'Цены должны быть числами с точкой в качестве разделителя',
   'A price cannot be negative': 'Цена не может быть отрицательной',
-  'The catch-all price cannot be zero — it is the unit quota is counted in, and a zero turns quota back into flat weights.': 'Универсальная цена не может быть нулевой — это единица, в которой считается квота, и ноль возвращает её к плоским весам.',
-  'The catch-all price cannot be removed — it prices every model without a row of its own, and is the unit quota is counted in. Add a replacement first.': 'Универсальную цену удалить нельзя — по ней считаются все модели без собственной строки, и она же является единицей учёта квоты. Сначала добавьте замену.',
   'No such price': 'Такой цены нет',
   'Missing name': 'Не указано название',
   'Unknown kind': 'Неизвестный тип',
@@ -101,4 +99,6 @@ export const ru: Record<string, string> = {
 
   'There is nothing to retry yet': 'Пока нечего повторять',
   'Only the newest question can be edited. Select the passage and open a thread instead.': 'Редактировать можно только последний вопрос. Чтобы спросить о более раннем, выделите фрагмент и откройте ветку.',
+  'The catch-all price cannot be zero — it prices every model without a row of its own, and a zero bills all of them at nothing.': 'Цена catch-all не может быть нулевой — по ней считается каждая модель без собственной строки, и ноль означает, что все они тарифицируются как бесплатные.',
+  'The catch-all price cannot be removed — it prices every model without a row of its own. Add a replacement first.': 'Цену catch-all нельзя удалить — по ней считается каждая модель без собственной строки. Сначала добавьте замену.',
 };

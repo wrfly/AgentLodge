@@ -89,30 +89,43 @@ console.log('\n=== and every lookup a running deployment makes answers ===');
   );
 }
 
-console.log('\n=== so quota is counted on price, not on flat weights ===');
+console.log('\n=== so the same tokens cost what the model costs ===');
 {
   const u = {
     inputTokens: 1_000_000,
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
     outputTokens: 0,
-    // Not part of the sum; TurnUsage carries them and billable() ignores them
+    // Not part of the sum; TurnUsage carries them
     costUsd: 0,
     durationMs: 0,
     numTurns: 1,
   };
 
-  // A million input tokens of the catch-all model is, by definition, a million billable
-  // tokens: the unit is one input token at the standard rate.
-  const reference = billable(u, 'a-model-nobody-configured');
-  ok('the catch-all model bills one for one', reference === 1_000_000, String(reference));
+  /*
+   * The property that made the price table worth having: a million tokens on a cheap model is
+   * not a million tokens on an expensive one. It lives on **money** now rather than on the
+   * billable-token count — a count cannot carry it once two vendors bill in two currencies,
+   * so a ceiling that should track price is a cost ceiling, not a token one.
+   */
+  const dear = pricing.costMicro('claude-opus-5', u);
+  const cheap = pricing.costMicro('claude-haiku-4-5', u);
+  ok('an expensive model costs more for the same tokens', dear > cheap * 4, `${dear} vs ${cheap}`);
+  ok('and neither is zero', cheap > 0 && dear > 0, `${cheap} / ${dear}`);
+  ok('each in its vendor\'s own currency',
+    pricing.resolve('claude-opus-5')?.currency === 'USD'
+      && pricing.resolve('deepseek-flash')?.currency === 'CNY',
+    `${pricing.resolve('claude-opus-5')?.currency} / ${pricing.resolve('deepseek-flash')?.currency}`);
 
-  // The whole point of costing quota rather than counting tokens: the same million tokens
-  // on a model a thirtieth of the price draws a thirtieth of the allowance. If the seed
-  // were missing, both of these would come back equal.
-  const cheap = billable(u, 'deepseek-flash');
-  ok('a cheap model draws proportionally less', cheap < reference / 10, `${cheap} vs ${reference}`);
-  ok('and not zero', cheap > 0, String(cheap));
+  /*
+   * And the token count is what it says: weighted counts, no money in it at all. A model
+   * nobody priced and the most expensive one on the list weigh the same, because that is what
+   * a token ceiling means.
+   */
+  const reference = billable(u, 'a-model-nobody-configured');
+  ok('a token ceiling counts tokens', reference === 1_000_000, String(reference));
+  ok('whatever the model costs', billable(u, 'claude-opus-5') === reference,
+    `${billable(u, 'claude-opus-5')} vs ${reference}`);
 }
 
 fs.rmSync(box, { recursive: true, force: true });

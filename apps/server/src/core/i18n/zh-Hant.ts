@@ -20,8 +20,6 @@ export const zhHant: Record<string, string> = {
   'Missing model name': '缺少模型名稱',
   'Prices have to be numbers, written with a dot': '價格必須是數字,小數點用點',
   'A price cannot be negative': '價格不能為負',
-  'The catch-all price cannot be zero — it is the unit quota is counted in, and a zero turns quota back into flat weights.': '兜底價格不能為零 —— 它是配額計量的單位，填零會讓配額退回到扁平權重。',
-  'The catch-all price cannot be removed — it prices every model without a row of its own, and is the unit quota is counted in. Add a replacement first.': '不能刪除兜底價格 —— 它為每個沒有自己價格列的模型定價,也是配額計量的單位。請先新增替代列。',
   'No such price': '價格不存在',
   'Missing name': '缺少名稱',
   'Unknown kind': '未知的 kind',
@@ -105,4 +103,6 @@ export const zhHant: Record<string, string> = {
 
   'There is nothing to retry yet': '還沒有可以重試的內容',
   'Only the newest question can be edited. Select the passage and open a thread instead.': '只有最新的提問可以編輯。想問更早的內容，選中那段話開一條支線。',
+  'The catch-all price cannot be zero — it prices every model without a row of its own, and a zero bills all of them at nothing.': '兜底價不能為 0 —— 它為所有沒有獨立價格列的模型計價，寫 0 等於這些模型全部免費。',
+  'The catch-all price cannot be removed — it prices every model without a row of its own. Add a replacement first.': '兜底價不能刪除 —— 它為所有沒有獨立價格列的模型計價。請先新增一條替代的。',
 };

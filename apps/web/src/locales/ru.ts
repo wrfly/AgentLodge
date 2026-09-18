@@ -593,8 +593,6 @@ export const ru: Record<string, string> = {
 
   // Billing currency and the fallback weights
   'Currency': 'Валюта',
-  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': 'Валюта таблицы цен. Изменение лишь меняет подпись и ничего не пересчитывает — перепишите строки под неё.',
-  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Только для модели, которую таблица цен не может оценить. Обычно квота считает фактическую стоимость хода.',
   'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Тарифицируемые токены — это фактическая стоимость хода, выраженная во входных токенах по стандартной ставке: дорогая модель расходует больше той же квоты',
 
   // Admin: the price table
@@ -680,4 +678,11 @@ export const ru: Record<string, string> = {
   'Usage by user': 'Расход по пользователям',
   'Click an upstream to see which models its spend went on.': 'Нажмите на апстрим, чтобы увидеть, на какие модели пришёлся его расход.',
   'Click a user to see which models their spend went on.': 'Нажмите на пользователя, чтобы увидеть, на какие модели пришёлся его расход.',
+
+  // Settlement, for the places a limit forces a single number
+  'Settlement currency': 'Валюта расчёта',
+  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'В чём считаются денежные лимиты. Цены остаются в валюте, которую публикует каждый поставщик; сюда они пересчитываются только тогда, когда лимиту нужно одно число.',
+  'Exchange rates': 'Курсы валют',
+  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, валюта → сколько единиц расчётной валюты стоит одна её единица, например {"USD": 6.75} при расчёте в CNY. Используется только там, где лимит требует одного числа.',
+  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'То, что считает лимит по токенам. Деньги считаются отдельно и по каждой валюте; квоту определяют только эти веса.',
 };

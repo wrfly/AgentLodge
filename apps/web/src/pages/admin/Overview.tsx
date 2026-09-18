@@ -8,7 +8,7 @@ import { ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import {
   admin,
-  fmtMoney,
+  fmtCost,
   type AdminOverview,
   type GateStatus,
   type PlatformPreset,
@@ -56,7 +56,7 @@ export function Overview() {
         <Stat
           label={t('Billed all time')}
           value={fmtTokens(data.allTime.billableTokens)}
-          sub={fmtMoney(data.allTime.costMicro, data.currency)}
+          sub={fmtCost(data.allTime.cost, data.currency)}
         />
         <Stat
           label={t('Upstream balance')}
@@ -191,7 +191,7 @@ function PlatformUsageCard() {
               {data.totals.billableTokens.toLocaleString()}
             </span>
             <span className="font-mono text-[13px] text-muted tabular-nums">
-              {fmtMoney(data.totals.costMicro, data.currency)}
+              {fmtCost(data.totals.cost, data.currency)}
             </span>
             <span className="text-[12px] text-faint">
               {t('{n} turns', { n: data.totals.turns })}
@@ -282,7 +282,7 @@ function PlatformUsageCard() {
                           {fmtTokens(r.billableTokens)}
                         </td>
                         <td className="py-1.5 text-right font-mono tabular-nums text-muted">
-                          {fmtMoney(r.costMicro, data.currency)}
+                          {fmtCost(r.cost, data.currency)}
                         </td>
                       </tr>
 
@@ -300,7 +300,7 @@ function PlatformUsageCard() {
                               {fmtTokens(m.billableTokens)}
                             </td>
                             <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
-                              {fmtMoney(m.costMicro, data.currency)}
+                              {fmtCost(m.cost, data.currency)}
                             </td>
                           </tr>
                         ))}
@@ -378,7 +378,7 @@ function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () =>
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <span className="font-mono text-[22px] tabular-nums">{fmtTokens(w.totals.billableTokens)}</span>
         <span className="font-mono text-[14px] text-muted tabular-nums">
-          {fmtMoney(w.totals.costMicro, data.currency)}
+          {fmtCost(w.totals.cost, data.currency)}
         </span>
         <span className="text-[12.5px] text-faint">{t('{n} turns', { n: w.totals.turns })}</span>
         <span className="ml-auto text-[12.5px] text-muted">

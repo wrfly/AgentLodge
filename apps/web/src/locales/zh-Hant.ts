@@ -567,8 +567,6 @@ export const zhHant: Record<string, string> = {
 
   // Billing currency and the fallback weights
   'Currency': '幣別',
-  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': '價格表用的幣別。改這裡只是換標籤，不做任何換算——列裡的數字要自己改成對應幣別。',
-  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': '只在價格表算不出這個模型時才用。配額平時算的是這一輪實際花了多少錢。',
   'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': '計費 token = 這一輪實際花的錢，換算成標準價下的輸入 token —— 所以越貴的模型佔掉越多同樣的配額',
 
   // Admin: the price table
@@ -654,4 +652,11 @@ export const zhHant: Record<string, string> = {
   'Usage by user': '依使用者統計用量',
   'Click an upstream to see which models its spend went on.': '點擊某個上游，查看它的花費用在哪些模型上。',
   'Click a user to see which models their spend went on.': '點擊某個使用者，查看其花費用在哪些模型上。',
+
+  // Settlement, for the places a limit forces a single number
+  'Settlement currency': '結算幣別',
+  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '按金額限額時以哪種幣計。價格表中各家維持廠商自己公布的幣別，只有在限額需要單一數字時才換算成它。',
+  'Exchange rates': '匯率',
+  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON，幣別 → 一單位折合多少結算幣，例如結算用 CNY 時寫 {"USD": 6.75}。僅在限額必須折成單一數字時使用。',
+  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': '按 token 限額時就是靠這幾個權重計算。金額另按價格表、分幣別記；配額只看這裡。',
 };

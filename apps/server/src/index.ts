@@ -8,6 +8,7 @@ import { config } from './core/config.js';
 import { initDb } from './core/db/index.js';
 import { importLegacy } from './core/db/import-legacy.js';
 import * as pricing from './core/db/pricing.js';
+import * as usageRepo from './core/db/usage.js';
 import * as providersRepo from './core/db/providers.js';
 import * as usersRepo from './core/db/users.js';
 import * as invitesRepo from './core/db/invites.js';
@@ -125,6 +126,12 @@ if (config.hostDataDir && !path.isAbsolute(config.hostDataDir)) {
 initDb();
 importLegacy();
 pricing.seedDefaults();
+/*
+ * Both after the seed, and in this order. `repriceHistory` costs every stored row from the
+ * price table, so the table has to be complete first — recosting against a table still
+ * missing its Claude rows would write the catch-all price in and then mark the job done.
+ */
+usageRepo.repriceHistory();
 providersRepo.seedFromSettings();
 // Move the model list from global settings onto the provider (idempotent; the old rows are
 // deleted afterwards)

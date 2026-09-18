@@ -20,7 +20,7 @@ import { ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import {
   admin,
-  fmtMoney,
+  fmtCost,
   type PlatformPreset,
   type UserAgentUsage,
   type UsersUsage,
@@ -130,7 +130,7 @@ export function UserUsage() {
               {data.totals.billableTokens.toLocaleString()}
             </span>
             <span className="font-mono text-[13px] text-muted tabular-nums">
-              {fmtMoney(data.totals.costMicro, data.currency)}
+              {fmtCost(data.totals.cost, data.currency)}
             </span>
             <span className="text-[12px] text-faint">
               {t('{n} turns', { n: data.totals.turns })} · {t(data.range.label)}
@@ -186,7 +186,7 @@ export function UserUsage() {
                               token, so a column of counts on its own does not say where the
                               budget went */}
                           <td className="py-1.5 text-right font-mono tabular-nums text-muted">
-                            {fmtMoney(u.costMicro, data.currency)}
+                            {fmtCost(u.cost, data.currency)}
                           </td>
                         </tr>
                         {shown && (

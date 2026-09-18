@@ -593,8 +593,6 @@ export const ja: Record<string, string> = {
 
   // Billing currency and the fallback weights
   'Currency': '通貨',
-  'What the price table is written in. Changing it relabels; it converts nothing, so rewrite the rows to match.': '価格表の通貨です。変更してもラベルが変わるだけで換算はしません。行の数値は自分で書き換えてください。',
-  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': '価格表が値段を出せないモデルにだけ使います。クォータは通常、そのターンの実費を数えます。',
   'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': '課金トークンはそのターンの実費を、標準レートの入力トークンに換算したものです。高価なモデルほど同じクォータを多く消費します',
 
   // Admin: the price table
@@ -680,4 +678,11 @@ export const ja: Record<string, string> = {
   'Usage by user': 'ユーザー別の使用量',
   'Click an upstream to see which models its spend went on.': 'アップストリームをクリックすると、その支出がどのモデルに使われたか分かります。',
   'Click a user to see which models their spend went on.': 'ユーザーをクリックすると、その支出がどのモデルに使われたか分かります。',
+
+  // Settlement, for the places a limit forces a single number
+  'Settlement currency': '決済通貨',
+  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '金額ベースの上限を数える通貨。価格表は各ベンダーが公表する通貨のままで、上限が単一の数値を要するときだけこれに換算されます。',
+  'Exchange rates': '為替レート',
+  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON、通貨 → 1単位が決済通貨いくらに当たるか。例: CNY で決済するなら {"USD": 6.75}。上限が単一の数値を要する場合にのみ使われます。',
+  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'トークン上限が数えるもの。金額は価格表で通貨ごとに別途計算され、クォータを決めるのはこの重みだけです。',
 };
