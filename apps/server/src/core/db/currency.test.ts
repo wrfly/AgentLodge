@@ -233,6 +233,46 @@ console.log('\n=== A price row an operator deleted stays deleted ===');
     JSON.stringify(pricing.list().map((r) => r.model)));
 }
 
+console.log('\n=== A model that already has a price does not get a second one ===');
+{
+  /*
+   * `resolve()` has no notion of currency and takes whichever row is newer, so a model priced
+   * in dollars that also gets a yuan row has not gained a second price — it has gained a
+   * decoy, and the console lists both. Measured in production, which carried its own USD
+   * DeepSeek rows and came out of the backfill with three CNY duplicates beside them.
+   */
+  const kept = pricing.list();
+  for (const r of kept) pricing.remove(r.id);
+  db.run("delete from settings where key = 'pricing.backfilledAt'");
+  pricing.add({ model: 'deepseek-flash', currency: 'USD', priceInput: perM(0.15), priceCacheRead: 0, priceCacheWrite: 0, priceOutput: perM(0.6) });
+  pricing.add({ model: '*', currency: 'USD', priceInput: perM(5), priceCacheRead: 0, priceCacheWrite: 0, priceOutput: perM(25) });
+
+  pricing.seedDefaults();
+  const flash = pricing.list().filter((r) => r.model === 'deepseek-flash');
+  ok('the one that was there is left alone', flash.length === 1, JSON.stringify(flash.map((r) => r.currency)));
+  ok('in the currency the operator chose', flash[0]?.currency === 'USD', String(flash[0]?.currency));
+  const stars = pricing.list().filter((r) => r.model === '*');
+  ok('and the catch-all is not doubled either', stars.length === 1,
+    JSON.stringify(stars.map((r) => r.currency)));
+  ok('while a model with no row at all is added',
+    pricing.list().some((r) => r.model === 'claude-opus-5'), 'claude-opus-5');
+
+  /*
+   * Put the fixture back. Without this the next block asserts about `effective_from` against
+   * whatever the seed happens to price Opus at, and passes by coincidence — the day that list
+   * price moves it fails for a reason having nothing to do with what it tests.
+   */
+  for (const r of pricing.list()) pricing.remove(r.id);
+  for (const r of kept) {
+    pricing.add({
+      model: r.model, currency: r.currency, providerId: r.providerId,
+      priceInput: r.priceInput, priceCacheRead: r.priceCacheRead,
+      priceCacheWrite: r.priceCacheWrite, priceOutput: r.priceOutput,
+      effectiveFrom: r.effectiveFrom, note: r.note,
+    });
+  }
+}
+
 console.log('\n=== A backfilled price reaches the rows already written ===');
 {
   /*

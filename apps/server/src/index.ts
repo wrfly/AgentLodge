@@ -125,14 +125,36 @@ if (config.hostDataDir && !path.isAbsolute(config.hostDataDir)) {
 
 initDb();
 importLegacy();
-pricing.seedDefaults();
 /*
- * Both after the seed, and in this order. `repriceHistory` costs every stored row from the
- * price table, so the table has to be complete first — recosting against a table still
- * missing its Claude rows would write the catch-all price in and then mark the job done.
+ * One-off database repairs, and one process does them.
+ *
+ * `app` and `gateway` are two processes over one SQLite file and they start together, so both
+ * used to arrive here at once. The first took the write lock for as long as the recost ran —
+ * twenty-one thousand rows on the deployment this was written for — the second exceeded
+ * `busy_timeout` and threw, and that killed it. Compose restarted it, it raced again, and
+ * repeated ten times until the first finished. The service came up correct and the log looked
+ * like a disaster.
+ *
+ * The same gate the rest of this file's housekeeping already uses, and for the same stated
+ * reason: the gateway shares the database, so running it there is waste. Waste is what made
+ * the loser wait in the first place — so this removes the contention rather than tolerating
+ * it, and a lock from anywhere else still fails loudly the way every other startup write does.
  */
-usageRepo.repriceHistory();
-providersRepo.seedFromSettings();
+if (config.role !== 'gateway') {
+  pricing.seedDefaults();
+  /*
+   * After the seed, and in this order: `repriceHistory` costs every stored row from the price
+   * table, so the table has to be complete first — recosting against a table still missing its
+   * Claude rows would write the catch-all price in and then mark the job done.
+   */
+  usageRepo.repriceHistory();
+  /*
+   * Inside the gate for the same reason, and it was outside it by oversight rather than by
+   * design: it is two inserts behind a "is the table empty" read, which on a fresh deployment
+   * both processes pass at once — the same race, two lines further down.
+   */
+  providersRepo.seedFromSettings();
+}
 // Move the model list from global settings onto the provider (idempotent; the old rows are
 // deleted afterwards)
 

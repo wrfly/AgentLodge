@@ -500,26 +500,21 @@ export function ensureSeedRows(): void {
    * backdated to 1970, claiming to have priced all of history.
    */
   if (seedMark() === 'done') return;
-  const key = (model: string, currency: string): string => `${model} ${currency}`;
-  const have = new Set(
-    all<{ model: string; currency: string }>('select model, currency from model_pricing')
-      .map((r) => key(r.model, r.currency)),
-  );
   /*
-   * The catch-all is skipped when this table already has one, in any currency.
+   * A model, whatever currency or upstream it is priced under, already has a price.
    *
-   * `resolve()` has no notion of currency: it takes the first unscoped `*` in
-   * `effective_from desc` order, so a second one does not sit beside the first — it replaces
-   * it for every unpriced model, and stamps them in a currency somebody else chose. A table
-   * with a `*` already has the row this backfill is for.
+   * Keyed on the name alone, and on every row rather than the unscoped ones. `resolve()` has
+   * no notion of currency and takes whichever row is newer, so a second row for a model that
+   * has one is not a second price — it is a decoy, listed in the console beside the real one.
+   * Measured in production, which carried its own USD DeepSeek rows and came out of the
+   * backfill with three CNY duplicates. Scoping the query to `provider_id is null` would
+   * reintroduce it for anyone who prices per upstream: their models would read as unpriced,
+   * get unscoped rows backdated to 1970, and the recost would then restate history they had
+   * already reconciled. The catch-all needs no special case — it is a model name like the
+   * rest, and this rule covers it.
    */
-  const hasCatchAll = have.size > 0
-    && all<{ n: number }>("select count(*) as n from model_pricing where model = '*' and provider_id is null")[0]!.n > 0;
-  const missing = seedRows()
-    .filter((r) => !have.has(key(r.model, r.currency ?? 'USD')))
-    .filter((r) => !(hasCatchAll && r.model === '*'));
-  seedMark('done');
-  if (!missing.length) return;
+  const have = new Set(all<{ model: string }>('select model from model_pricing').map((r) => r.model));
+  const missing = seedRows().filter((r) => !have.has(r.model));
   /*
    * Backdated, unlike the seed's own rows.
    *
@@ -536,8 +531,19 @@ export function ensureSeedRows(): void {
       .filter(Boolean).join(' '),
   }));
   for (const m of backfilled) add(m);
-  console.log(
-    `[pricing] ${missing.length} published price row(s) had never been seeded and were added ` +
-      `(${missing.map((m) => `${m.model} ${m.currency ?? 'USD'}`).join(', ')}). Check them in the console.`,
-  );
+  /*
+   * One mark, and only once the rows are in.
+   *
+   * An empty `missing` makes the loop above a no-op, so there is nothing to return early for
+   * — and an early return would need a second mark, which is two places to keep one invariant
+   * ("mark after the writes") and one of them to get wrong next time. Marking before the
+   * writes is exactly the bug this line was moved to fix.
+   */
+  seedMark('done');
+  if (missing.length) {
+    console.log(
+      `[pricing] ${missing.length} published price row(s) had never been seeded and were added ` +
+        `(${missing.map((m) => `${m.model} ${m.currency ?? 'USD'}`).join(', ')}). Check them in the console.`,
+    );
+  }
 }
