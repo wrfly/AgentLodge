@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { Gauge, ShieldCheck } from 'lucide-react';
 import { admin, type GateStatus } from '../../lib/api';
-import { Button, Card, Input, Stat } from '../../components/ui';
+import { Button, Card, Input, Stat, Toggle } from '../../components/ui';
 import { useT } from '../../lib/i18n';
 
 /** Live state of the concurrency gate. The upstream's rate limit is a black box; this shows where AIMD has settled */
@@ -45,6 +45,15 @@ export function GateCard() {
     setBusy(true);
     try {
       setGate(await admin.setGateConcurrency(n));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setPinned = async (v: boolean) => {
+    setBusy(true);
+    try {
+      setGate(await admin.setGatePinned(v));
     } finally {
       setBusy(false);
     }
@@ -115,6 +124,26 @@ export function GateCard() {
           ))}
         </div>
       )}
+      {/*
+        * The other half of "how many at once": whether the number in the box is a ceiling
+        * the gate adapts under, or the number it runs at. Next to the box rather than on the
+        * settings page, because on its own the box does not answer the question an operator
+        * is actually asking when the gate says 12 and the rows say 2.
+        */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        <Toggle
+          checked={!gate.pinned}
+          onChange={(v) => void setPinned(!v)}
+          disabled={busy}
+          label={t('Adapt to the upstream')}
+        />
+        <span className="text-[12px] text-faint">
+          {gate.pinned
+            ? t('Pinned to the limit above; a rate-limited upstream is waited out, not answered by narrowing the gate')
+            : t('A rate-limited upstream halves this gate; it climbs back after 20 clean responses')}
+        </span>
+      </div>
+
       <div className="mt-3 space-y-1.5 text-[12px] text-faint">
         <div className="flex items-center gap-1.5">
           <Gauge size={12} />

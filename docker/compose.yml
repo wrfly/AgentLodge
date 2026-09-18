@@ -210,6 +210,9 @@ services:
       # request is a 503 — fail closed. Switched off, the gateway connects directly and this
       # address plays no part.
       AUDIT_PROXY_URL: *audit-proxy-url
+      # The gate's ceiling, per upstream. The console owns it (the Metering gateway card, which
+      # stores it so a restart does not undo it) and this is only the fallback — but the block is
+      # a closed list, so left out it would be a documented variable that does nothing.
       MAX_UPSTREAM_CONCURRENCY: ${MAX_UPSTREAM_CONCURRENCY:-3}
       # The other half of the gate: how many of those slots one user may hold. The console
       # owns it (System settings › Gateway) and this is only the fallback — but the block is

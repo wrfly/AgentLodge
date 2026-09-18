@@ -329,5 +329,93 @@ console.log('\n=== A raised cap does not let a newcomer step over the queue ==='
   for (const p of five) (await p).release();
 }
 
+console.log('\n=== The ceiling is whatever the console says now ===');
+{
+  /*
+   * The same argument as the per-user cap above, and one more: this number used to live only
+   * in the gateway process, so every restart of that container put it back to
+   * MAX_UPSTREAM_CONCURRENCY and a limit an administrator had raised was quietly gone. It is
+   * a stored setting now, and the gate asks for it rather than being told once.
+   */
+  let ceiling: number | undefined = 1;
+  let reads = 0;
+  const pool = new GatePool({
+    ...cfg,
+    maxConcurrency: 8,
+    readMaxConcurrency: () => {
+      reads += 1;
+      return ceiling;
+    },
+  });
+  const g = pool.for('provider-a');
+  const at = (t: string) => g.acquire({ userId: 'A', turnId: t, priority: 0 });
+
+  const first = await at('one');
+  const queued = [at('two'), at('three')];
+  await new Promise((r) => setTimeout(r, 5));
+  ok('the stored ceiling wins over the configured one', g.stats().active === 1 && g.stats().queued === 2,
+    JSON.stringify(g.stats()));
+  ok('and it is what the pool reports', pool.max() === 1, String(pool.max()));
+
+  ceiling = 3;
+  const before = reads;
+  g.reschedule();
+  // Counted before anything else asks, because `stats()` reads the ceiling too — the drain
+  // is synchronous, so this is the whole of it
+  const drainReads = reads - before;
+  const rest = await Promise.all(queued);
+  ok('raising it reaches the people already waiting', g.stats().active === 3 && g.stats().queued === 0,
+    JSON.stringify(g.stats()));
+  ok('one read for the whole drain, not one per waiter', drainReads === 1, String(drainReads));
+
+  // Nothing to say — no row, no environment variable, a database that will not answer — is
+  // the configured value, which is a real limit.
+  ceiling = undefined;
+  ok('silence falls back to the configured ceiling', g.stats().max === 8, JSON.stringify(g.stats()));
+  first.release();
+  rest.forEach((l) => l.release());
+}
+
+console.log('\n=== A pinned gate keeps the number it was given ===');
+{
+  /*
+   * AIMD is right when the real threshold is unknown and wrong when it is written in a
+   * contract: a deployment that has paid for eight in flight wants eight, not a number
+   * rediscovered from the last incident. Pinned, a 429 still buys the upstream its
+   * retry-after — that is when to come back, not how wide to run — but not a halving.
+   */
+  let adaptive = false;
+  const pool = new GatePool({ ...cfg, maxConcurrency: 8, readAdaptiveConcurrency: () => adaptive });
+  const g = pool.for('provider-a');
+
+  g.reportUpstream(429, 30);
+  ok('a 429 does not narrow it', g.stats().effectiveMax === 8, JSON.stringify(g.stats()));
+  ok('and the console can see why', g.stats().pinned && pool.pinned(), JSON.stringify(g.stats()));
+  ok('the 429 is still counted', g.stats().totalThrottled === 1, String(g.stats().totalThrottled));
+
+  // The cooldown is the half that survives pinning: a request arriving inside it waits.
+  const held = g.acquire({ userId: 'A', turnId: 'held', priority: 0 });
+  await new Promise((r) => setTimeout(r, 5));
+  ok('retry-after is still honoured', g.stats().queued === 1 && g.stats().active === 0,
+    JSON.stringify(g.stats()));
+  const lease = await held;
+  ok('and released when it passes, at the full limit', g.stats().active === 1 && g.stats().effectiveMax === 8,
+    JSON.stringify(g.stats()));
+  lease.release();
+
+  // Un-pinned, the gate adapts again — from the ceiling, not from a halving it spent the
+  // whole time ignoring.
+  adaptive = true;
+  ok('un-pinning does not resurrect an old backoff', g.stats().effectiveMax === 8, JSON.stringify(g.stats()));
+  g.reportUpstream(429, 30);
+  ok('and the next 429 narrows it normally', g.stats().effectiveMax === 4, JSON.stringify(g.stats()));
+
+  // Pinning in the middle of a backoff lifts it there and then, which is the reason an
+  // operator reaches for the switch at all.
+  adaptive = false;
+  ok('pinning lifts a backoff in progress', g.stats().effectiveMax === 8 && g.stats().pinned,
+    JSON.stringify(g.stats()));
+}
+
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
