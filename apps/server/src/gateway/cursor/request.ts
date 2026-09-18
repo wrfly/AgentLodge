@@ -69,6 +69,15 @@ const textOf = (content: ChatMessage['content']): string => {
 export function flatten(messages: ChatMessage[]): { prompt: string; system: string } {
   const system: string[] = [];
   const parts: string[] = [];
+  /*
+   * The labels are for a transcript with more than one turn in it. A first question is one
+   * user message and nothing else, and a capture of the real client shows it sending exactly
+   * the words — so labelling that one would be this bridge putting `User:` into the prompt
+   * the model reads, on the most common request there is.
+   */
+  const conversation = messages.filter((m) => (m.role ?? 'user') !== 'system' && (m.role ?? 'user') !== 'developer');
+  const single =
+    conversation.length === 1 && (conversation[0]!.role ?? 'user') === 'user' && !conversation[0]!.tool_calls?.length;
 
   for (const m of messages) {
     const role = m.role ?? 'user';
@@ -94,7 +103,7 @@ export function flatten(messages: ChatMessage[]): { prompt: string; system: stri
     }
 
     const text = textOf(m.content);
-    if (text) parts.push(`User: ${text}`);
+    if (text) parts.push(single ? text : `User: ${text}`);
   }
 
   return { prompt: parts.join('\n\n').trim(), system: system.join('\n\n') };
@@ -167,6 +176,11 @@ export interface BuildOptions {
    * request is then the honest answer rather than a shared constant.
    */
   conversationId?: string;
+  /**
+   * This turn's id. Shared with the `x-original-request-id` header the calls carry, because
+   * the real client uses one value for both — see bidi.ts.
+   */
+  runId?: string;
 }
 
 /** The run request, ready for the codec */
@@ -202,7 +216,8 @@ export function buildRunRequest(body: ChatRequest, opts: BuildOptions): { reques
             },
           },
         },
-        ...(definitions.length ? { mcp_tools: { mcp_tools: definitions } } : {}),
+        // Sent even when it is empty, which is what the real client does
+        mcp_tools: definitions.length ? { mcp_tools: definitions } : {},
         conversation_id: conversationId,
         conversation_group_id: conversationId,
         requested_model: {
@@ -213,7 +228,7 @@ export function buildRunRequest(body: ChatRequest, opts: BuildOptions): { reques
         ...(system ? { custom_system_prompt: system } : {}),
         // There is no workspace on this side to index, and saying so stops the agent asking
         exclude_workspace_context: true,
-        run_id: crypto.randomUUID(),
+        run_id: opts.runId || crypto.randomUUID(),
       },
     },
   };

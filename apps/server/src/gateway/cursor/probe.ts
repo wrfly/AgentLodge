@@ -23,6 +23,7 @@
  * `--raw` skips the session and prints each decoded `AgentServerMessage` instead, which is
  * what to reach for when something arrives that the bridge does not recognise.
  */
+import crypto from 'node:crypto';
 import { accessToken } from './auth.js';
 import { BidiStream } from './bidi.js';
 import { decode, type Message } from './codec.js';
@@ -112,9 +113,10 @@ async function stream(): Promise<void> {
     baseUrl: base,
     headers: (requestId) => clientHeaders(token, requestId),
   });
+  const turnId = crypto.randomUUID();
   const { request, delegate } = buildRunRequest(
     { messages: [{ role: 'user', content: prompt }], tools },
-    { model: resolved },
+    { model: resolved, runId: turnId },
   );
 
   const shown = resolved.parameters.map((p) => `${p['id']}=${p['value']}`).join(', ');
@@ -127,6 +129,7 @@ async function stream(): Promise<void> {
     agentBase,
     token,
     headers: (requestId) => clientHeaders(token, requestId),
+    turnId,
     egress: (url) => ({ url, headers: {} }),
     signal: controller.signal,
     workspace: process.cwd(),
@@ -194,13 +197,18 @@ async function raw(): Promise<void> {
     baseUrl: base,
     headers: (requestId) => clientHeaders(token, requestId),
   });
-  const { request } = buildRunRequest({ messages: [{ role: 'user', content: prompt }] }, { model: resolved });
+  const turnId = crypto.randomUUID();
+  const { request } = buildRunRequest(
+    { messages: [{ role: 'user', content: prompt }] },
+    { model: resolved, runId: turnId },
+  );
   const controller = new AbortController();
   const stream = new BidiStream({
     apiBase: base,
     agentBase,
     token,
     headers: (requestId) => clientHeaders(token, requestId),
+    turnId,
     egress: (url) => ({ url, headers: {} }),
     signal: controller.signal,
   });

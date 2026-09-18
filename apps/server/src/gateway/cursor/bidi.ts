@@ -47,6 +47,14 @@ export interface BidiOptions {
   token: string;
   /** The `x-cursor-*` set this client presents with, given the id these two calls share */
   headers: (requestId: string) => Record<string, string>;
+  /**
+   * The turn this stream is carrying, which is not the stream's own id.
+   *
+   * Cursor's client keeps the two apart, and a capture of it shows why: when a stream drops
+   * and the turn is retried, the bidi id changes and this one does not. It goes out as
+   * `x-original-request-id` and is the same value as the run request's `run_id`.
+   */
+  turnId: string;
   egress: Egress;
   signal: AbortSignal;
 }
@@ -94,7 +102,16 @@ export class BidiStream {
     const body = encode(APPEND_REQUEST, {
       request_id: { request_id: this.requestId },
       append_seqno: seqno,
-      data_binary: encode(CLIENT_MESSAGE, message),
+      /*
+       * Hex in `data`, rather than bytes in `data_binary`.
+       *
+       * Both fields exist and the binary one is the obvious choice — but a capture of the
+       * real client shows it sending hex, and the bundle puts the binary encoding behind a
+       * feature flag (`bidi_append_binary_encoding`) that was off. Which means binary is the
+       * path being rolled out and hex is the one every server is known to accept. Doubling
+       * the bytes of a tool result is worth not being the first client to try the other.
+       */
+      data: Buffer.from(encode(CLIENT_MESSAGE, message)).toString('hex'),
     });
 
     /*
@@ -116,6 +133,7 @@ export class BidiStream {
       method: 'POST',
       headers: {
         ...this.opts.headers(this.requestId),
+        'x-original-request-id': this.opts.turnId,
         'content-type': 'application/proto',
         ...out.headers,
       },
@@ -142,6 +160,7 @@ export class BidiStream {
       method: 'POST',
       headers: {
         ...this.opts.headers(this.requestId),
+        'x-original-request-id': this.opts.turnId,
         'content-type': 'application/connect+proto',
         'connect-accept-encoding': 'gzip',
         ...out.headers,
@@ -173,13 +192,25 @@ export class BidiStream {
   }
 }
 
-/** A decoded client message, for a test or a probe that wants to see what went out */
+/**
+ * A decoded client message, for a test or a probe that wants to see what went out.
+ *
+ * Reads either carrier: hex in `data`, which is what this sends and what the real client
+ * sends, or bytes in `data_binary` for whoever is on the other encoding.
+ */
 export function decodeAppend(body: Uint8Array): { seqno: number; requestId: string; message: Message } {
   const outer = decode(APPEND_REQUEST, body);
   const id = outer['request_id'] as Message | undefined;
+  const hex = typeof outer['data'] === 'string' ? outer['data'] : '';
+  const binary = outer['data_binary'];
+  const payload = hex
+    ? new Uint8Array(Buffer.from(hex, 'hex'))
+    : binary instanceof Uint8Array
+      ? binary
+      : new Uint8Array(0);
   return {
     seqno: Number(outer['append_seqno'] ?? 0),
     requestId: String(id?.['request_id'] ?? ''),
-    message: decode(CLIENT_MESSAGE, (outer['data_binary'] as Uint8Array) ?? new Uint8Array(0)),
+    message: decode(CLIENT_MESSAGE, payload),
   };
 }

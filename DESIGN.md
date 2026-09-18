@@ -430,6 +430,32 @@ id 是这边生成的 uuid，两个请求的 `x-request-id` 都是它 —— Cur
 > agent host（默认 `agentn.us.api5.cursor.sh`，Cursor 通过 `GetServerConfig` 公布，这里按当前值写死）。
 > 上游配了 Base URL 的话两个都走那一个地址。
 
+#### 这段是对着真客户端校准过的
+
+`--endpoint` 可以把 `cursor-agent` 指到本地，于是拿它自己的登录打一次 turn、用**本仓库的 schema**
+解出来，就能回答「读 bundle 读不出来」的那几个问题。把 `GetServerConfig` 的 `http2_config` 回成
+`FORCE_BIDI_DISABLED`，真客户端就会走 HTTP/1.1，也就是上面这条 BidiAppend + RunSSE 的路 ——
+它自己就支持这条路，这点本身就是这个设计的第一个确认。
+
+抓到的和改掉的：
+
+| 事 | 真客户端 | 这边原来 |
+|---|---|---|
+| append 的载荷 | **`data`，hex 字符串** | `data_binary`。bundle 里二进制那条挂在 `bidi_append_binary_encoding` 开关后面而且是关的，所以 hex 才是确定能被接受的那条 |
+| id | 两个：`x-request-id`（每条流一个）和 `x-original-request-id`（整个 turn 一个，等于 `run_id`）。重试时前者变后者不变 | 只有一个，`run_id` 另外随机 |
+| header | `user-agent: connect-es/1.6.1`、`x-cursor-streaming: true`，没有 checksum，没有 os/arch | 发了一个按凭据算的 `x-cursor-checksum` —— 等于替这个进程编了一台机器的身份 |
+| 单条消息的 prompt | 就是那句话 | 前面挂了 `User: ` |
+
+请求结构 13 个字段里 10 个一致，剩下 3 个是故意的：`mode` 我们在调用方没带工具时发 ASK 而不是
+AGENT，`exclude_workspace_context` 发 true（这边真的没有工作区），`max_mode: false` 显式写出来
+（proto3 默认值，服务端读到的是一回事）。
+
+还没对齐的两个，都判断成可以不发：`x-blob-encryption-key`（blob 在这边只是原样存取的字节，没有
+要加密的东西）和 `connect-content-encoding: gzip`（不压也是合法的）。
+
+**仍然没有验证的是 Cursor 的服务端会不会接受这些字节** —— 上面这些都是在本地对着真客户端比对
+出来的，没有一次请求真的出网。`cursor:probe` 就是问这一个问题的。
+
 #### 一个 turn 会反过来要三样东西（`cursor/session.ts`）
 
 Cursor 的 agent 协议不是一问一答：turn 进行中服务端会朝客户端要东西，要不到就停在那儿。

@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import os from 'node:os';
 import { accessToken, CursorAuthError } from './auth.js';
 import type { Egress } from './bidi.js';
 import { listModels, resolveModel, type CatalogOptions } from './catalog.js';
@@ -66,34 +65,29 @@ const WORKSPACE = '/workspace';
 /**
  * How this client describes itself.
  *
- * The CLI's shape, not the IDE's: the credential behind this is an account API key, which is
- * what the CLI authenticates with.
+ * Every header here is one a capture of the real `cursor-agent` shows it sending, and the
+ * list is short on purpose. It used to be longer — an `x-cursor-checksum` built from the
+ * credential, and the os, arch and timezone the IDE reports — and the capture settled it:
+ * the CLI sends none of those on these RPCs. A checksum in particular was this process
+ * inventing a machine identity it does not have, which is worse than not sending one.
  *
- * `x-cursor-checksum` is derived from the credential rather than from this host. Cursor's own
- * clients build it from a machine identity, which this process does not have and should not
- * fabricate — but the header is not optional, so what goes out is a stable per-credential
- * value: one identity per configured upstream, the same on every request, tied to no machine.
+ * `x-cursor-streaming` is set by the agent transport's own interceptor, on both calls of the
+ * pair rather than only the streaming half.
  */
 export function clientHeaders(token: string, requestId: string): Record<string, string> {
   return {
     authorization: `Bearer ${token}`,
     'connect-protocol-version': '1',
+    'user-agent': 'connect-es/1.6.1',
     'x-cursor-client-type': 'cli',
     'x-cursor-client-version': `cli-${BUNDLE_VERSION}`,
-    'x-cursor-client-os': process.platform === 'win32' ? 'win32' : process.platform,
-    'x-cursor-client-arch': process.arch === 'x64' ? 'x64' : process.arch,
-    'x-cursor-client-os-version': os.release(),
-    'x-cursor-client-device-type': 'desktop',
-    'x-cursor-checksum': checksum(token),
-    'x-cursor-timezone': process.env['TZ'] || 'UTC',
+    'x-cursor-streaming': 'true',
     'x-request-id': requestId,
     // Cursor's own switch for "do not keep this". A gateway relaying other people's work has
     // no standing to opt their code into anything, so it is on and not configurable.
     'x-ghost-mode': 'true',
   };
 }
-
-const checksum = (token: string): string => crypto.createHash('sha256').update(token).digest('hex');
 
 export type { Egress };
 
@@ -169,9 +163,16 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
     signal: opts.signal,
   });
 
+  /*
+   * The turn's own id, which is not the stream's. The real client keeps the two apart — a
+   * retried turn opens a new stream and keeps this — so it is minted here and travels as both
+   * the request's `run_id` and the `x-original-request-id` header on every call.
+   */
+  const turnId = crypto.randomUUID();
   const { request, delegate } = buildRunRequest(opts.body, {
     model,
     conversationId: opts.conversationId,
+    runId: turnId,
   });
 
   const start = async (bearer: string) => {
@@ -181,6 +182,7 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
       agentBase,
       token: bearer,
       headers: (requestId) => clientHeaders(bearer, requestId),
+      turnId,
       egress: (url) => route(url),
       signal: controller.signal,
       workspace: WORKSPACE,

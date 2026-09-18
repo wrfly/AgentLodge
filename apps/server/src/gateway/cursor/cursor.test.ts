@@ -96,7 +96,7 @@ console.log('\n=== The codec walks a run request back out of its own bytes ===')
   ok('the conversation id survives', run['conversation_id'] === 'conv-1');
   ok('the model survives', (run['requested_model'] as Message)?.['model_id'] === 'claude-4.5-sonnet');
   const message = ((run['action'] as Message)?.['user_message_action'] as Message)?.['user_message'] as Message;
-  ok('and the question itself', message?.['text'] === 'User: hello', JSON.stringify(message));
+  ok('and the question itself, unlabelled because it is the only one', message?.['text'] === 'hello', JSON.stringify(message));
 }
 
 console.log('\n=== A field nobody asked about is stepped over, not thrown on ===');
@@ -179,6 +179,16 @@ console.log('\n=== The transcript becomes one prompt, tool traffic included ==='
   ok('so is the call the model made', prompt.includes('[tool_use Read]'), prompt);
   ok('and what came back from it', prompt.includes('export const a = 1'), prompt);
   ok('and the follow-up', prompt.includes('User: now explain it'));
+
+  /*
+   * Except when there is only the one message, which is the most common request there is. The
+   * real client sends exactly the words, and a label there would be text the model reads.
+   */
+  const alone = flatten([{ role: 'user', content: 'say hi' }]);
+  ok('a first question is sent as itself', alone.prompt === 'say hi', alone.prompt);
+  const withSystem = flatten([{ role: 'system', content: 'be terse' }, { role: 'user', content: 'say hi' }]);
+  ok('a system prompt does not make it a transcript', withSystem.prompt === 'say hi', withSystem.prompt);
+  ok('it travels apart from the words', withSystem.system === 'be terse');
 }
 
 console.log("\n=== A caller's tools decide whether the turn can call tools at all ===");
@@ -203,7 +213,65 @@ console.log("\n=== A caller's tools decide whether the turn can call tools at al
   const askedMessage = ((asked['action'] as Message)['user_message_action'] as Message)['user_message'] as Message;
   ok('a caller with none gets an asked turn instead', askedMessage['mode'] === 2, String(askedMessage['mode']));
   ok('and nothing is delegated to it', plain.delegate === false);
-  ok('it declares no tools', asked['mcp_tools'] === undefined);
+  // Present but empty, which is what a capture of the real client shows it sending
+  ok('the tools field is still there, holding nothing', JSON.stringify(asked['mcp_tools']) === '{}', JSON.stringify(asked['mcp_tools']));
+}
+
+/*
+ * The shape of the real thing.
+ *
+ * These are not derived from the schema — they are what a capture of `cursor-agent` driving a
+ * turn actually put on the wire, with the gateway's own tables decoding it. Each one is a
+ * choice that looked arbitrary from the bundle alone and is settled by the capture, so each
+ * one is worth a test that fails if it drifts back.
+ */
+console.log('\n=== The request matches the one the real client sends ===');
+{
+  const turnId = 'turn-1234';
+  const { request } = buildRunRequest(
+    { messages: [{ role: 'user', content: 'say hi' }] },
+    { model: asModel('auto-smart', [{ id: 'optimize_for', value: 'balanced' }]), conversationId: 'conv-1', runId: turnId },
+  );
+  const run = roundTrip(CLIENT, request)['run_request'] as Message;
+
+  ok('the turn id is the run id, not a fresh uuid', run['run_id'] === turnId, String(run['run_id']));
+  ok('the conversation and its group are the same value', run['conversation_id'] === run['conversation_group_id']);
+  ok('the model and its parameters travel apart', (run['requested_model'] as Message)['model_id'] === 'auto-smart');
+  ok(
+    'with the parameter as its own entry',
+    JSON.stringify(((run['requested_model'] as Message)['parameters'] as Message[])[0]) === '{"id":"optimize_for","value":"balanced"}',
+    JSON.stringify((run['requested_model'] as Message)['parameters']),
+  );
+  const message = ((run['action'] as Message)['user_message_action'] as Message)['user_message'] as Message;
+  ok('the prompt is a user message with an id of its own', typeof message['message_id'] === 'string' && String(message['text']).includes('say hi'));
+  ok('and an empty selected context rather than none', message['selected_context'] instanceof Uint8Array);
+}
+
+console.log('\n=== A client message is carried the way the real client carries it ===');
+{
+  /*
+   * Hex in `data`, not bytes in `data_binary`. Both fields exist; the capture shows which one
+   * a server is known to accept, and the bundle puts the binary one behind a feature flag.
+   */
+  const body = encode('aiserver.v1.BidiAppendRequest', {
+    request_id: { request_id: 'req-1' },
+    append_seqno: 0,
+    data: Buffer.from(encode(CLIENT, { client_heartbeat: new Uint8Array(0) })).toString('hex'),
+  });
+  const outer = decode('aiserver.v1.BidiAppendRequest', body);
+  ok('the payload goes out hex-encoded', typeof outer['data'] === 'string' && (outer['data'] as string).length > 0);
+  ok('and the binary field is left alone', outer['data_binary'] === undefined);
+
+  const back = decodeAppend(body);
+  ok('which reads back as the message it was', back.message['client_heartbeat'] !== undefined, JSON.stringify(back.message));
+
+  // The other carrier still reads, for whoever is on the encoding behind the flag
+  const binary = encode('aiserver.v1.BidiAppendRequest', {
+    request_id: { request_id: 'req-2' },
+    append_seqno: 1,
+    data_binary: encode(CLIENT, { client_heartbeat: new Uint8Array(0) }),
+  });
+  ok('so does the binary one', decodeAppend(binary).message['client_heartbeat'] !== undefined);
 }
 
 console.log("\n=== Cursor's own tool names are not re-registered ===");

@@ -97,7 +97,16 @@ let said: Message[] = [];
 let modelCalls = 0;
 /** What the upstream does each time the client says something */
 let script: (message: Message, push: (bytes: Uint8Array) => void) => void = () => {};
-let seen: { runSSE?: string; append?: string; auth?: string; clientType?: string; requestId?: string } = {};
+let seen: {
+  runSSE?: string;
+  append?: string;
+  auth?: string;
+  clientType?: string;
+  requestId?: string;
+  /** Every header of the last call on each RPC, for the ones the capture settled */
+  runHeaders?: Record<string, string>;
+  appendHeaders?: Record<string, string>;
+} = {};
 let exchanges = 0;
 
 /**
@@ -159,6 +168,7 @@ const cursor = http.createServer((req, res) => {
 
     if (req.url === '/aiserver.v1.BidiService/BidiAppend') {
       seen.append = req.url;
+      seen.appendHeaders = req.headers as Record<string, string>;
       const { message, requestId } = decodeAppend(new Uint8Array(body));
       seen.requestId = requestId;
       said.push(message);
@@ -170,6 +180,7 @@ const cursor = http.createServer((req, res) => {
 
     if (req.url === '/agent.v1.AgentService/RunSSE') {
       seen.runSSE = req.url;
+      seen.runHeaders = req.headers as Record<string, string>;
       // The id is the one the appends carry, sent as this call's only message
       const asked = decode('aiserver.v1.BidiRequestId', new Uint8Array(body.subarray(5)));
       if (String(asked['request_id'] ?? '') !== seen.requestId && seen.requestId) {
@@ -290,6 +301,16 @@ async function run(): Promise<void> {
     ok('the turn is read back over RunSSE', seen.runSSE === '/agent.v1.AgentService/RunSSE', seen.runSSE);
     ok('and each message goes out through BidiAppend', seen.append === '/aiserver.v1.BidiService/BidiAppend', seen.append);
     ok('we present as the client the credential belongs to', seen.clientType === 'cli', seen.clientType);
+
+    /*
+     * The headers a capture of the real `cursor-agent` shows on these two calls, and the one
+     * it does not. The checksum in particular used to be sent and was this process inventing
+     * a machine identity it does not have.
+     */
+    ok('both calls carry the turn id apart from the stream id', seen.runHeaders?.['x-original-request-id'] === seen.appendHeaders?.['x-original-request-id'], JSON.stringify([seen.runHeaders?.['x-original-request-id'], seen.appendHeaders?.['x-original-request-id']]));
+    ok('which is not the id that joins them', seen.runHeaders?.['x-original-request-id'] !== seen.requestId, String(seen.requestId));
+    ok('the agent transport says it is streaming', seen.runHeaders?.['x-cursor-streaming'] === 'true', JSON.stringify(seen.runHeaders));
+    ok('and no machine checksum is invented', seen.runHeaders?.['x-cursor-checksum'] === undefined, JSON.stringify(seen.runHeaders));
 
     ok('the client is answered in Anthropic frames', res.body.includes('event: message_start'), res.body.slice(0, 200));
     ok('carrying the text', res.body.includes('four'), res.body);
