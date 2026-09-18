@@ -143,7 +143,38 @@ export function columns(d: DatabaseSync, table: string): Set<string> {
   );
 }
 
+/**
+ * Every step, in one transaction, with the version read inside it.
+ *
+ * `app` and `gateway` are two processes over one file and compose starts them together, so
+ * both arrive here at once. Read outside the lock, `user_version` is a fact about the past:
+ * both see 18, both run every step, and each step's own `if (columns(...).has(...))` guard is
+ * evaluated at one moment and acted on at another. Observed in production on the 18 → 20
+ * upgrade — one process asked whether `billable_tokens` was there, the other dropped it, and
+ * the first died on `no such column: billable_tokens`. It came back on the next start because
+ * the version was current by then, but a step that had *not* finished would have crashed the
+ * same way again, which is the crash loop this file already has one scar from.
+ *
+ * `begin immediate` takes the write lock up front rather than on the first write, so the
+ * loser waits here instead of half way through. When it gets in, it re-reads the version,
+ * finds it current, and does nothing. `busy_timeout` is set in initDb and applies to this.
+ *
+ * SQLite's DDL is transactional, so the table rebuilds and column drops below roll back with
+ * everything else. That is also what makes a step that dies part-way leave no half-migration.
+ */
 function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
+  d.exec('begin immediate');
+  try {
+    migrateInTx(d, opts);
+  } catch (err) {
+    d.exec('rollback');
+    throw err;
+  }
+  d.exec('commit');
+}
+
+function migrateInTx(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
+  // Inside the lock: what another process has already done is visible, and cannot change
   const [row] = d.prepare('pragma user_version').all() as Array<{ user_version: number }>;
   const from = row?.user_version ?? 0;
   if (from >= SCHEMA_VERSION) return;
@@ -787,20 +818,11 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
      */
     if (columns(d, 'user_quotas').has('limit_kind')) {
       /*
-       * One transaction around the whole step, and `begin immediate` so it takes the write
-       * lock up front.
-       *
-       * This is a **non-idempotent** transform — it multiplies each ceiling by a price — and
-       * `migrate()` is called by both the app and the gateway, which compose starts together.
-       * Autocommitted statement by statement, the second process could pass the `limit_kind`
-       * check while the first was still looping and convert the already-converted numbers a
-       * second time: a 5 M ceiling at 2 micro/token would go 10 M, then 20 M. The same thing
-       * happens after a SIGKILL between the loop and the table rebuild, since `user_version`
-       * is still 18 on restart. Inside a transaction neither can happen: the loser of the
-       * lock waits, and when it gets in, `limit_kind` is gone and the whole block is skipped.
+       * This is a **non-idempotent** transform — it multiplies each ceiling by a price — so
+       * running it twice is not a no-op but a second multiplication: a 5 M ceiling at 2
+       * micro/token would go 10 M, then 20 M. `migrate()` holds one transaction around every
+       * step for exactly this, and the guard above is read inside it.
        */
-      d.exec('begin immediate');
-      try {
       /*
        * A catch-all to convert against, even on a database that has none.
        *
@@ -988,11 +1010,6 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         drop table user_quotas;
         alter table user_quotas_new rename to user_quotas;
       `);
-      } catch (err) {
-        d.exec('rollback');
-        throw err;
-      }
-      d.exec('commit');
     }
 
     /*
