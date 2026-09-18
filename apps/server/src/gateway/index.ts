@@ -506,34 +506,56 @@ async function handleProxy(
       config.upstreamHeadersTimeoutMs > 0
         ? setTimeout(() => ac.abort(new UpstreamTimeout('headers')), config.upstreamHeadersTimeoutMs)
         : null;
+    const callUpstream = (secret: string): Promise<Response> =>
+      target.provider.kind === 'cursor'
+        ? /*
+           * Cursor speaks Connect-RPC with protobuf bodies, so the one hop that cannot be
+           * a plain fetch is this one. What comes back is a Chat Completions stream built
+           * by the bridge, which is why everything below — the sniffer, the translator,
+           * the keep-alive — needs no branch of its own. See gateway/cursor/index.ts.
+           */
+          fetchCursor({
+            baseUrl: target.provider.baseUrl,
+            secret,
+            body: attributed as ChatRequest,
+            model: reqModel,
+            conversationId: claims.cid,
+            signal: ac.signal,
+            egress: (upstreamUrl) => egressTarget({ ...target, url: upstreamUrl }),
+          })
+        : fetch(asCli ? betaUrl(egress.url) : egress.url, {
+            method: 'POST',
+            headers: {
+              ...outboundHeaders(req.headers, target.wire, secret, claims.cid, cli),
+              ...egress.headers,
+            },
+            body: JSON.stringify(asCli ? withBillingSystem(attributed, cli) : attributed),
+            signal: ac.signal,
+          });
+
     let upstream: Response;
     try {
-      upstream =
-        target.provider.kind === 'cursor'
-          ? /*
-             * Cursor speaks Connect-RPC with protobuf bodies, so the one hop that cannot be
-             * a plain fetch is this one. What comes back is a Chat Completions stream built
-             * by the bridge, which is why everything below — the sniffer, the translator,
-             * the keep-alive — needs no branch of its own. See gateway/cursor/index.ts.
-             */
-            await fetchCursor({
-              baseUrl: target.provider.baseUrl,
-              secret: target.apiKey,
-              body: attributed as ChatRequest,
-              model: reqModel,
-              conversationId: claims.cid,
-              signal: ac.signal,
-              egress: (upstreamUrl) => egressTarget({ ...target, url: upstreamUrl }),
-            })
-          : await fetch(asCli ? betaUrl(egress.url) : egress.url, {
-              method: 'POST',
-              headers: {
-                ...outboundHeaders(req.headers, target.wire, target.apiKey, claims.cid, cli),
-                ...egress.headers,
-              },
-              body: JSON.stringify(asCli ? withBillingSystem(attributed, cli) : attributed),
-              signal: ac.signal,
-            });
+      upstream = await callUpstream(target.apiKey);
+      /*
+       * A credential the upstream refused. The manager mints ahead of expiry, so this is
+       * the uncommon case — a revoked token, a clock far enough out to matter, or a token
+       * this process has held since before the last rotation — and asking the manager to
+       * mint a new one costs one round trip against losing the turn.
+       *
+       * Once, and only while nothing has been written: the response has not been touched
+       * yet here, and the request body is a value rather than a stream, so sending it
+       * again is safe. A credential that is genuinely dead comes back the same and the
+       * 401 reaches the client, which is what it should do.
+       */
+      if ((upstream.status === 401 || upstream.status === 403) && target.provider.credentialId) {
+        const minted = await providersRepo.secretOf(target.provider.id, { force: true });
+        if (minted && minted !== target.apiKey) {
+          // The refusal's own body is never read, and an unconsumed one holds its
+          // connection until the socket is collected
+          await upstream.body?.cancel().catch(() => {});
+          upstream = await callUpstream(minted);
+        }
+      }
     } finally {
       if (headersTimer) clearTimeout(headersTimer);
     }
@@ -1243,12 +1265,14 @@ export function buildGateway(): FastifyInstance {
   });
 
   app.post('/credentials/login/finish', adminOnly, async (req, reply) => {
-    const b = (req.body ?? {}) as { loginId?: string; code?: string };
-    if (!b.loginId || !b.code?.trim()) {
+    // A poll sign-in has no code to bring back; see the admin route for why the
+    // console's `completion` is trusted for this message and nothing else.
+    const b = (req.body ?? {}) as { loginId?: string; code?: string; completion?: string };
+    if (!b.loginId || (b.completion !== 'poll' && !b.code?.trim())) {
       return reply.code(400).send({ error: tr(req, 'Paste the code the page showed you') });
     }
     return credentialManagerCall(reply, () =>
-      credentialManager.finishLogin({ loginId: b.loginId!, code: b.code!.trim() }),
+      credentialManager.finishLogin({ loginId: b.loginId!, code: b.code?.trim() ?? '' }),
     );
   });
 

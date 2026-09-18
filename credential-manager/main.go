@@ -1,7 +1,7 @@
 // Command credential-manager is the credential authority for AgentLodge.
 //
 // It is the only process that holds upstream credentials: pasted API keys, and
-// the refresh tokens behind Claude (claude.ai) and Codex (ChatGPT)
+// the tokens behind Claude (claude.ai), Codex (ChatGPT) and Cursor
 // subscriptions. It mints access tokens before they expire, keeps what it holds
 // encrypted at rest, and hands out **only** short-lived values over a Unix
 // domain socket.
@@ -17,12 +17,14 @@
 //	GET    /files                   -> key files in the allowlisted directories
 //	                                   ?path=… also reports on that one
 //	POST   /credentials/import      -> copy a mounted host credentials file in
-//	                                   {"id","kind":"claude"|"codex","label"}
+//	                                   {"id","kind":"claude"|"codex"|"cursor"}
 //	DELETE /credentials?id=X        -> forget one
 //	POST   /login/start             -> begin a subscription sign-in
 //	                                   {"kind":"claude","id","label"}
 //	                                   -> {loginId, authorizeUrl, expiresAt}
-//	POST   /login/finish            -> complete it with the pasted code
+//	POST   /login/finish            -> complete it with the pasted code, or for
+//	                                   a poll sign-in (cursor) call until it
+//	                                   stops answering 202 {"status":"pending"}
 //	                                   {"loginId","code"}
 //	GET    /token?credential=X      -> {credential, kind, accessToken, expiresAt}
 //	POST   /token/refresh           -> the same, forcing a mint first
@@ -40,6 +42,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +56,7 @@ const (
 	defaultHTTPTimeout = 30 * time.Second
 	providerClaude     = "claude"
 	providerCodex      = "codex"
+	providerCursor     = "cursor"
 
 	// keepOwner is the chown convention for "leave this id alone".
 	keepOwner = -1
@@ -73,6 +77,11 @@ type config struct {
 	codexHome          string
 	codexOauthTokenURL string
 	codexOauthClientID string
+
+	// cursor
+	cursorAuthFile   string
+	cursorAPIBase    string
+	cursorWebsiteURL string
 
 	// persistence
 	stateFile string
@@ -100,6 +109,10 @@ type tokenPair struct {
 	Scopes                []string `json:"scopes,omitempty"`
 	ClientID              string   `json:"clientId,omitempty"`
 	AccountID             string   `json:"accountId,omitempty"` // codex only
+	// APIKey is cursor only, and is not an access token: it is the durable
+	// credential Cursor mints access tokens from, so it never leaves this
+	// process — see publicToken, which does not carry it.
+	APIKey string `json:"apiKey,omitempty"`
 }
 
 // provider is a single upstream credential source that can mint an access
@@ -150,6 +163,10 @@ func loadConfig() (config, map[string]provider, error) {
 		codexHome:          envOr("CODEX_HOME", filepath.Join(home, ".codex")),
 		codexOauthTokenURL: envOr("OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.com/oauth/token"),
 		codexOauthClientID: envOr("OPENAI_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann"),
+
+		cursorAuthFile:   envOr("CURSOR_AUTH_FILE", defaultCursorAuthFile(home)),
+		cursorAPIBase:    envOr("CURSOR_API_BASE_URL", "https://api2.cursor.sh"),
+		cursorWebsiteURL: envOr("CURSOR_WEBSITE_URL", "https://cursor.com"),
 	}
 
 	if v := os.Getenv("REFRESH_LEAD_SECONDS"); v != "" {
@@ -208,6 +225,15 @@ func loadConfig() (config, map[string]provider, error) {
 		}
 	}
 
+	// Cursor is configured out of the box like claude, but completes a different
+	// way: pollURL set means there is nothing to paste back — the operator
+	// approves in the browser and this end polls until Cursor hands the tokens
+	// over. See startLogin.
+	cfg.logins[kindCursor] = oauthLogin{
+		authorizeURL: strings.TrimSuffix(cfg.cursorWebsiteURL, "/") + "/loginDeepControl",
+		pollURL:      strings.TrimSuffix(cfg.cursorAPIBase, "/") + "/auth/poll",
+	}
+
 	// The encryption key is only needed when persisting state. When no state
 	// file is configured, skip key derivation entirely (the credential-manager still works
 	// fine loading credentials from disk each start).
@@ -233,8 +259,28 @@ func loadConfig() (config, map[string]provider, error) {
 			tokenURL: cfg.codexOauthTokenURL,
 			timeout:  cfg.httpTimeout,
 		},
+		providerCursor: &cursorProvider{
+			authFile: cfg.cursorAuthFile,
+			apiBase:  cfg.cursorAPIBase,
+			timeout:  cfg.httpTimeout,
+		},
 	}
 	return cfg, provs, nil
+}
+
+// defaultCursorAuthFile is where `cursor-agent login` writes, which is not the
+// same place on every platform: a dot-directory in $HOME on macOS, and under
+// $XDG_CONFIG_HOME everywhere else. In a container this is normally overridden
+// by CURSOR_AUTH_FILE pointing at the mount.
+func defaultCursorAuthFile(home string) string {
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, ".cursor", "auth.json")
+	}
+	config := os.Getenv("XDG_CONFIG_HOME")
+	if config == "" {
+		config = filepath.Join(home, ".config")
+	}
+	return filepath.Join(config, "cursor", "auth.json")
 }
 
 func envOr(key, fallback string) string {
@@ -649,11 +695,19 @@ func (a *manager) handleLoginStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	// How this one finishes, so the console knows whether to show a box to paste
+	// into or simply wait: "code" wants the operator to bring something back,
+	// "poll" wants /login/finish called until it stops answering pending.
+	completion := "code"
+	if a.cfg.logins[pending.Kind].poll() {
+		completion = "poll"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"loginId":      pending.ID,
 		"authorizeUrl": authorizeURL,
 		"credentialId": pending.CredID,
 		"kind":         pending.Kind,
+		"completion":   completion,
 		"expiresAt":    pending.started.Add(loginTTL).UnixMilli(),
 	})
 }
@@ -674,11 +728,19 @@ func (a *manager) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, err := a.finishLogin(r.Context(), req.LoginID, req.Code)
+	if errors.Is(err, errLoginPending) {
+		// Not a failure: the operator has not approved in the browser yet. 202
+		// rather than 200 so a caller can tell "come back" from "done" without
+		// reading the body, and rather than 4xx so it does not look like the
+		// sign-in went wrong.
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "pending"})
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"credential": c.summary(), "store": a.storeBlock()})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "complete", "credential": c.summary(), "store": a.storeBlock()})
 }
 
 // credentialParam accepts either name for the same thing: `credential` is what

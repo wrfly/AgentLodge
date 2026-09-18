@@ -2,7 +2,7 @@
 
 The credential authority for AgentLodge. It is the **only** process that holds
 upstream credentials: pasted API keys, paths to key files another process writes,
-and the refresh tokens behind Claude (claude.ai) and Codex (ChatGPT)
+and the refresh tokens behind Claude (claude.ai), Codex (ChatGPT) and Cursor
 subscriptions. It mints access tokens before
 they expire, keeps what it holds encrypted at rest, and hands out only
 short-lived values over a Unix domain socket.
@@ -20,12 +20,14 @@ Unix socket (CREDENTIAL_MANAGER_SOCKET, mode 0600):
   POST   /credentials             -> store a pasted key
                                      {"id","kind":"api-key","label","apiKey"}
   POST   /credentials/import      -> copy a mounted host credentials file in
-                                     {"id","kind":"claude"|"codex","label"}
+                                     {"id","kind":"claude"|"codex"|"cursor"}
   DELETE /credentials?id=X        -> forget one
   POST   /login/start             -> begin a subscription sign-in
                                      {"kind":"claude","id","label"}
                                      -> { loginId, authorizeUrl, expiresAt }
-  POST   /login/finish            -> complete it with the pasted code
+  POST   /login/finish            -> complete it: the pasted code, or (for a
+                                     poll sign-in) call until it stops
+                                     answering 202 {"status":"pending"}
                                      {"loginId","code"}
   GET    /token?credential=X      -> { credential, kind, accessToken, expiresAt }
   POST   /token/refresh           -> the same, forcing a mint first
@@ -35,10 +37,19 @@ Unix socket (CREDENTIAL_MANAGER_SOCKET, mode 0600):
 Nothing here ever returns a stored value: a listing carries a masked hint
 (`sk-ant-a…cdef`) and an expiry, and that is all the console is shown.
 
-## The four kinds, and how each gets in
+## The five kinds, and how each gets in
 
 **Signing in** (`/login/*`) is the ordinary one, and it is two steps because the
-authorising happens in a browser this process does not have. `start` returns an
+authorising happens in a browser this process does not have. Two shapes of second
+step, and `/login/start` says which in `completion`.
+
+*Cursor* (`completion: "poll"`) is the simpler one: the operator opens
+`cursor.com/loginDeepControl` and approves, and this end asks
+`api2.cursor.sh/auth/poll` — 404 while it waits, the credentials when it is done —
+so there is nothing to paste back. `/login/finish` does one ask per call and
+answers `202 {"status":"pending"}` until the approval lands.
+
+*Claude* (`completion: "code"`) has nothing equivalent: `start` returns an
 authorize URL; the operator approves there and the redirect lands on a page
 showing `code#state`; `finish` checks the state half against the one it sent out
 and exchanges the code half. PKCE throughout: the verifier is generated here and
@@ -76,6 +87,17 @@ this container, which is the host's own `claude login` / `codex login` output:
   `refreshTokenExpiresAt`, `scopes`, `clientId`.
 - **codex** — `~/.codex/auth.json` (`CODEX_HOME`), reading `tokens.access_token`,
   `tokens.refresh_token`, `tokens.account_id`.
+- **cursor** — `CURSOR_AUTH_FILE`, which `cursor-agent login` writes to
+  `~/.cursor/auth.json` on macOS and `~/.config/cursor/auth.json` elsewhere. It
+  reads `accessToken`, `refreshToken` and `apiKey`.
+
+Cursor renews differently from the other two, and the difference matters: it has
+**no refresh-token grant**. The durable credential is the `apiKey`, and an access
+token is minted by posting it to `/auth/exchange_user_api_key`; the `refreshToken`
+is kept only because the file has one, and nothing known accepts it. So a cursor
+credential with no API key reports `renewable: false` — it can serve the token it
+holds and nothing after it. Its expiry comes from the access token's own JWT
+`exp`, since that reply carries no `expires_in`.
 
 Those two files also **seed** the store on first start, so a deployment that
 configures nothing still has `claude` and `codex` to point a provider at. Seeding
@@ -92,8 +114,9 @@ which side owns a subscription and leave it there.
 
 A background ticker mints any token within `REFRESH_LEAD_SECONDS` of expiry, so
 `/token` almost always answers from what is already held with no upstream call.
-A 401 upstream makes the gateway call `/token/refresh`, which forces a mint
-before its single retry.
+A 401 or 403 upstream makes the gateway call `/token/refresh`, which forces a
+mint, and retry once with what comes back — see the relay in
+`apps/server/src/gateway/index.ts`.
 
 A refresh that fails while the current token is still valid is not an error —
 the token endpoint being briefly unreachable should not take the upstream down
@@ -131,6 +154,9 @@ from the seed files on each start.
 | `CLAUDE_OAUTH_REDIRECT_URI`          | `https://platform.claude.com/oauth/code/callback` | where that redirect lands             |
 | `CLAUDE_OAUTH_SCOPES`                | the six `claude login` asks for              | scopes requested                              |
 | `CODEX_HOME`                         | `~/.codex`                                   | directory holding `auth.json`                 |
+| `CURSOR_AUTH_FILE`                   | `~/.cursor/auth.json` (macOS)                | Cursor seed / import source                   |
+| `CURSOR_API_BASE_URL`                | `https://api2.cursor.sh`                     | where tokens are minted and sign-in polled    |
+| `CURSOR_WEBSITE_URL`                 | `https://cursor.com`                         | where the operator approves a sign-in         |
 | `CREDENTIAL_FILE_ROOTS`              | `/run/secrets`                               | directories a `key-file` may point into       |
 | `OPENAI_OAUTH_TOKEN_URL`             | `https://auth.openai.com/oauth/token`        | Codex token endpoint                          |
 | `OPENAI_OAUTH_CLIENT_ID`             | `app_EMoamEEZ…`                              | Codex client id                               |

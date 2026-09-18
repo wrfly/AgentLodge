@@ -956,6 +956,12 @@ export interface StartedLogin {
   authorizeUrl: string;
   credentialId: string;
   kind: string;
+  /**
+   * How this sign-in finishes: `code` wants the code the redirect page shows pasted
+   * back, `poll` has nothing to bring back and is completed by asking until it stops
+   * answering `pending`. Absent from an older credential manager, which only had `code`.
+   */
+  completion?: 'code' | 'poll';
   expiresAt: number;
 }
 
@@ -1212,8 +1218,9 @@ export const admin = {
       body: JSON.stringify(input),
     }),
   /** Step two: the code the page showed after authorising */
-  finishCredentialLogin: (input: { loginId: string; code: string }) =>
-    request<{ credential: Credential }>('/api/admin/credentials/login/finish', {
+  /** `credential` is absent while a poll sign-in is still waiting to be approved. */
+  finishCredentialLogin: (input: { loginId: string; code: string; completion?: 'code' | 'poll' }) =>
+    request<{ status?: string; credential?: Credential }>('/api/admin/credentials/login/finish', {
       method: 'POST',
       body: JSON.stringify(input),
     }),

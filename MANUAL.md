@@ -88,9 +88,13 @@ protobuf，schema 没公开过，是从 `cursor-agent` 自己的 bundle 里读�
 后者在 2026.09 之后已经不在客户端里了。好处是 token 数是 Cursor 自己报的真实数字，工具调用
 两个方向都是原生的；代价见下面第三条。
 
-配置：kind 选 `cursor`，Base URL 留空（要经过前面的中转才填），凭据填一个在 cursor.com 上创建
-的 **Cursor API key**。网关拿它换访问令牌（`/auth/exchange_user_api_key`），令牌不落盘，过期
-自己换。
+配置：kind 选 `cursor`，Base URL 留空（要经过前面的中转才填）。凭据两种都行：
+
+- **Cursor 订阅**——在「上游凭据」里选「登录订阅」，kind 选 `cursor`，打开它给的链接在浏览器里
+  同意就行，没有 code 要粘回来。已经在本机 `cursor-agent login` 过的，直接点「导入」也可以。
+- **Cursor API key**——在 cursor.com 上创建，粘进来。
+
+两种最后都是拿 `/auth/exchange_user_api_key` 换访问令牌，令牌不落盘，过期自己换。
 
 模型清单点「从上游拉取」，问的是 Cursor 的 `AvailableModels`，拉回来的是**每个可选的 slug**
 而不是每个模型名 —— 因为在 Cursor 这边模型是按 variant 选的：`claude-opus-5-thinking-high`
@@ -153,7 +157,7 @@ CURSOR_API_KEY=key_… npm -w @agentlodge/server run cursor:probe -- --raw "hell
 （`credential_id`），值放在 `credential-manager/` 这个单独的服务里，网关每次发请求前
 经 Unix socket 问它要一次。
 
-凭据有四种，都在后台「上游凭据」卡片里建：
+凭据有五种，都在后台「上游凭据」卡片里建：
 
 | 类型 | 存的是什么 | 用在哪 |
 |---|---|---|
@@ -161,6 +165,11 @@ CURSOR_API_KEY=key_… npm -w @agentlodge/server run cursor:probe -- --raw "hell
 | `key-file` | **只有路径**，每次要 token 时现读 | key 由别的东西产出：docker/podman secret、secret manager sidecar、另一个容器写进共享卷 |
 | `claude` | claude.ai 订阅的 refresh token | 用订阅跑，控制台里登录或从挂载的凭据文件导入 |
 | `codex` | ChatGPT 订阅的 refresh token | 同上 |
+| `cursor` | Cursor 订阅的 API key | 同上。Cursor 的登录不用粘 code：控制台给一个链接，你在浏览器里点同意，页面自己就完成了 |
+
+Cursor 跟前两个不一样的地方值得单说：它**没有 refresh token 这条路**。能长期用的是
+`apiKey`，access token 是拿它换出来的，所以一个没有 `apiKey` 的 cursor 凭据在列表里会标
+「不能续期」——手上这个 token 用完就没有了。
 
 `key-file` 的意义是别人轮换那个文件之后下一次请求就用上新值，不用重启、不用改配置。
 可读的目录是白名单，默认 `/data/secrets` 和 `/run/secrets`，别的挂载点用

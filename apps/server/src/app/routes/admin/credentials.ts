@@ -100,19 +100,28 @@ export function register(app: FastifyInstance): void {
   });
 
   /**
-   * Step two: the code from the page that the redirect landed on. It is spent here — a
-   * second attempt with the same one is refused, which is what an authorization code is
-   * supposed to be.
+   * Step two, which is two different things.
+   *
+   * For a code sign-in it is the code from the page the redirect landed on, spent here —
+   * a second attempt with the same one is refused, which is what an authorization code is
+   * supposed to be. For a poll sign-in there is nothing to bring back: this is called
+   * repeatedly and answers `pending` until the operator approves in the browser.
+   *
+   * `completion` says which, and it is the console repeating what /login/start told it.
+   * It decides nothing but this message: the credential manager knows which flow the
+   * login id belongs to and refuses a codeless code sign-in on its own.
    */
   app.post('/api/admin/credentials/login/finish', guard, async (req, reply) => {
-    const b = (req.body ?? {}) as { loginId?: string; code?: string };
-    if (!b.loginId || !b.code?.trim()) {
+    const b = (req.body ?? {}) as { loginId?: string; code?: string; completion?: string };
+    if (!b.loginId || (b.completion !== 'poll' && !b.code?.trim())) {
       return reply.code(400).send({ error: tr(req, 'Paste the code the page showed you') });
     }
     const res = await callGateway('POST', '/credentials/login/finish', req.headers.authorization, b);
     const bad = failed(res);
     if (bad) return reply.code(400).send({ error: bad });
     const credential = res['credential'] as { id?: string; kind?: string } | undefined;
+    // Nothing happened yet on a pending poll, so there is nothing to record
+    if (!credential) return res;
     audit.log({
       actorId: req.user!.id,
       action: 'admin.credential.login',

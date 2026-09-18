@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1168,4 +1169,216 @@ func TestRemoveKeepsARefreshLockThatIsHeld(t *testing.T) {
 func writeTestJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// ---------------------------------------------------------------------------
+// cursor: parse, renew, and the poll sign-in
+// ---------------------------------------------------------------------------
+
+// jwtWithExp builds a token whose payload states an expiry, which is the only
+// place Cursor says how long one of its access tokens lasts.
+func jwtWithExp(t *testing.T, exp int64) string {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{"exp": exp, "sub": "someone"})
+	if err != nil {
+		t.Fatalf("marshal claims: %v", err)
+	}
+	return "eyJhbGciOiJIUzI1NiJ9." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
+}
+
+func writeCursorAuth(t *testing.T, dir, content string) string {
+	t.Helper()
+	p := filepath.Join(dir, "auth.json")
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatalf("write auth.json: %v", err)
+	}
+	return p
+}
+
+func TestCursorProviderParse(t *testing.T) {
+	exp := time.Now().Add(time.Hour).Unix()
+	access := jwtWithExp(t, exp)
+	p := writeCursorAuth(t, t.TempDir(), `{
+		"accessToken": "`+access+`",
+		"refreshToken": "RT",
+		"apiKey": "key_live_abc",
+		"bedrockCredentials": null
+	}`)
+
+	pair, err := (&cursorProvider{authFile: p}).load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if pair.AccessToken != access || pair.RefreshToken != "RT" {
+		t.Fatalf("got %+v", pair)
+	}
+	// The API key is the durable half: without it there is nothing to renew from.
+	if pair.APIKey != "key_live_abc" {
+		t.Fatalf("apiKey got %q", pair.APIKey)
+	}
+	if pair.ExpiresAt != exp*1000 {
+		t.Fatalf("expiresAt got %d, want %d", pair.ExpiresAt, exp*1000)
+	}
+}
+
+func TestCursorProviderRefreshExchangesTheAPIKey(t *testing.T) {
+	fresh := jwtWithExp(t, time.Now().Add(2*time.Hour).Unix())
+
+	var gotAuth, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"accessToken": fresh, "refreshToken": "RT2"})
+	}))
+	defer srv.Close()
+
+	c := &cursorProvider{apiBase: srv.URL, timeout: 5 * time.Second}
+	next, err := c.refresh(context.Background(), &tokenPair{AccessToken: "OLD", APIKey: "key_live_abc"})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	// Not an OAuth grant: the API key travels as a bearer token against Cursor's
+	// own exchange, with an empty JSON body.
+	if gotPath != "/auth/exchange_user_api_key" {
+		t.Fatalf("path got %q", gotPath)
+	}
+	if gotAuth != "Bearer key_live_abc" {
+		t.Fatalf("authorization got %q", gotAuth)
+	}
+	if strings.TrimSpace(gotBody) != "{}" {
+		t.Fatalf("body got %q", gotBody)
+	}
+	if next.AccessToken != fresh || next.RefreshToken != "RT2" {
+		t.Fatalf("got %+v", next)
+	}
+	// The reply carries no expires_in, so the lifetime has to come off the token.
+	if next.ExpiresAt <= time.Now().UnixMilli() {
+		t.Fatalf("expiresAt not taken from the token: %d", next.ExpiresAt)
+	}
+	// And the key is kept, or the next renewal has nothing to present.
+	if next.APIKey != "key_live_abc" {
+		t.Fatalf("apiKey lost: %+v", next)
+	}
+}
+
+func TestCursorProviderRefreshWithoutAnAPIKeySaysSo(t *testing.T) {
+	c := &cursorProvider{apiBase: "http://127.0.0.1:1", timeout: time.Second}
+	_, err := c.refresh(context.Background(), &tokenPair{AccessToken: "OLD", RefreshToken: "RT"})
+	if err == nil {
+		t.Fatal("want an error when only a refresh token is held")
+	}
+	// The refresh token exists and is useless; the message has to say which.
+	if !strings.Contains(err.Error(), "sign in again") {
+		t.Fatalf("error got %q", err)
+	}
+}
+
+func TestCursorSignInPollsUntilApproved(t *testing.T) {
+	access := jwtWithExp(t, time.Now().Add(time.Hour).Unix())
+	var calls int
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		gotQuery = r.URL.Query()
+		if calls < 3 {
+			// Not approved yet, which Cursor says with a 404
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"accessToken": access, "refreshToken": "RT", "apiKey": "key_live_abc"})
+	}))
+	defer srv.Close()
+
+	cfg := config{
+		httpTimeout: 5 * time.Second,
+		logins: map[string]oauthLogin{
+			kindCursor: {authorizeURL: "https://cursor.com/loginDeepControl", pollURL: srv.URL + "/auth/poll"},
+		},
+	}
+	a, err := newManager(cfg, map[string]provider{})
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+
+	pending, authorizeURL, err := a.startLogin(kindCursor, "cursor", "")
+	if err != nil {
+		t.Fatalf("startLogin: %v", err)
+	}
+	// Nothing to paste: the operator approves at this URL and this end collects.
+	for _, want := range []string{"challenge=", "uuid=", "mode=login", "redirectTarget=cli"} {
+		if !strings.Contains(authorizeURL, want) {
+			t.Fatalf("authorize url %q is missing %q", authorizeURL, want)
+		}
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := a.finishLogin(context.Background(), pending.ID, ""); !errors.Is(err, errLoginPending) {
+			t.Fatalf("poll %d: want pending, got %v", i, err)
+		}
+	}
+
+	c, err := a.finishLogin(context.Background(), pending.ID, "")
+	if err != nil {
+		t.Fatalf("finishLogin: %v", err)
+	}
+	if c.Kind != kindCursor || c.Source != sourceLogin {
+		t.Fatalf("got %+v", c)
+	}
+	if c.Token.AccessToken != access || c.Token.APIKey != "key_live_abc" {
+		t.Fatalf("token got %+v", c.Token)
+	}
+	// The poll has to name the attempt and prove it started it.
+	if gotQuery.Get("uuid") == "" || gotQuery.Get("verifier") == "" {
+		t.Fatalf("poll query got %v", gotQuery)
+	}
+	// Completed logins are spent, so a replay cannot re-store the credential.
+	if _, err := a.finishLogin(context.Background(), pending.ID, ""); err == nil {
+		t.Fatal("want the finished sign-in to be gone")
+	}
+}
+
+func TestCursorSignInSurfacesADevicePolicyRefusal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]any{"error": "sign_in_policy_violation"})
+	}))
+	defer srv.Close()
+
+	cfg := config{
+		httpTimeout: 5 * time.Second,
+		logins:      map[string]oauthLogin{kindCursor: {authorizeURL: "https://cursor.com/loginDeepControl", pollURL: srv.URL}},
+	}
+	a, err := newManager(cfg, map[string]provider{})
+	if err != nil {
+		t.Fatalf("newManager: %v", err)
+	}
+	pending, _, err := a.startLogin(kindCursor, "cursor", "")
+	if err != nil {
+		t.Fatalf("startLogin: %v", err)
+	}
+	_, err = a.finishLogin(context.Background(), pending.ID, "")
+	if err == nil || errors.Is(err, errLoginPending) {
+		t.Fatalf("want a hard refusal, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "device policy") {
+		t.Fatalf("error got %q", err)
+	}
+}
+
+func TestCursorRenewableFollowsTheAPIKey(t *testing.T) {
+	// A refresh token alone renews nothing on this upstream, and the console
+	// must not claim otherwise.
+	withKey := &credential{ID: "c", Kind: kindCursor, Token: &tokenPair{AccessToken: "AT", APIKey: "K"}}
+	without := &credential{ID: "c", Kind: kindCursor, Token: &tokenPair{AccessToken: "AT", RefreshToken: "RT"}}
+	if withKey.summary()["renewable"] != true {
+		t.Fatalf("with an api key: %v", withKey.summary()["renewable"])
+	}
+	if without.summary()["renewable"] != false {
+		t.Fatalf("with only a refresh token: %v", without.summary()["renewable"])
+	}
 }

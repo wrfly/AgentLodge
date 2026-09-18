@@ -13,6 +13,7 @@ services:
       # it imports one, and never writes back to the host's.
       - ${CLAUDE_CREDENTIALS_DIR:-${HOME}/.claude}:/claude:ro
       - ${CODEX_CREDENTIALS_DIR:-${HOME}/.codex}:/codex:ro
+      - ${CURSOR_CREDENTIALS_DIR:-${HOME}/.cursor}:/cursor:ro
       # The Unix socket consumers connect to.
       - credential-manager-run:/run/agentlodge
       # Where the credentials live between restarts, encrypted.
@@ -25,6 +26,7 @@ services:
       # Paths inside the container, matching the mounts above.
       CLAUDE_CREDENTIALS_FILE: /claude/.credentials.json
       CODEX_HOME: /codex
+      CURSOR_AUTH_FILE: /cursor/auth.json
       # The store. Encrypted with CREDENTIAL_MANAGER_KEY when one is given, and
       # otherwise with a key generated next to it on first run.
       CREDENTIAL_MANAGER_STATE_FILE: /state/credentials.enc
