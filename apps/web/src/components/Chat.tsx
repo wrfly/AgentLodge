@@ -6,8 +6,8 @@ import { useChat } from '../store/chat';
 import { useAgents } from '../store/agents';
 import { AGENTS } from '../lib/route';
 import type { AgentId } from '../lib/protocol';
-import { api, type Money, money, type UsageTotals } from '../lib/api';
-import { MoneyCell } from './Money';
+import { api, type Money, type UsageTotals } from '../lib/api';
+import { Money as MoneyFigure, MoneyCell } from './Money';
 import { Message } from './Message';
 import { Composer } from './Composer';
 import { FilesPanel } from './FilesPanel';
@@ -129,9 +129,7 @@ function SessionTotals() {
         <span>↑{fmtTokens(input)}</span>
         <span>⛁{fmtTokens(cache)}</span>
         <span>↓{fmtTokens(output)}</span>
-        <span title={money({ cost, costSettled }, currency).title}>
-          {money({ cost, costSettled }, currency).text}
-        </span>
+        <MoneyFigure totals={{ cost, costSettled }} currency={currency} />
       </button>
 
       {open && (

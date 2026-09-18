@@ -30,7 +30,7 @@ const box = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-seed-')));
 process.env.DATA_DIR = box;
 process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 
-const { initDb } = await import('./index.js');
+const { initDb, get } = await import('./index.js');
 initDb();
 const pricing = await import('./pricing.js');
 
@@ -70,6 +70,23 @@ console.log('\n=== a new database is seeded, not half-populated ===');
       && rows.some((r) => r.model === '*'),
     'a data migration ran on a fresh file and pre-empted seedDefaults()',
   );
+}
+
+console.log('\n=== and the exchange rate the two currencies need ===');
+{
+  /*
+   * `ensureRates()` asks whether a rate has been set, and has to ask the **stored row** — the
+   * setting has a spec default, so a resolved read always answers "yes" and the seed returns
+   * early every time. It did: every install billed at the spec's 7.1, with none of the console
+   * notice that tells an operator to check it. Caught in review, and this is what would have
+   * caught it.
+   */
+  const stored = get<{ value: string }>(
+    "select value from settings where key = 'billing.cnyPerUsd'",
+  );
+  ok('the seed wrote a rate, not just a default', stored !== undefined, JSON.stringify(stored));
+  ok("and it is the one derived from the vendors' own lists",
+    stored?.value === '6.75', String(stored?.value));
 }
 
 console.log('\n=== and every lookup a running deployment makes answers ===');

@@ -45,6 +45,11 @@ export function Money({
  *
  * A `<td>` of its own rather than a `Money` wrapped in one, because the title has to sit on
  * the cell: a hover that only works over the glyphs themselves is a hover nobody finds.
+ *
+ * It carries no opinion about emphasis. It used to hardcode `text-muted`, which quietly
+ * de-emphasised four columns that were deliberately not muted — including a table's totals
+ * row, which then read at the same weight as the token counts above it. `clsx` does not
+ * resolve Tailwind conflicts, so a caller could not have overridden it either.
  */
 export function MoneyCell({
   totals,
@@ -57,7 +62,7 @@ export function MoneyCell({
 }) {
   const { text, title } = money(totals, currency);
   return (
-    <td title={title} className={clsx('text-right font-mono tabular-nums text-muted', className)}>
+    <td title={title} className={clsx('text-right font-mono tabular-nums', className)}>
       {text}
     </td>
   );

@@ -1092,7 +1092,17 @@ function migrateInTx(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
           { value: string } | undefined)?.value || 'USD';
       let parsed: Record<string, unknown> = {};
       try {
-        parsed = JSON.parse(rates.value) as Record<string, unknown>;
+        /*
+         * `?? {}` because `JSON.parse('null')` succeeds and returns null — past the catch,
+         * and the next line dereferences it. That throws inside the migration transaction, so
+         * the whole thing rolls back and `initDb()` fails: the server does not start, and
+         * every restart repeats it. A hand-edited row is enough to get there. Caught in
+         * review. The array case goes the same way, into an object with no USD or CNY key.
+         */
+        const raw = JSON.parse(rates.value) as unknown;
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+          parsed = raw as Record<string, unknown>;
+        }
       } catch {
         // A malformed setting carries no rate to keep; the default takes over
       }
@@ -1108,10 +1118,28 @@ function migrateInTx(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
       if (settlement === 'CNY' && Number.isFinite(usd) && usd > 0) carried = usd;
       else if (settlement !== 'CNY' && Number.isFinite(cny) && cny > 0) carried = 1 / cny;
 
+      /*
+       * The old setting accepted any three-letter code, and this one holds a single CNY/USD
+       * rate — so anything else configured is about to stop being applied. Say which, because
+       * from here it is counted at par and the only clue is a total that looks low.
+       */
+      const dropped = Object.keys(parsed).filter(
+        (k) => /^[A-Z]{3}$/.test(k) && k !== 'USD' && k !== 'CNY',
+      );
+      if (dropped.length) {
+        console.log(
+          `[db] billing.rates also held ${dropped.join(', ')}; this deployment converts CNY and `
+            + 'USD only, so that spend is now counted at par. Price those models in one of the two.',
+        );
+      }
+
       d.prepare("delete from settings where key = 'billing.rates'").run();
-      if (carried !== null) {
-        // Four places: 0.148148 inverts to 6.7500045, and nobody typed that
-        const value = String(Number(carried.toFixed(4)));
+      // Four places: 0.148148 inverts to 6.7500045, and nobody typed that. Checked *after*
+      // rounding — 0.00004 passes the test above and rounds to a flat zero, which would be
+      // written and logged as if it were the rate.
+      const rounded = carried === null ? 0 : Number(carried.toFixed(4));
+      if (rounded > 0) {
+        const value = String(rounded);
         d.prepare(
           `insert into settings (key, value, updated_at) values ('billing.cnyPerUsd', ?, ?)
            on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
@@ -1119,8 +1147,8 @@ function migrateInTx(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         console.log(`[db] exchange rate carried over as billing.cnyPerUsd = ${value}`);
       } else {
         console.log(
-          '[db] billing.rates held no rate between CNY and USD; billing.cnyPerUsd falls back to '
-            + 'its default. Check it in the console.',
+          '[db] billing.rates held no usable rate between CNY and USD; billing.cnyPerUsd falls '
+            + 'back to its default. Check it in the console.',
         );
       }
     }

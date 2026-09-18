@@ -472,7 +472,19 @@ export function seedDefaults(): void {
  * has made that decision.
  */
 function ensureRates(): void {
-  if (getString('billing.cnyPerUsd', '').trim()) return;
+  /*
+   * The **stored row**, not the resolved value. `getString` falls through to the spec's
+   * default, and this setting has one — so asking it whether a rate is set is asking whether
+   * a default exists, which it always does, and this function returned early every time.
+   * Caught in review; the seed never ran and every install quietly billed at the spec's 7.1
+   * with none of the console notice below to say so.
+   *
+   * The old JSON version dodged this by comparing against its own default of '{}'. Reading
+   * the row is the version that does not need to know what the default happens to be.
+   */
+  if (get<{ value: string }>("select value from settings where key = 'billing.cnyPerUsd'")?.value) {
+    return;
+  }
   setSetting('billing.cnyPerUsd', '6.75');
   console.log(
     '[pricing] no exchange rate was set and the table now prices in two currencies; ' +

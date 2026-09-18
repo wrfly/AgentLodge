@@ -580,8 +580,21 @@ function load(): Map<string, string> {
   return cache;
 }
 
+/**
+ * Bumped on every local write, so a module with its own derived cache can tell whether this
+ * process has changed anything since it last looked.
+ *
+ * It says nothing about the *other* process — app and gateway share one database and neither
+ * sees the other's writes. A reader that has to notice those needs a time bound as well; this
+ * only removes the delay for writes made here, which is what a test, and an administrator
+ * watching the page they just saved, are both looking at.
+ */
+let generation = 0;
+export const settingsGeneration = (): number => generation;
+
 export function invalidate(): void {
   cache = null;
+  generation++;
 }
 
 /** The raw value, decrypted where needed. Order: database, environment, default. */

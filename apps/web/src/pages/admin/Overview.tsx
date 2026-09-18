@@ -279,7 +279,7 @@ function PlatformUsageCard() {
                         </td>
                         <td className="py-1.5 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
                         <TokenCells totals={r} />
-                        <MoneyCell totals={r} currency={data.currency} className="py-1.5" />
+                        <MoneyCell totals={r} currency={data.currency} className="py-1.5 text-muted" />
                       </tr>
 
                       {/* No empty case: both breakdowns come from one scan of one range, so an
@@ -293,7 +293,7 @@ function PlatformUsageCard() {
                               {m.model || t('(default)')}
                             </td>
                             <TokenCells totals={m} className="text-[12px]" />
-                            <MoneyCell totals={m} currency={data.currency} className="py-1 text-[12px]" />
+                            <MoneyCell totals={m} currency={data.currency} className="py-1 text-[12px] text-muted" />
                           </tr>
                         ))}
                     </Fragment>

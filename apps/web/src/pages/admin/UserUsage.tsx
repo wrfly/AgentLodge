@@ -180,7 +180,7 @@ export function UserUsage() {
                           {/* Tokens and money both: two models differ by a factor of ten per
                               token, so a column of counts on its own does not say where the
                               budget went */}
-                          <MoneyCell totals={u} currency={data.currency} className="py-1.5" />
+                          <MoneyCell totals={u} currency={data.currency} className="py-1.5 text-muted" />
                         </tr>
                         {shown && (
                           <tr className="border-b border-line bg-bubble/40">

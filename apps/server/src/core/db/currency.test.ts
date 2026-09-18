@@ -164,6 +164,26 @@ console.log('\n=== Collapsing to one number happens once, at the one rate ===');
     `${JSON.stringify(withEur.cost)} -> ${withEur.costSettled}`);
   db.run("update usage_records set cost_currency = 'CNY' where turn_id = 't2'");
 
+  /*
+   * A settlement currency the one rate says nothing about. `settlementRates()` used to return
+   * the CNY multiplier for anything that was not exactly 'CNY', so yuan were converted at the
+   * dollar rate and the result labelled €, silently — a rate *was* defined, so nothing warned.
+   * Both sides at par is wrong too, but it is wrong out loud.
+   */
+  settings.setSetting('billing.currency', 'EUR');
+  ok('a third settlement currency has no rate to either side',
+    Object.keys(usage.settlementRates()).length === 0,
+    JSON.stringify(usage.settlementRates()));
+  ok('so both currencies are counted at par rather than one of them converted',
+    usage.totalsForUser(alice).costSettled === perM(7),
+    String(usage.totalsForUser(alice).costSettled));
+
+  // And the free-text setting is read case-insensitively, or 'cny' would divide by the rate
+  settings.setSetting('billing.currency', 'cny');
+  ok('the settlement currency is matched whatever case it was typed in',
+    usage.settlementCurrency() === 'CNY' && usage.settlementRates()['USD'] === 7,
+    JSON.stringify(usage.settlementRates()));
+
   settings.setSetting('billing.currency', 'CNY');
 }
 

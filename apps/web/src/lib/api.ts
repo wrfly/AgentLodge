@@ -297,12 +297,16 @@ export type RangePreset =
   | 'last7' | 'last30' | 'quota' | 'all' | 'custom';
 
 /**
- * Money, per currency, in micro-units — never one number.
+ * What was charged, per currency, in micro-units — before any conversion.
  *
  * Vendors price in their own currency, and the price table holds each at its own published
- * list rather than converting, so a figure can be checked against an invoice. Adding dollars
- * to yuan would produce a number nothing corresponds to, so they stay apart all the way here
- * and `fmtMoney` prints "¥12.34 + $5.67".
+ * list rather than converting, so a figure can be checked against an invoice. The database
+ * keeps every turn in the money it was charged in, and this is that, unchanged.
+ *
+ * **Not what a screen shows.** A report shows `costSettled`, one figure in the settlement
+ * currency, and puts this behind it in a hover — `money()` returns the pair. Printing the map
+ * itself, "¥12.34 + $5.67", is honest and unreadable: nobody can tell at a glance whether it
+ * is more than last month.
  *
  * A currency with nothing spent in it is absent rather than zero.
  */
@@ -313,11 +317,10 @@ export interface UsageTotals {
   /** Cost from the price table, per currency, in micro-units (1e6 = one unit) */
   cost: Money;
   /**
-   * The same money collapsed into the settlement currency at the rates the console configures.
+   * The same money in the settlement currency, at the one rate the console configures.
    *
-   * Only for the places where a single number is unavoidable — a quota bar has one ceiling, so
-   * what is drawn against it is one figure. Anything that reports rather than enforces should
-   * render `cost`, which says which money was actually spent.
+   * **This is the figure to render**, through `money()` — which also hands back the `cost`
+   * breakdown for the `title`, so the reader can always see which money was actually spent.
    */
   costSettled: number;
   inputTokens: number;
@@ -1384,7 +1387,7 @@ export function unitsToMicro(v: string): number {
  * belongs reads as a bug. The order is fixed rather than whatever the object happens to
  * iterate in, so the same figure does not swap ends between two renders of the same page.
  */
-export function fmtCost(cost: Money | null | undefined, fallbackCurrency = 'USD'): string {
+function fmtCost(cost: Money | null | undefined, fallbackCurrency = 'USD'): string {
   const entries = Object.entries(cost ?? {}).filter(([, v]) => v);
   if (!entries.length) return fmtMoney(0, fallbackCurrency);
   entries.sort(([a], [b]) => a.localeCompare(b));
