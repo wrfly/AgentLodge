@@ -787,17 +787,51 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
      */
     if (columns(d, 'user_quotas').has('limit_kind')) {
       const [unit] = d
-        .prepare(`select price_input from model_pricing
+        .prepare(`select price_input, currency from model_pricing
                    where model = '*' and provider_id is null
                    order by effective_from desc limit 1`)
-        .all() as Array<{ price_input: number }>;
+        .all() as Array<{ price_input: number; currency: string }>;
+
       /*
-       * Micro-units of money per token, at the catch-all rate. A table with no catch-all
-       * cannot price anything at all, so there is nothing to convert against — the ceilings
-       * are cleared rather than turned into a number with no meaning, which is the safe
-       * direction: an account with no ceiling is not refused.
+       * **The catch-all is not necessarily in the money a ceiling is counted in.** The
+       * deployment this was written for settles in USD and its catch-all is a ¥2/MTok row
+       * left over from when the whole seed was in yuan — so converting at it and stopping
+       * there would write a yuan figure into a column the gate reads as dollars, and every
+       * converted ceiling would be wrong by the exchange rate. Found by running this
+       * migration against a copy of that database before deploying it.
+       *
+       * So the price is settled the same way a bill is: at `billing.rates`, the one place in
+       * the system an exchange rate is allowed to appear. A currency with no rate is left at
+       * par, which is what `settle()` does and says in its log.
        */
-      const perToken = unit ? unit.price_input / 1_000_000 : 0;
+      const settlement =
+        (d.prepare("select value from settings where key = 'billing.currency'").get() as
+          { value: string } | undefined)?.value || 'USD';
+      let rates: Record<string, number> = {};
+      try {
+        rates = JSON.parse(
+          (d.prepare("select value from settings where key = 'billing.rates'").get() as
+            { value: string } | undefined)?.value ?? '{}',
+        ) as Record<string, number>;
+      } catch {
+        // A malformed rates setting is the console's problem; at par is the safe reading here
+      }
+      const rate =
+        !unit || unit.currency === settlement ? 1 : (Number(rates[unit.currency]) || 1);
+
+      /*
+       * Micro-units of the settlement currency per token, at the catch-all rate. A table with
+       * no catch-all cannot price anything at all, so there is nothing to convert against —
+       * the ceilings are cleared rather than turned into a number with no meaning, which is
+       * the safe direction: an account with no ceiling is not refused.
+       */
+      const perToken = unit ? (unit.price_input / 1_000_000) * rate : 0;
+      if (unit && unit.currency !== settlement) {
+        console.log(
+          `[db] the catch-all price is in ${unit.currency} and ceilings are counted in ` +
+            `${settlement}; converting at ${rate}${rates[unit.currency] ? '' : ' (no rate configured — at par)'}`,
+        );
+      }
 
       const rows = d
         .prepare(`select q.user_id, us.username, q.limit_kind, q.window_limit, q.week_limit, q.month_limit
