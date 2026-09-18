@@ -684,6 +684,10 @@ Error: Usage endpoint is rate limited. Please try again in a moment.
   - 单用户最多占 2 个 slot，防独占
   - AIMD 自适应：上游返回 429 就把并发砍半，连续成功 20 次再加回来；只拒某类模型的 429
     （比如 Fable 周额度用完）不算，同一上游的其他模型照常走
+  - 上限本身**落库**（`gateway.maxUpstreamConcurrency`），网关每轮准入 fresh 读一次 ——
+    以前它只活在网关进程里，容器一重启就退回 `MAX_UPSTREAM_CONCURRENCY`
+  - AIMD 可以关（后台「跟随上游自适应」开关）：关掉之后闸门**恒等于**你设的那个数，
+    429 仍然照 `retry-after` 等冷却，只是不再砍并发 —— 给并发数写在合同里的部署用
   - 排队时把「前面还有几个」推给前端，不让人对着转圈猜
 - 同时兼容两种协议（实测抓包确认）：Claude Code 走 Anthropic Messages，
   Codex 走 OpenAI Responses
@@ -830,7 +834,8 @@ workspaces/<userId>/<convId>/AGENTS.md    上面这些渲染成一整份，给 c
 - **上游与模型**：上游是地址、协议、凭据；模型是「名字 → 上游」，同名可挂多条。配了模型就启用计量网关，
   agent 从此只能经网关访问上游；一条都没有则沿用本机 CLI 自己的配置，用量退化为按轮次粗记
 - **审计代理**：启用开关（默认关）、上游白名单、保留策略
-- **并发闸门**：上限热调，按上游分池显示各自在途与排队
+- **并发闸门**：上限热调且落库（重启不丢），「跟随上游自适应」开关决定 AIMD 砍不砍并发，
+  按上游分池显示各自在途与排队
 - 系统设置：邮件服务与发件人 / 站点地址（带「发测试邮件」按钮）、新用户默认额度、结算币种与汇率
 - 上游凭据不进库：库里只存名字，值在 credential-manager 里加密保管，接口只返回掩码
 
@@ -1029,7 +1034,7 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 | `HOST` | `127.0.0.1` | 跑在容器里必须改成 `0.0.0.0`，否则反代进不来 |
 | `GATEWAY_URL` | 自动推导 | **agent** 访问网关的地址；compose 部署时设成 `http://gateway:8788` |
 | `GATEWAY_INTERNAL_URL` | 自动推导 | **本进程**访问网关的地址（后台读闸门）；同上 |
-| `MAX_UPSTREAM_CONCURRENCY` | `3` | **每条上游**的 in-flight 上限，后台可热调。每条上游一个池子，各自计数 |
+| `MAX_UPSTREAM_CONCURRENCY` | `3` | **每条上游**的 in-flight 上限，后台「计量网关」卡片可热调。每条上游一个池子，各自计数。真正的来源是 `gateway.maxUpstreamConcurrency` 设置项（改完落库，网关每轮准入 fresh 读一次，**重启不丢**）；这个变量是它的兜底 |
 | `PER_USER_INFLIGHT_MAX` | `2` | 单用户在**每条上游**最多占几个 slot。后台「系统设置 › 网关」可改，改完下一个请求即生效；这个变量只是没人开过那一页时的兜底 |
 | `UPSTREAM_HEADERS_TIMEOUT_MS` | `90000` | 上游多久没给响应头就放弃，回 504（CLI 会重试） |
 | `UPSTREAM_IDLE_TIMEOUT_MS` | `330000` | 上游多久没给字节就放弃。**故意大于 300 秒**：Claude Code 自己数字节，静默 300 秒就放弃，网关先掐会把「慢」变成「截断」，所以这条只当客户端已经走了、socket 还没察觉时的兜底。真触发时会往流里写一个 error 帧，客户端不会把半截答案当完整的。0 关掉 |

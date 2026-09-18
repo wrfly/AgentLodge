@@ -117,6 +117,13 @@ t "gate status: containers ready" "True" "$(echo "$GATE" | jq_ "d['containers'][
 t "concurrency limit is changeable (forwarded over HTTP to the gateway)" "5" "$(curl -s -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"maxConcurrency":5}' | jq_ "d.get('max', d.get('effectiveMax'))")"
 curl -s -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"maxConcurrency":3}' -o /dev/null
 t "an out-of-range concurrency limit is refused" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"maxConcurrency":999}')"
+t "the gate can be pinned" "True" "$(curl -s -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"pinned":true}' | jq_ "d['pinned']")"
+# Nothing in the gateway process holds the pin — it is read from the settings row on every
+# admission pass — so a GET that still says true has read it back out of the database. That
+# is the whole of what "the limit stays put across a restart" rests on
+t "and read back out of the database, not out of the process" "True" "$(curl -s $API/api/admin/gate -H "authorization: Bearer $AT" | jq_ "d['pinned']")"
+curl -s -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"pinned":false}' -o /dev/null
+t "a request with nothing to change is refused" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{}')"
 
 echo "── Metering gateway authentication ──"
 GW=${GW:-http://127.0.0.1:8788}

@@ -999,6 +999,8 @@ export interface GatePool {
   queued: number;
   effectiveMax: number;
   max: number;
+  /** True while this pool is held at `max` instead of narrowing itself after a 429 */
+  pinned: boolean;
   cooldownUntil: number;
   totalGranted: number;
   totalThrottled: number;
@@ -1012,8 +1014,10 @@ export interface GateStatus {
   /** In a split deployment the gate lives in the gateway container; when it cannot be reached, only these two fields are filled in */
   unreachable?: boolean;
   error?: string;
-  /** The ceiling every pool starts from */
+  /** The ceiling every pool starts from. Stored, so it survives a restart of the gateway */
   max: number;
+  /** True while the upstream is not allowed to narrow the pools below that ceiling */
+  pinned: boolean;
   /** One per upstream that has seen traffic since the gateway started */
   pools: GatePool[];
 }
@@ -1235,6 +1239,12 @@ export const admin = {
     request<GateStatus>('/api/admin/gate', {
       method: 'PATCH',
       body: JSON.stringify({ maxConcurrency }),
+    }),
+  /** Pinned, the gate runs at the configured limit and a 429 no longer narrows it */
+  setGatePinned: (pinned: boolean) =>
+    request<GateStatus>('/api/admin/gate', {
+      method: 'PATCH',
+      body: JSON.stringify({ pinned }),
     }),
   auditLogs: (limit = 200) => request<AuditEntry[]>(`/api/admin/audit-logs?limit=${limit}`),
 };

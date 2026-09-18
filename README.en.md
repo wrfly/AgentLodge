@@ -61,7 +61,8 @@ flowchart LR
 - [x] The quota gate stops a turn from inside it; daily / weekly / monthly / total periods,
       with the reset moment settable to the hour
 - [x] Global concurrency gate (≤3 in flight by default), per-user rotation, AIMD back-off,
-      tunable without a restart
+      tunable without a restart — and the limit is stored, so it survives one; the back-off
+      can be switched off to hold the gate at exactly the number you set
 - [x] Billing by tokens or by money; the price table is editable and past bills keep the
       price of their time
 - [x] **Each user is shown their own allowance**, never the shared plan's — the response

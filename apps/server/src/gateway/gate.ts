@@ -24,6 +24,45 @@ export interface GateConfig {
    * back to `perUserInflightMax`, which is what every test and the bare-process path use.
    */
   readPerUserInflightMax?: () => number | undefined;
+  /**
+   * The console's value for `maxConcurrency`, asked for the same way and for a second
+   * reason: it is what makes a limit typed into the page survive a restart.
+   *
+   * `setMaxConcurrency` on its own only ever moved a number inside this process. The
+   * gateway container came back on `MAX_UPSTREAM_CONCURRENCY`, so an administrator who had
+   * raised the gate to twelve was silently at three again after the next deploy — with
+   * nothing in the console to say so, because the console reads the same process.
+   *
+   * Undefined falls back to `maxConcurrency`, which is what every test and the bare-process
+   * path use.
+   */
+  readMaxConcurrency?: () => number | undefined;
+  /**
+   * Whether the upstream is allowed to narrow the gate below that ceiling.
+   *
+   * Undefined means yes: adapting is what the gate has always done, and a switch that
+   * cannot be read must not be the reason it stops backing off from an upstream that is
+   * rate-limiting it. False pins the gate — see `limits`.
+   */
+  readAdaptiveConcurrency?: () => boolean | undefined;
+}
+
+/**
+ * The administrator's ceiling: what the console says now, or the configured fallback.
+ *
+ * Same order as `perUserMax` below and for the same reason — the setting is written in the
+ * app container and read here — with the same floor, because the fallback comes from an
+ * environment variable and nothing validates one.
+ */
+function ceilingOf(cfg: GateConfig): number {
+  const live = cfg.readMaxConcurrency?.();
+  if (live !== undefined && live >= 1) return live;
+  return cfg.maxConcurrency >= 1 ? cfg.maxConcurrency : 1;
+}
+
+/** Whether the upstream may narrow us. Nothing to say means yes. */
+function adaptiveIn(cfg: GateConfig): boolean {
+  return cfg.readAdaptiveConcurrency?.() ?? true;
 }
 
 export interface Lease {
@@ -71,6 +110,8 @@ export interface GateStats {
   queued: number;
   effectiveMax: number;
   max: number;
+  /** True while the upstream is not allowed to narrow this gate: effectiveMax stays at max */
+  pinned: boolean;
   cooldownUntil: number;
   totalGranted: number;
   totalThrottled: number;
@@ -110,11 +151,32 @@ export class UpstreamGate {
 
   constructor(private readonly cfg: GateConfig) {}
 
-  /** What the gate actually runs at: the lower of the two limits. */
-  private get effectiveMax(): number {
-    return this.throttleLimit === null
-      ? this.cfg.maxConcurrency
-      : Math.min(this.cfg.maxConcurrency, this.throttleLimit);
+  /**
+   * Both limits, resolved together and once per admission pass.
+   *
+   * `ceiling` is the administrator's number and `effective` is what the gate actually runs
+   * at: the lower of the two, or the ceiling itself when the gate is pinned. Returned as a
+   * pair rather than read from a getter per waiter because both are database reads now — a
+   * drain over a deep queue would otherwise be two per person in it.
+   */
+  private limits(): { ceiling: number; effective: number; pinned: boolean } {
+    const ceiling = ceilingOf(this.cfg);
+    if (!adaptiveIn(this.cfg)) {
+      /*
+       * Pinned: the gate runs at exactly the number that was asked for.
+       *
+       * Any throttle is dropped rather than stepped over. What the upstream told us is only
+       * meaningful while we are acting on it, and keeping a value we are ignoring would mean
+       * un-pinning the gate a week later reinstates a halving from a 429 nobody remembers.
+       */
+      this.throttleLimit = null;
+      return { ceiling, effective: ceiling, pinned: true };
+    }
+    return {
+      ceiling,
+      effective: this.throttleLimit === null ? ceiling : Math.min(ceiling, this.throttleLimit),
+      pinned: false,
+    };
   }
 
   acquire(req: AcquireRequest): Promise<Lease> {
@@ -142,7 +204,8 @@ export class UpstreamGate {
 
       const w: Waiter = { ...req, enqueuedAt: Date.now(), resolve, reject, settled: false };
 
-      if (this.canGrantNow(req.userId, this.perUserMax())) return this.grant(w);
+      if (this.canGrantNow(req.userId, this.perUserMax(), this.limits().effective))
+        return this.grant(w);
 
       (req.priority === 0 ? this.hiPri : this.queueFor(req.userId)).push(w);
       this.queuedCount += 1;
@@ -184,10 +247,10 @@ export class UpstreamGate {
     return this.cfg.perUserInflightMax >= 1 ? this.cfg.perUserInflightMax : 1;
   }
 
-  private canGrantNow(userId: string, perUserMax: number): boolean {
+  private canGrantNow(userId: string, perUserMax: number, effectiveMax: number): boolean {
     if (Date.now() < this.cooldownUntil) return false;
     return (
-      this.active.size < this.effectiveMax &&
+      this.active.size < effectiveMax &&
       (this.userInflight.get(userId) ?? 0) < perUserMax
     );
   }
@@ -248,11 +311,18 @@ export class UpstreamGate {
 
   /** Priority 0 takes the fast lane; the rest go round-robin by user */
   private schedule(): void {
+    /*
+     * Nothing queued, nothing to admit — every waiter this could grant is in one of the
+     * queues, and both limits below are database reads. Without this line the ordinary case,
+     * a lease released on a gate nobody is waiting at, pays for all of them.
+     */
+    if (this.queuedCount === 0) return;
     // Resolved on the first pass that could actually grant something. Above the loop it was
     // a database read on every lease release, including the ones that find the gate still
-    // full or the queues empty.
+    // full.
     let perUserMax = -1;
-    while (this.active.size < this.effectiveMax && Date.now() >= this.cooldownUntil) {
+    const { effective } = this.limits();
+    while (this.active.size < effective && Date.now() >= this.cooldownUntil) {
       if (perUserMax < 0) perUserMax = this.perUserMax();
       const w = this.takeHiPri(perUserMax) ?? this.takeRoundRobin(perUserMax);
       if (!w) break;
@@ -319,10 +389,18 @@ export class UpstreamGate {
    */
   reportUpstream(status: number, retryAfterMs?: number): void {
     if (status === 429 || status === 503 || status === 529) {
-      this.throttleLimit = Math.max(1, Math.floor(this.effectiveMax / 2));
+      const { effective, pinned } = this.limits();
       this.consecutiveOk = 0;
       this.totalThrottled += 1;
       this.cooldownUntil = Date.now() + (retryAfterMs ?? 5000);
+      /*
+       * A pinned gate still waits out the cooldown. `retry-after` is the upstream saying
+       * when to come back, which is a different claim from its opinion about how wide we
+       * should run — and ignoring the first is how a 429 becomes a ban. What the pin
+       * switches off is only the halving, so the gate returns to the number the
+       * administrator set rather than to half of it.
+       */
+      if (!pinned) this.throttleLimit = Math.max(1, Math.floor(effective / 2));
       setTimeout(() => this.schedule(), (retryAfterMs ?? 5000) + 50).unref();
     } else if (status < 400) {
       this.consecutiveOk += 1;
@@ -333,7 +411,7 @@ export class UpstreamGate {
         // is being held back any more. This is reached whether the throttle
         // climbed up to the ceiling or the ceiling came down to meet it — a
         // gate the admin made smaller is a smaller gate, not a throttled one.
-        if (this.throttleLimit >= this.cfg.maxConcurrency) {
+        if (this.throttleLimit >= ceilingOf(this.cfg)) {
           this.throttleLimit = null;
         }
         this.schedule();
@@ -346,14 +424,19 @@ export class UpstreamGate {
     this.schedule();
   }
 
+  /**
+   * The ceiling this process falls back on, for a deployment whose console has never set
+   * one and for every test in here.
+   *
+   * The stored setting wins where there is one, and the console writes it before it calls
+   * this — so the two agree, and the one that survives a restart is the row. The effective
+   * limit is derived from the ceiling and the throttle, so every case falls out on its own:
+   * a raise applies at once on a gate that is not backing off; a raise during a backoff
+   * keeps serving the backoff until AIMD lifts it, rather than answering a 429 storm by
+   * pushing harder; and a lower ceiling clamps either way without destroying what the
+   * upstream told us, so raising it back restores the backoff instead of punching through it.
+   */
   setMaxConcurrency(n: number): void {
-    // The whole method. The effective limit is derived from this and the
-    // throttle, so every case falls out on its own: a raise applies at once on
-    // a gate that is not backing off; a raise during a backoff keeps serving
-    // the backoff until AIMD lifts it, rather than answering a 429 storm by
-    // pushing harder; and a lower ceiling clamps either way without destroying
-    // what the upstream told us, so raising it back restores the backoff
-    // instead of punching through it.
     this.cfg.maxConcurrency = Math.max(1, n);
     this.schedule();
   }
@@ -361,11 +444,13 @@ export class UpstreamGate {
   stats(): GateStats {
     const sorted = [...this.waits].sort((a, b) => a - b);
     const at = (p: number) => (sorted.length ? (sorted[Math.floor(sorted.length * p)] ?? 0) : 0);
+    const { ceiling, effective, pinned } = this.limits();
     return {
       active: this.active.size,
       queued: this.queuedCount,
-      effectiveMax: this.effectiveMax,
-      max: this.cfg.maxConcurrency,
+      effectiveMax: effective,
+      max: ceiling,
+      pinned,
       cooldownUntil: this.cooldownUntil,
       totalGranted: this.totalGranted,
       totalThrottled: this.totalThrottled,
@@ -426,6 +511,16 @@ export class GatePool {
 
   /** The ceiling every pool starts from */
   max(): number {
-    return this.cfg.maxConcurrency;
+    return ceilingOf(this.cfg);
+  }
+
+  /**
+   * Whether the pools are held at that ceiling instead of adapting under it.
+   *
+   * Asked of the pool rather than of a gate because it is a deployment-wide switch and the
+   * console has to be able to draw it before any upstream has seen traffic.
+   */
+  pinned(): boolean {
+    return !adaptiveIn(this.cfg);
   }
 }

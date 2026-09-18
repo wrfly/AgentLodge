@@ -54,6 +54,7 @@
     "test:admin-roles": "tsx src/app/routes/admin/users.test.ts",
     "test:buckets": "tsx src/core/db/buckets.test.ts",
     "test:settings": "tsx src/core/db/settings.test.ts",
+    "test:admin-gate": "tsx src/app/routes/admin/gate.test.ts",
     "test:admin-overview": "tsx src/app/routes/admin/overview.test.ts",
     "test:admin-usage-by-agent": "tsx src/app/routes/admin/usage-by-agent.test.ts",
     "test:trust-proxy": "tsx src/core/trust-proxy.test.ts",

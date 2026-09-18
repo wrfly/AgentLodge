@@ -990,6 +990,20 @@ cost_micro =
 每条上游一个池子，各自计数、各自 AIMD。订阅的限流和付费 API 的限流是两个数字，共用一个池子
 会让一边堵着另一边；上限值是全局配置，每个池子从它开始各自往下收。
 
+**上限本身是一行设置（`gateway.maxUpstreamConcurrency`），不是网关进程里的一个数。** 这两者
+的差别就是「能不能固定下来」：只存在进程里的时候，`PATCH /gate` 改完的值活到下次重启为止，
+容器一起来就退回 `MAX_UPSTREAM_CONCURRENCY`，而后台读的是同一个进程，所以它显示得一直很对。
+落库之后后台先写行、再转发，网关每轮准入 fresh 读一次（和 `perUserInflightMax` 同一个理由：
+行由 app 容器写、由网关容器读）；转发过去的那个数只留作网关自己的兜底 —— 没有行、库读不出来
+的时候用。
+
+**AIMD 可以关**（`gateway.adaptiveConcurrency`）。自适应在「上游真实阈值未知」时是对的，在
+阈值写在合同里时是错的：按 8 路并发付了钱的部署要的是 8，不是从上一次事故里重新发现的那个数，
+而且从后台看「上限 12、各池在跑 2」和 bug 没有区别。关掉之后只关掉**砍并发**这一半，429 的
+`retry-after` 冷却照等 —— 那是上游在说什么时候回来，不是在说跑多宽，把它也忽略掉就是把限流
+变成封号。关的那一刻正在生效的 backoff 直接清掉（而不是留着不用）：留着意味着一周后重新打开
+自适应，会复活一个谁也不记得的 429 定下的减半。
+
 #### 重要认知：3 并发 ≠ 只能服务 3 个用户
 
 一次用户对话（turn）在 agentic 模式下会产生 **N 次** API 调用（模型思考 → 调工具 → 把结果喂回去 → 再思考……）。**工具执行期间不占用 slot**。所以：
@@ -1070,7 +1084,8 @@ request.raw.on('close', () => { if (!finished) { abortUpstream(); lease.release(
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `MAX_UPSTREAM_CONCURRENCY` | 3 | 全局 in-flight 上限，热更新（管理后台可调） |
+| `MAX_UPSTREAM_CONCURRENCY` | 3 | 每条上游的 in-flight 上限，热更新（管理后台可调）。真正的来源是 `gateway.maxUpstreamConcurrency` 设置项，和下面那条一样每轮准入 fresh 读一次；这个变量是它的 `envFallback`。**不落库的那版是个 bug**：闸门只把数字存在网关进程里，容器一重启就退回这个变量，后台却还显示着旧值 |
+| `gateway.adaptiveConcurrency` | true | 只有设置项没有环境变量。关掉之后 AIMD 不再砍并发，闸门恒等于上面那个数；`retry-after` 冷却仍然照等 —— 那是「什么时候回来」，不是「跑多宽」 |
 | `MAX_QUEUE_DEPTH` | 200 | 超出直接 529 `overloaded_error` |
 | `QUEUE_TIMEOUT_MS` | 120000 | 排队超时 → 429 + `retry-after` |
 | `LEASE_MAX_MS` | 600000 | 单次上游请求最长持有时间 |
@@ -1516,7 +1531,7 @@ POST   /api/admin/invites
 DELETE /api/admin/invites/:id
 GET    /api/admin/balance            # DeepSeek 余额 + 趋势
 GET    /api/admin/gate               # 并发闸门实时状态，按上游一行
-PATCH  /api/admin/gate               { maxConcurrency }
+PATCH  /api/admin/gate               { maxConcurrency?, pinned? }   # 两个都落库，再转发给网关
 
 # 模型：用户能选什么、每个走哪条上游
 GET    /api/admin/models             # 模型行 + 上游名字

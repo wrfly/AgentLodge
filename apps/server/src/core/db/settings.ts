@@ -279,6 +279,67 @@ export const SETTING_SPECS: SettingSpec[] = [
   },
   {
     /*
+     * The first of the gate's two limits: how many requests may be in flight to one
+     * upstream at once.
+     *
+     * A row, not just a number in the gateway process. It was only the latter for a long
+     * time — `PATCH /gate` called `setMaxConcurrency` and nothing else — which meant the
+     * limit was not a setting at all but a property of an uptime: every restart of the
+     * gateway container put it back to `MAX_UPSTREAM_CONCURRENCY`, and the console went on
+     * showing whatever it had been told last. Stored here it survives the restart, and the
+     * gate reads it fresh on each admission pass for the same cross-container reason as the
+     * per-user cap below.
+     *
+     * Hidden because it has an interface of its own — the Metering gateway card, which also
+     * shows what the gate is doing with it.
+     */
+    key: 'gateway.maxUpstreamConcurrency',
+    span: 2,
+    label: 'Slots per upstream',
+    group: 'gateway',
+    type: 'number',
+    hidden: true,
+    default: '3',
+    envFallback: 'MAX_UPSTREAM_CONCURRENCY',
+    hint: 'How many requests may be in flight to one upstream at once.',
+    // The same range the console's own check uses, so a write that got here another way
+    // cannot leave the gate on a number the page would have refused
+    validate: (v) => {
+      if (v.trim() === '') return undefined;
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 1 && n <= 64
+        ? undefined
+        : 'A whole number from 1 to 64. Empty uses the default.';
+    },
+  },
+  {
+    /*
+     * Whether a 429 is allowed to move the limit above.
+     *
+     * On — the long-standing behaviour — the gate halves itself when the upstream pushes
+     * back and climbs one step per twenty clean responses, which is right when the real
+     * threshold is unknown and wrong when it is known: a deployment on a plan whose
+     * concurrency is written in the contract wants the number it paid for, not a number
+     * discovered from the last incident, and "the limit says twelve and the gate is running
+     * at two" is indistinguishable from a bug when you are looking at it from the console.
+     *
+     * Off only stops the narrowing. A `retry-after` is still waited out — that is the
+     * upstream saying when to come back, not how wide to run.
+     */
+    key: 'gateway.adaptiveConcurrency',
+    span: 2,
+    label: 'Adapt to the upstream',
+    group: 'gateway',
+    type: 'boolean',
+    hidden: true,
+    default: 'true',
+    hint:
+      'On: a rate-limited upstream halves this gate, which then climbs back over a run of '
+      + 'clean responses. Off: it stays at the configured limit and only the retry-after '
+      + 'pause applies.',
+  },
+  {
+    /*
      * The second of the gate's two limits, and the one that does the work.
      *
      * The pool's ceiling is per upstream; this is per user per upstream, and an agent loop

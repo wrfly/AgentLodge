@@ -61,7 +61,7 @@ import * as modelsRepo from '../core/db/models.js';
 import * as providersRepo from '../core/db/providers.js';
 import * as trimsRepo from '../core/db/trims.js';
 import { trimRedoAnswers } from './redo-trim.js';
-import { getNumberFresh } from '../core/db/settings.js';
+import { getBoolFresh, getNumberFresh } from '../core/db/settings.js';
 
 /**
  * The metering gateway.
@@ -91,6 +91,27 @@ export const gate = new GatePool({
     } catch {
       // Before initDb, or a database that will not answer. The configured value is a real
       // limit; refusing everything because a setting could not be read is not.
+      return undefined;
+    }
+  },
+  /*
+   * And the ceiling, for the same reason plus one more: this process restarts, and a limit
+   * that only ever lived in it went back to the environment variable every time it did.
+   */
+  readMaxConcurrency: () => {
+    try {
+      return getNumberFresh('gateway.maxUpstreamConcurrency');
+    } catch {
+      return undefined;
+    }
+  },
+  readAdaptiveConcurrency: () => {
+    try {
+      return getBoolFresh('gateway.adaptiveConcurrency');
+    } catch {
+      // Adapting is both the long-standing behaviour and the safe answer: a gate that
+      // cannot read this switch must not be the reason it stops backing off from an
+      // upstream that is rate-limiting it.
       return undefined;
     }
   },
@@ -1072,6 +1093,7 @@ export function buildGateway(): FastifyInstance {
 
   app.get('/gate', adminOnly, async () => ({
     max: gate.max(),
+    pinned: gate.pinned(),
     // One row per upstream that has seen traffic since this process started. An upstream
     // with no row has had no request go to it, which is different from having a limit of
     // zero and is drawn that way.
@@ -1097,13 +1119,29 @@ export function buildGateway(): FastifyInstance {
     return modelsFor(provider ? providersRepo.findById(provider) : undefined);
   });
 
+  /**
+   * Apply a limit the console has already stored, and answer with what the gate now reads.
+   *
+   * The number arrives here as well as going into the database because this process falls
+   * back on its own copy when there is no row to read — a bare process, a database that
+   * will not answer. The pin needs no counterpart: it is read fresh and has no fallback to
+   * keep in step.
+   */
   app.patch('/gate', adminOnly, async (req, reply) => {
     const body = (req.body ?? {}) as { maxConcurrency?: number };
-    const n = Number(body.maxConcurrency);
-    if (!Number.isFinite(n) || n < 1 || n > 64)
-      return reply.code(400).send({ error: tr(req, 'The concurrency limit has to be between 1 and 64') });
-    gate.setMaxConcurrency(n);
-    return { max: gate.max(), pools: gate.stats() };
+    if (body.maxConcurrency !== undefined) {
+      const n = Number(body.maxConcurrency);
+      if (!Number.isFinite(n) || n < 1 || n > 64)
+        return reply.code(400).send({ error: tr(req, 'The concurrency limit has to be between 1 and 64') });
+      gate.setMaxConcurrency(n);
+    }
+    /*
+     * Either change can widen the gate with nothing released behind it — a raised ceiling,
+     * or a pin that lifts a backoff — and nothing in the gate runs on its own, so the people
+     * already queued would otherwise wait for a release that may be minutes away.
+     */
+    gate.reschedule();
+    return { max: gate.max(), pinned: gate.pinned(), pools: gate.stats() };
   });
 
   /**

@@ -252,7 +252,10 @@ console.log(
   `  metering gateway ` +
     (runsGateway
       ? `http://${config.gatewayHost}:${config.gatewayPort}` +
-        `  concurrency limit ${config.maxUpstreamConcurrency}` +
+        // From the gate, not from the environment variable: the limit is a stored setting
+        // and the variable is only its fallback, so printing the variable would announce a
+        // number the gate is not running at on every deployment that has ever changed it
+        `  concurrency limit ${gate.max()}${gate.pinned() ? ' (pinned)' : ''}` +
         (gatewayEnabled() ? '' : '  ⚠️ no upstream provider is active; agents are not going through the gateway')
       : '— (ROLE=app; the gateway is in another container)'),
 );
