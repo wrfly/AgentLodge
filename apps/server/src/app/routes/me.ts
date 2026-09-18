@@ -348,6 +348,8 @@ export function registerMeRoutes(app: FastifyInstance): void {
         ...k,
         usage: usage.get(k.id) ?? null,
       })),
+      /** What the settled figure beside each key is denominated in */
+      currency: usageRepo.settlementCurrency(),
       /** What to put in BASE_URL. Unset, the frontend falls back to the current origin. */
       baseUrl: config.publicGatewayUrl,
       /**

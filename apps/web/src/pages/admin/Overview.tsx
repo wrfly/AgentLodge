@@ -8,11 +8,11 @@ import { ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import {
   admin,
-  fmtCost,
   type AdminOverview,
   type GateStatus,
   type PlatformPreset,
   type PlatformUsage,
+  money,
   type UpstreamAllowanceView,
 } from '../../lib/api';
 import {
@@ -26,6 +26,7 @@ import {
 } from '../../components/ui';
 import { TokenCells, TokenHeaders, TokenSplit } from '../../components/TokenSplit';
 import { useT } from '../../lib/i18n';
+import { Money, MoneyCell, statMoney } from '../../components/Money';
 import { PLATFORM_PRESETS } from './shared';
 
 /* ---------------- Overview ---------------- */
@@ -55,7 +56,7 @@ export function Overview() {
         <Stat label={t('Users')} value={String(data.users.total)} sub={t('{n} active', { n: data.users.active })} />
         <Stat
           label={t('Billed all time')}
-          value={fmtCost(data.allTime.cost, data.currency)}
+          {...statMoney(data.allTime, data.currency)}
           sub={t('{n} turns', { n: data.allTime.turns })}
         />
         <Stat
@@ -187,9 +188,7 @@ function PlatformUsageCard() {
       ) : (
         <>
           <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="font-mono text-[17px] tabular-nums">
-              {fmtCost(data.totals.cost, data.currency)}
-            </span>
+            <Money totals={data.totals} currency={data.currency} className="text-[17px]" />
             {/* Beside the money, not under it: the three counts are priced at four
                 different rates, so they do not add up to it and are not offered as if
                 they did. */}
@@ -207,7 +206,7 @@ function PlatformUsageCard() {
                 {slots.map((d) => (
                   <div
                     key={d.t}
-                    title={`${d.t}: ${fmtCost(d.cost, data.currency)}`}
+                    title={`${d.t}: ${money(d, data.currency).text}`}
                     className={clsx(
                       'flex-1 rounded-t-sm',
                       d.costSettled > 0 ? 'bg-accent/70 hover:bg-accent' : 'bg-line',
@@ -280,9 +279,7 @@ function PlatformUsageCard() {
                         </td>
                         <td className="py-1.5 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
                         <TokenCells totals={r} />
-                        <td className="py-1.5 text-right font-mono tabular-nums text-muted">
-                          {fmtCost(r.cost, data.currency)}
-                        </td>
+                        <MoneyCell totals={r} currency={data.currency} className="py-1.5" />
                       </tr>
 
                       {/* No empty case: both breakdowns come from one scan of one range, so an
@@ -296,9 +293,7 @@ function PlatformUsageCard() {
                               {m.model || t('(default)')}
                             </td>
                             <TokenCells totals={m} className="text-[12px]" />
-                            <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
-                              {fmtCost(m.cost, data.currency)}
-                            </td>
+                            <MoneyCell totals={m} currency={data.currency} className="py-1 text-[12px]" />
                           </tr>
                         ))}
                     </Fragment>
@@ -373,7 +368,7 @@ function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () =>
   return (
     <Card title={t('This 5-hour window')}>
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <span className="font-mono text-[22px] tabular-nums">{fmtCost(w.totals.cost, data.currency)}</span>
+        <Money totals={w.totals} currency={data.currency} className="text-[22px]" />
         <TokenSplit totals={w.totals} />
         <span className="text-[12.5px] text-faint">{t('{n} turns', { n: w.totals.turns })}</span>
         <span className="ml-auto text-[12.5px] text-muted">

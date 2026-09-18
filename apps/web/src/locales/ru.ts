@@ -683,8 +683,8 @@ export const ru: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': 'Валюта расчёта',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'В чём считаются денежные лимиты. Цены остаются в валюте, которую публикует каждый поставщик; сюда они пересчитываются только тогда, когда лимиту нужно одно число.',
-  'Exchange rates': 'Курсы валют',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, валюта → сколько единиц расчётной валюты стоит одна её единица, например {"USD": 6.75} при расчёте в CNY. Используется только там, где лимит требует одного числа.',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': 'Валюта, в которой считаются все отчёты и все лимиты. Прайс остаётся в валюте каждого поставщика; сюда он переводится по пути на экран.',
+  'CNY per USD': 'CNY за USD',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': 'Сколько юаней стоит один доллар, например 7.1. Единственный обменный курс в системе: он переводит счета поставщиков в валюту расчётов.',
   'Cache written': 'Запись в кэш',
 };

@@ -683,8 +683,8 @@ export const ja: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': '決済通貨',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '金額ベースの上限を数える通貨。価格表は各ベンダーが公表する通貨のままで、上限が単一の数値を要するときだけこれに換算されます。',
-  'Exchange rates': '為替レート',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON、通貨 → 1単位が決済通貨いくらに当たるか。例: CNY で決済するなら {"USD": 6.75}。上限が単一の数値を要する場合にのみ使われます。',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': 'すべてのレポートと上限を数える通貨。価格表は各ベンダーが公表する通貨のままで、画面に出す時にこれへ換算します。',
+  'CNY per USD': '1 USD あたりの CNY',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': '1 ドルが何元かの値、例えば 7.1。システム内で唯一の為替レートで、各ベンダーの請求額を決済通貨に換算します。',
   'Cache written': 'キャッシュ書き込み',
 };

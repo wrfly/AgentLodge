@@ -135,7 +135,7 @@ function hasTables(d: DatabaseSync): boolean {
  * restoring the database with the image — `cli/backup-db.ts` is what makes that copy. Prefer
  * an additive step whenever one will do.
  */
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -1066,6 +1066,63 @@ function migrateInTx(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         `delete from model_pricing
           where id in (${stale.map(() => '?').join(', ')})`,
       ).run(...stale.map((r) => r.id));
+    }
+  }
+
+  if (from < 21) {
+    /*
+     * One rate, in the direction people say it out loud.
+     *
+     * `billing.rates` was a JSON object of currency → how many settlement units one of it is
+     * worth. More general than a two-vendor deployment needs, and it invites two mistakes the
+     * shape cannot report: an entry for the settlement currency itself, which is dead code in
+     * `settle()`, and a rate written upside down, which looks perfectly plausible. The
+     * deployment this was written for carried `{"USD":6.75,"CNY":0.148148}` while settling in
+     * USD — the USD entry inert, the CNY one the reciprocal of the number anybody would say.
+     *
+     * So: one number, `billing.cnyPerUsd`, read as "how many yuan one dollar is worth".
+     * Whichever way the settlement currency points, that relates the two.
+     */
+    const rates = d
+      .prepare("select value from settings where key = 'billing.rates'")
+      .get() as { value: string } | undefined;
+    if (rates) {
+      const settlement =
+        (d.prepare("select value from settings where key = 'billing.currency'").get() as
+          { value: string } | undefined)?.value || 'USD';
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = JSON.parse(rates.value) as Record<string, unknown>;
+      } catch {
+        // A malformed setting carries no rate to keep; the default takes over
+      }
+      /*
+       * Read from whichever entry was the live one. Settling in USD, the CNY entry held
+       * "dollars per yuan" and the rate wanted is its reciprocal; settling in CNY, the USD
+       * entry already held yuan per dollar. The entry matching the settlement currency is
+       * ignored — `settle()` never read it either.
+       */
+      const usd = Number(parsed['USD']);
+      const cny = Number(parsed['CNY']);
+      let carried: number | null = null;
+      if (settlement === 'CNY' && Number.isFinite(usd) && usd > 0) carried = usd;
+      else if (settlement !== 'CNY' && Number.isFinite(cny) && cny > 0) carried = 1 / cny;
+
+      d.prepare("delete from settings where key = 'billing.rates'").run();
+      if (carried !== null) {
+        // Four places: 0.148148 inverts to 6.7500045, and nobody typed that
+        const value = String(Number(carried.toFixed(4)));
+        d.prepare(
+          `insert into settings (key, value, updated_at) values ('billing.cnyPerUsd', ?, ?)
+           on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+        ).run(value, new Date().toISOString());
+        console.log(`[db] exchange rate carried over as billing.cnyPerUsd = ${value}`);
+      } else {
+        console.log(
+          '[db] billing.rates held no rate between CNY and USD; billing.cnyPerUsd falls back to '
+            + 'its default. Check it in the console.',
+        );
+      }
     }
   }
 

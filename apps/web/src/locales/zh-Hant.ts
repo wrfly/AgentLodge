@@ -657,8 +657,8 @@ export const zhHant: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': '結算幣別',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '按金額限額時以哪種幣計。價格表中各家維持廠商自己公布的幣別，只有在限額需要單一數字時才換算成它。',
-  'Exchange rates': '匯率',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON，幣別 → 一單位折合多少結算幣，例如結算用 CNY 時寫 {"USD": 6.75}。僅在限額必須折成單一數字時使用。',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': '所有報表和額度都按這個幣種計。價格表裡各家保持廠商自己發布的幣種，只在送到介面時換算成它。',
+  'CNY per USD': '1 美元 = 多少人民幣',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': '一美元折合多少人民幣，例如 7.1。全系統唯一的匯率，各家廠商收的錢都按它折成結算幣種。',
   'Cache written': '快取寫入',
 };

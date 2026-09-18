@@ -188,33 +188,36 @@ function repriceMark(value?: string): string {
 /* ---------------- Aggregates ---------------- */
 
 /**
- * Money, per currency, in micro-units.
+ * Money, per currency, in micro-units — what was actually charged, before any conversion.
  *
- * Never one number. Vendors price in their own currency — Anthropic in dollars, DeepSeek in
- * yuan — and the price table holds each at its own published list so an invoice can be
- * checked against it line by line. Adding those together would produce a figure nothing in
- * the world corresponds to, so they are kept apart all the way to the screen, and the
- * interface prints "¥12.34 + $5.67" rather than inventing a rate to hide one of them.
+ * Vendors price in their own currency: Anthropic in dollars, DeepSeek in yuan, and the price
+ * table holds each at its own published list so an invoice can be checked against it line by
+ * line. A turn is recorded in the money it was charged in and stays that way in the database.
+ *
+ * This is the raw form. `settle()` is what a report shows — one currency, at the one
+ * configured rate — and this map is what a reader can open to see where that figure came
+ * from. Reports used to print the map itself, "¥12.34 + $5.67", which is honest and
+ * unreadable: nobody can tell at a glance whether it is more than last month.
  *
  * A currency with nothing spent in it is absent rather than zero, so `Object.keys` is the
  * list of currencies actually used in whatever was asked about.
  */
 export type Money = Record<string, number>;
 
-/** The currency a single money figure — a ceiling, a quota bar — is expressed in */
+/** The currency every report, and every ceiling, is expressed in */
 export const settlementCurrency = (): string => getString('billing.currency', 'USD');
 
 /**
  * Collapse money into one number, in the settlement currency.
  *
- * Only for the places that genuinely cannot show two: a ceiling is one number, so comparing
- * spend against it is one number too. Everything that reports rather than enforces keeps the
- * `Money` map and prints both.
+ * Applied on the way out, to old figures as well as new — nothing stored is rewritten. So a
+ * rate typed wrong is corrected in one place and every report is right again, rather than
+ * leaving a month of bad numbers behind that only a script could fix. The cost of that is
+ * that "last month's total" is not a frozen number; with one rate that moves rarely and
+ * visibly, that is the better trade.
  *
- * The rates live in one setting because they are one decision with a date on it, and they
- * apply from the moment they are set — no stored figure is restated when a rate moves, so
- * history stays what it was. A currency with no rate is counted at par and said out loud,
- * which is wrong but visible; silently dropping it would let spend vanish from a ceiling.
+ * A currency the rate cannot reach is counted at par and said out loud — wrong, but visible.
+ * Silently dropping it would let spend vanish out of a total and out of a ceiling.
  */
 export function settle(m: Money): number {
   const to = settlementCurrency();
@@ -233,19 +236,25 @@ export function settle(m: Money): number {
   return Math.round(out);
 }
 
-/** `{"USD": 6.75}` when settling in CNY: how many settlement units one unit of that currency is */
+/** How many yuan one dollar is worth. The only exchange rate in the system. */
+export const cnyPerUsd = (): number => {
+  const n = Number(getString('billing.cnyPerUsd', '7.1'));
+  return Number.isFinite(n) && n > 0 ? n : 7.1;
+};
+
+/**
+ * That one rate, as the multipliers `settle()` wants: currency → settlement units per unit.
+ *
+ * Two vendors and two currencies, so there is one number and two directions to read it in.
+ * It used to be a JSON object an operator typed by hand, which was more general than any
+ * deployment needed and invited the two mistakes this shape cannot make: an entry for the
+ * settlement currency itself, which is dead, and a rate written upside down.
+ *
+ * A third currency has no entry, and `settle()` says so rather than guessing.
+ */
 export function settlementRates(): Record<string, number> {
-  try {
-    const raw = JSON.parse(getString('billing.rates', '{}')) as Record<string, unknown>;
-    const out: Record<string, number> = {};
-    for (const [k, v] of Object.entries(raw)) {
-      const n = Number(v);
-      if (Number.isFinite(n) && n > 0) out[k] = n;
-    }
-    return out;
-  } catch {
-    return {};
-  }
+  const rate = cnyPerUsd();
+  return settlementCurrency() === 'CNY' ? { USD: rate } : { CNY: 1 / rate };
 }
 
 const warned = new Set<string>();
@@ -253,8 +262,9 @@ function warnMissingRate(from: string, to: string): void {
   if (warned.has(from)) return;
   warned.add(from);
   console.warn(
-    `[usage] no billing.rates entry for ${from} → ${to}; it is being counted at par against ` +
-      'ceilings, which under-charges. Set one in the console.',
+    `[usage] no rate from ${from} to ${to}; it is being counted at par, which under-charges. ` +
+      'billing.cnyPerUsd relates CNY and USD only — price that model in one of them, or the ' +
+      'figures that include it are wrong.',
   );
 }
 

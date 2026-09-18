@@ -116,30 +116,55 @@ console.log('\n=== A breakdown keeps them apart, and adds up currency by currenc
     `${JSON.stringify(summed)} vs ${JSON.stringify(total.cost)}`);
 }
 
-console.log('\n=== Collapsing to one number happens once, against a ceiling ===');
+/*
+ * One rate, read in both directions.
+ *
+ * `billing.cnyPerUsd` is a single number — how many yuan a dollar is worth — and which way it
+ * is applied follows the settlement currency. It replaced a JSON map of currency → multiplier,
+ * which had room for two mistakes this shape cannot make: an entry for the settlement currency
+ * itself, which `settle()` never read, and a rate written upside down.
+ */
+console.log('\n=== Collapsing to one number happens once, at the one rate ===');
 {
   settings.setSetting('billing.currency', 'CNY');
-  settings.setSetting('billing.rates', JSON.stringify({ USD: 7 }));
+  settings.setSetting('billing.cnyPerUsd', '7');
   const t = usage.totalsForUser(alice);
   // ¥2 stays ¥2; $5 becomes ¥35
   ok('the settled figure uses the configured rate', t.costSettled === perM(37), String(t.costSettled));
   ok('while the map is untouched by it',
     t.cost['USD'] === perM(5) && t.cost['CNY'] === perM(2), JSON.stringify(t.cost));
 
-  settings.setSetting('billing.rates', JSON.stringify({ USD: 14 }));
-  ok('changing the rate changes what a ceiling sees', usage.totalsForUser(alice).costSettled === perM(72),
+  settings.setSetting('billing.cnyPerUsd', '14');
+  ok('changing the rate changes every figure, old rows included',
+    usage.totalsForUser(alice).costSettled === perM(72),
     String(usage.totalsForUser(alice).costSettled));
   ok('and nothing stored moved', usage.totalsForUser(alice).cost['USD'] === perM(5));
 
   /*
-   * No rate at all counts the foreign side at par, which under-charges — but it is said out
-   * loud on the way past. Dropping the currency instead would make spend vanish from a
-   * ceiling, which is the same bug with no warning attached.
+   * The other direction, from the same number. Settling in dollars, ¥2 at 7 to the dollar is
+   * about $0.2857 — the reciprocal, which is exactly the thing an operator typing a JSON map
+   * by hand used to get backwards.
    */
-  settings.setSetting('billing.rates', '{}');
-  ok('with no rate it is counted at par rather than dropped',
-    usage.totalsForUser(alice).costSettled === perM(7), String(usage.totalsForUser(alice).costSettled));
-  settings.setSetting('billing.rates', JSON.stringify({ USD: 7 }));
+  settings.setSetting('billing.currency', 'USD');
+  settings.setSetting('billing.cnyPerUsd', '7');
+  ok('the same rate read the other way round',
+    usage.totalsForUser(alice).costSettled === perM(5) + Math.round(perM(2) / 7),
+    String(usage.totalsForUser(alice).costSettled));
+
+  /*
+   * A currency the rate cannot reach is counted at par, which under-charges — but it is said
+   * out loud on the way past. Dropping it instead would make spend vanish out of a total and
+   * out of a ceiling, which is the same bug with no warning attached.
+   */
+  db.run("update usage_records set cost_currency = 'EUR' where turn_id = 't2'");
+  const withEur = usage.totalsForUser(alice);
+  // At par means times one, not times the CNY rate: $5 + a €2 nobody can convert = 7
+  ok('a third currency is counted at par rather than dropped',
+    withEur.cost['EUR'] !== undefined && withEur.costSettled === perM(7),
+    `${JSON.stringify(withEur.cost)} -> ${withEur.costSettled}`);
+  db.run("update usage_records set cost_currency = 'CNY' where turn_id = 't2'");
+
+  settings.setSetting('billing.currency', 'CNY');
 }
 
 console.log('\n=== The recost restates money and leaves every token alone ===');

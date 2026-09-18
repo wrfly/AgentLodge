@@ -656,8 +656,8 @@ export const es: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': 'Moneda de liquidación',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'En qué se cuentan los límites por importe. Los precios se mantienen en la moneda que publica cada proveedor; solo se convierten cuando un límite necesita un único número.',
-  'Exchange rates': 'Tipos de cambio',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, moneda → cuántas unidades de liquidación vale una unidad, por ejemplo {"USD": 6.75} al liquidar en CNY. Solo se usa donde un límite obliga a un único número.',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': 'En qué se cuentan todos los informes y todos los límites. Los precios se quedan en la moneda que publica cada proveedor; a esto se convierten camino de la pantalla.',
+  'CNY per USD': 'CNY por USD',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': 'Cuántos yuanes vale un dólar, por ejemplo 7,1. El único tipo de cambio del sistema; convierte lo que cobra cada proveedor a la moneda de liquidación.',
   'Cache written': 'Caché escrito',
 };

@@ -250,16 +250,20 @@ export function Stat({
   value,
   sub,
   tone,
+  title,
 }: {
   label: string;
   value: string;
   sub?: string;
   tone?: 'accent' | 'danger';
+  /** Hover text for the value — money uses it for the currencies behind a converted figure */
+  title?: string;
 }) {
   return (
     <div className="rounded-xl border border-line bg-surface px-4 py-3">
       <div className="text-[11.5px] tracking-wide text-faint">{label}</div>
       <div
+        title={title}
         className={clsx(
           'mt-1 font-mono text-[19px] font-semibold tracking-tight tabular-nums',
           tone === 'accent' && 'text-accent',

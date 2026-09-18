@@ -12,8 +12,9 @@
  * different ranges: the usage page about whichever period is selected, the console about the
  * quota month.
  */
-import { type AgentModelRow, fmtCost, type UsageTotals } from '../lib/api';
+import { type AgentModelRow, type UsageTotals } from '../lib/api';
 import { Empty, fmtTokens } from './ui';
+import { MoneyCell } from './Money';
 import { useT } from '../lib/i18n';
 
 export function AgentModelTable({
@@ -71,9 +72,7 @@ export function AgentModelTable({
               <td className="py-2 text-right font-mono tabular-nums text-muted">
                 {fmtTokens(r.outputTokens)}
               </td>
-              <td className="py-2 text-right font-mono tabular-nums">
-                {fmtCost(r.cost, currency)}
-              </td>
+              <MoneyCell totals={r} currency={currency} className="py-2" />
             </tr>
           ))}
         </tbody>
@@ -100,9 +99,7 @@ export function AgentModelTable({
             <td className="py-2 text-right font-mono tabular-nums text-muted">
               {fmtTokens(totals.outputTokens)}
             </td>
-            <td className="py-2 text-right font-mono tabular-nums">
-              {fmtCost(totals.cost, currency)}
-            </td>
+            <MoneyCell totals={totals} currency={currency} className="py-2" />
           </tr>
         </tfoot>
       </table>

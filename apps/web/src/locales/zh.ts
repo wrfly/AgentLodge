@@ -683,8 +683,8 @@ export const zh: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': '结算币种',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '按金额限额时用哪种币计。价格表里各家保持厂商自己发布的币种，只有在限额需要一个数时才换算成它。',
-  'Exchange rates': '汇率',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON，币种 → 一单位折合多少结算币，例如结算用 CNY 时写 {"USD": 6.75}。只在限额必须折成一个数时使用。',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': '所有报表和额度都按这个币种计。价格表里各家保持厂商自己发布的币种，只在送到界面时换算成它。',
+  'CNY per USD': '1 美元 = 多少人民币',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': '一美元折合多少人民币，例如 7.1。全系统唯一的汇率，各家厂商收的钱都按它折成结算币种。',
   'Cache written': '缓存写入',
 };
