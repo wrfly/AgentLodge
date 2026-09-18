@@ -175,7 +175,7 @@ export const ja: Record<string, string> = {
   'Create an account': 'アカウントを作成',
   'Already have an account?': 'すでにアカウントをお持ちですか？',
   'Invite is valid': '招待は有効です',
-  'quota {n} tokens/month': '利用枠 {n} tokens/月',
+  'quota {amount}/month': '利用枠 {amount}/月',
   'This invite code is bound to that address': 'この招待コードはそのアドレスに紐付いています',
   '2–24 characters': '2〜24 文字',
   'Invite code': '招待コード',
@@ -200,7 +200,7 @@ export const ja: Record<string, string> = {
   'created {when}': '作成 {when}',
   'last used {when}': '最終使用 {when}',
   'never used': '未使用',
-  '{calls} calls · {tokens} billable tokens': '{calls} 回 · 課金対象 {tokens} token',
+  '{calls} calls · {cost}': '{calls} 回 · {cost}',
   Revoke: '失効させる',
   Setup: '設定方法',
   'The key you just created is already filled in below.': '作成したばかりのキーは下のコマンドに入力済みです。',
@@ -225,7 +225,7 @@ export const ja: Record<string, string> = {
   period: '期間',
   'No usage in this period': 'この期間の使用量はありません',
   'No data in this period': 'この期間のデータはありません',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} tokens · {turns} ターン · {calls} 回',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · {turns} ターン · {calls} 回',
   Quota: '利用枠',
   'warn only, not enforced': '警告のみ、遮断はしません',
   '{n} turns': '{n} ターン',
@@ -237,7 +237,6 @@ export const ja: Record<string, string> = {
   'By agent and model': 'agent とモデル別',
   Turns: 'ターン',
   Calls: '呼び出し',
-  'Billable tokens': '課金対象 token',
   '(default)': '(既定)',
   'Heaviest conversations': '消費が最も多い会話',
 
@@ -397,8 +396,6 @@ export const ja: Record<string, string> = {
   '1 = Monday … 7 = Sunday': '1=月曜 … 7=日曜',
   'Reset hour': 'リセット時刻',
   '0–23, server time.': '0–23、サーバーのローカル時刻',
-  'Cache-hit weight': 'キャッシュヒットの重み',
-  'Output weight': '出力の重み',
   'Agents offered': '提供する agent',
   'Anthropic Messages native (official / DeepSeek compatibility layer / your own gateway)': 'Anthropic Messages ネイティブ（公式 / DeepSeek 互換レイヤー / 自前のゲートウェイ）',
   'OpenAI Chat compatible (Ollama / LM Studio / third party)': 'OpenAI Chat 互換（Ollama / LM Studio / サードパーティ）',
@@ -439,7 +436,7 @@ export const ja: Record<string, string> = {
   'Empty if the relay needs no login.': 'リレーがログインを求めなければ空欄',
   'SMTP password': 'SMTP パスワード',
   'Refresh the model list hourly': 'モデル一覧を 1 時間ごとに更新',
-  'Millions of billable tokens per period; empty is unlimited.': '期間ごとの課金トークン（百万単位）。空欄は無制限',
+  'A monthly ceiling for a new account, in the settlement currency; empty is unlimited.': '新規アカウントの月あたり上限。決済通貨で指定し、空欄は無制限',
   'Quota used up — ask an administrator': 'クォータを使い切りました。管理者にご連絡ください',
   '{scope} quota used up ({used} / {limit}) — ask an administrator': '{scope} のクォータを使い切りました（{used} / {limit}）。管理者にご連絡ください',
   '5 h': '5 時間',
@@ -591,9 +588,9 @@ export const ja: Record<string, string> = {
   'Out': '出力',
   'Cost': '料金',
 
-  // Billing currency and the fallback weights
+  // Billing currency
   'Currency': '通貨',
-  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': '課金トークンはそのターンの実費を、標準レートの入力トークンに換算したものです。高価なモデルほど同じクォータを多く消費します',
+  'What each turn cost, at the price the upstream charges for that model — so a costlier model draws more of the same quota': '各ターンの費用は、そのモデルに上流が課す実際の価格です。高価なモデルほど同じクォータを多く消費します',
 
   // Admin: the price table
   'Price table': '価格表',
@@ -684,6 +681,5 @@ export const ja: Record<string, string> = {
   'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '金額ベースの上限を数える通貨。価格表は各ベンダーが公表する通貨のままで、上限が単一の数値を要するときだけこれに換算されます。',
   'Exchange rates': '為替レート',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON、通貨 → 1単位が決済通貨いくらに当たるか。例: CNY で決済するなら {"USD": 6.75}。上限が単一の数値を要する場合にのみ使われます。',
-  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'トークン上限が数えるもの。金額は価格表で通貨ごとに別途計算され、クォータを決めるのはこの重みだけです。',
   'Cache written': 'キャッシュ書き込み',
 };

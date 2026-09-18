@@ -50,7 +50,6 @@ export function AgentModelTable({
             <th className="pb-2 text-right font-medium">{t('In')}</th>
             <th className="pb-2 text-right font-medium">{t('Cache')}</th>
             <th className="pb-2 text-right font-medium">{t('Out')}</th>
-            <th className="pb-2 text-right font-medium">{t('Billable tokens')}</th>
             {/* What each model actually cost. Two models can differ by a factor of
                 ten per token, so a row of token counts on its own says very little
                 about where the money went. */}
@@ -71,9 +70,6 @@ export function AgentModelTable({
               </td>
               <td className="py-2 text-right font-mono tabular-nums text-muted">
                 {fmtTokens(r.outputTokens)}
-              </td>
-              <td className="py-2 text-right font-mono tabular-nums">
-                {r.billableTokens.toLocaleString()}
               </td>
               <td className="py-2 text-right font-mono tabular-nums">
                 {fmtCost(r.cost, currency)}
@@ -103,9 +99,6 @@ export function AgentModelTable({
             </td>
             <td className="py-2 text-right font-mono tabular-nums text-muted">
               {fmtTokens(totals.outputTokens)}
-            </td>
-            <td className="py-2 text-right font-mono tabular-nums">
-              {totals.billableTokens.toLocaleString()}
             </td>
             <td className="py-2 text-right font-mono tabular-nums">
               {fmtCost(totals.cost, currency)}

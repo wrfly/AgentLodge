@@ -289,7 +289,7 @@ export const api = {
 
 /* ---------------- Usage and memory ---------------- */
 
-export type { QuotaScope, QuotaStatus, QuotaWindow, LimitKind, ThreadSummary, DeferredTurn } from './protocol';
+export type { QuotaScope, QuotaStatus, QuotaWindow, ThreadSummary, DeferredTurn } from './protocol';
 import type { QuotaScope, QuotaStatus } from './protocol';
 
 export type RangePreset =
@@ -324,7 +324,6 @@ export interface UsageTotals {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   outputTokens: number;
-  billableTokens: number;
   costUsd: number;
   turns: number;
 }
@@ -475,7 +474,6 @@ export interface TraceDetail extends Omit<TraceSummary, 'status' | 'durationMs' 
 
 export interface ApiKeyUsage {
   calls: number;
-  billableTokens: number;
   cost: Money;
 }
 
@@ -564,7 +562,9 @@ export const publicApi = {
       reason?: string;
       email?: string;
       expiresAt?: string;
-      tokenLimit?: number | null;
+      /** The monthly ceiling the account starts with, in micro-units of `currency` */
+      limit?: number | null;
+      currency?: string;
     }>(`/api/auth/invite/${encodeURIComponent(code)}`),
   forgotPassword: (email: string) =>
     request<{ ok: boolean; message: string }>('/api/auth/forgot-password', {
@@ -584,13 +584,12 @@ export interface AdminUser extends PublicUser {
   /** The first account: always an active administrator, so it cannot be demoted or disabled */
   first: boolean;
   quota: {
-    /** The three ceilings, in the unit limitKind names. null means that window is unlimited. */
+    /** The three ceilings, in micro-units of `currency`. null means that window is unlimited. */
     window: number | null;
     week: number | null;
     month: number | null;
     /** What the gate enforces on the 5-hour window right now, top-up included */
     windowCeiling: number | null;
-    limitKind: 'tokens' | 'cost';
     currency: string;
     hardStop: boolean;
   };
@@ -621,7 +620,8 @@ export interface InviteCode {
   maxUses: number;
   usedCount: number;
   expiresAt?: string;
-  presetTokenLimit: number | null;
+  /** A monthly ceiling for the account this invite creates, in micro-units */
+  presetLimit: number | null;
   disabled: boolean;
   createdAt: string;
   sentAt?: string;
@@ -639,7 +639,7 @@ export interface SettingView {
   showWhen?: { key: string; is: string[] };
   /** How many of the six columns it takes; absent means the whole row */
   span?: 1 | 2 | 3 | 4 | 6;
-  /** Shown and entered as a multiple of the stored value — a token limit is typed in millions */
+  /** Shown and entered as a multiple of the stored value — money is typed in whole units */
   scale?: number;
   /** Shown inside the field, in the entered scale */
   unit?: string;
@@ -1059,7 +1059,6 @@ export const admin = {
       week?: number | null;
       month?: number | null;
       hardStop?: boolean;
-      limitKind?: 'tokens' | 'cost';
     },
     /*
      * Not an `AdminUser`: the route answers with the public user plus the raw quota row, and
@@ -1071,7 +1070,7 @@ export const admin = {
   /** Top up: extra allowance on one of the platform's windows, gone when that window resets */
   topup: (
     id: string,
-    input: { amount?: number; tokens?: number; scope?: QuotaScope; note?: string },
+    input: { amount: number; scope?: QuotaScope; note?: string },
   ) =>
     request<{ ok: boolean; quota: QuotaStatus }>(`/api/admin/users/${id}/topup`, {
       method: 'POST',
@@ -1096,19 +1095,19 @@ export const admin = {
       method: 'POST',
     }),
 
-  invites: () => request<InviteCode[]>('/api/admin/invites'),
+  invites: () => request<{ currency: string; invites: InviteCode[] }>('/api/admin/invites'),
   createInvites: (input: {
     count?: number;
     note?: string;
     maxUses?: number;
     expiresInDays?: number;
-    presetTokenLimit?: number | null;
+    presetLimit?: number | null;
   }) => request<InviteCode[]>('/api/admin/invites', { method: 'POST', body: JSON.stringify(input) }),
   emailInvite: (input: {
     email: string;
     note?: string;
     expiresInDays?: number;
-    presetTokenLimit?: number | null;
+    presetLimit?: number | null;
   }) =>
     request<{ invite: InviteCode; mail: { sent: boolean; error?: string }; link?: string }>(
       '/api/admin/invites/email',
@@ -1340,6 +1339,23 @@ export function fmtMoney(micro: number | null | undefined, currency: string): st
   const v = micro / MICRO;
   // Small amounts need more places, or a single turn reads as ¥0.00 and looks like nothing happened
   return `${sym}${v < 1 ? v.toFixed(4) : v.toFixed(2)}`;
+}
+
+/**
+ * Micro-units as a typed field, and back.
+ *
+ * Every ceiling, top-up and cost in the database is counted in micro-units — a sixth
+ * decimal place, so that a single turn is not rounded away to nothing. Nobody types that:
+ * an administrator sizing a quota types 10, and a misplaced zero in `10000000` is
+ * invisible in a way that one in `10` is not. Only the fields convert.
+ */
+export function microToUnits(micro: number): string {
+  // Number() again to drop the trailing zeros toFixed leaves behind
+  return String(Number((micro / MICRO).toFixed(6)));
+}
+
+export function unitsToMicro(v: string): number {
+  return Math.round(Number(v) * MICRO);
 }
 
 /**

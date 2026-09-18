@@ -159,58 +159,16 @@ console.log('\n=== The recost restates money and leaves every token alone ===');
     JSON.stringify(after.cost));
   ok('and every token count is exactly where it was',
     after.inputTokens === before.inputTokens
-      && after.outputTokens === before.outputTokens
-      && after.billableTokens === before.billableTokens,
-    `${after.billableTokens} vs ${before.billableTokens}`);
+      && after.cacheReadTokens === before.cacheReadTokens
+      && after.cacheCreationTokens === before.cacheCreationTokens
+      && after.outputTokens === before.outputTokens,
+    `${after.inputTokens}/${after.outputTokens} vs ${before.inputTokens}/${before.outputTokens}`);
 
   // Once. A second call must not re-walk the table on every start.
   db.run("update usage_records set cost_micro = 1 where turn_id = 't2'");
   usage.repriceHistory();
   ok('and it does not run twice', usage.totalsForUser(alice).cost['CNY'] === 1,
     JSON.stringify(usage.totalsForUser(alice).cost));
-}
-
-/*
- * The half of the recost that is about *not* acting.
- *
- * Cost is derived, so re-deriving it is a correction. A token count is not: the definition of
- * a billable token changed with this work, and rewriting history under the new one would
- * restate what every user has already spent against their ceiling — by up to an order of
- * magnitude, in both directions depending on the shape of their turns. Written by hand here
- * because rows produced by the current `billable()` would agree with themselves and prove
- * nothing.
- */
-console.log('\n=== The recost does not restate anybody\'s quota ===');
-{
-  const quiet = users.create({ email: 'q@example.com', username: 'quiet', passwordHash: 'x', role: 'user' }).id;
-  db.run(
-    `insert into usage_records
-       (user_id, turn_id, agent, model, input_tokens, cache_read_tokens, cache_creation_tokens,
-        output_tokens, billable_tokens, cost_usd, cost_micro, cost_currency, num_turns, status,
-        created_at, day, source)
-     values (?, 'old', 'claude', 'claude-opus-5', 0, 0, 0, 1000000, 5000000, 0, 0, 'USD', 1,
-             'completed', ?, '2026-01-01', 'cli')`,
-    quiet, '2026-01-01T00:00:00.000Z',
-  );
-  // What the old cost-derived definition wrote: a million output tokens on Opus, $25 ÷ $5
-  const stored = () => db.get<{ b: number; c: number }>(
-    'select billable_tokens b, cost_micro c from usage_records where turn_id = ?', 'old')!;
-  ok('a row written under the old definition', stored().b === 5_000_000, String(stored().b));
-
-  // The flag is per database, so clear it the way a fresh deployment would arrive
-  db.run("delete from settings where key = 'usage.repricedAt'");
-  usage.repriceHistory();
-
-  ok('its money is restated', stored().c === perM(25), String(stored().c));
-  ok('and its quota consumption is exactly where it was', stored().b === 5_000_000, String(stored().b));
-  /*
-   * The weights would have made it 1.5M — a 70% drop, handed back to that user silently. In
-   * the other direction a DeepSeek row would have risen twelvefold and pushed them over.
-   */
-  ok('rather than the 1.5M the weights would give', usage.billable({
-    inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 1_000_000,
-    costUsd: 0, durationMs: 0, numTurns: 1,
-  }) === 1_500_000);
 }
 
 console.log('\n=== A price row an operator deleted stays deleted ===');

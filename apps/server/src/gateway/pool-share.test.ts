@@ -3,7 +3,7 @@
  *
  * Every mistake here is a number that looks plausible. The ones worth catching:
  *   the denominator counting a second upstream  → everybody's share reads about half
- *   the numerator and denominator in different units → a ratio of tokens to money
+ *   the denominator cut over the wrong window   → a share that drifts as the window fills
  *   a share above 1                             → a user shown more than the pool has spent
  *   the pool's utilisation relayed as-is        → one tenant reading the whole platform
  *
@@ -79,7 +79,6 @@ function q(
   top: Partial<QuotaStatus> = {},
 ): QuotaStatus {
   return {
-    limitKind: 'tokens',
     currency: 'CNY',
     hardStop: true,
     windows: {
@@ -113,15 +112,21 @@ function pool(over: Record<string, string> = {}): void {
   );
 }
 
-/** One turn, at an instant, through one upstream. Tokens and money differ on purpose. */
-function spend(userId: string, providerId: string, at: string, tokens: number, micro: number): void {
+/**
+ * One turn, at an instant, through one upstream.
+ *
+ * `micro` is the only figure: a share is a ratio, and both sides of it are what the ceiling
+ * itself is counted in. This fixture used to carry a token count beside the money so that a
+ * numerator and denominator in different units would show up as a wrong answer — there is
+ * one unit now, and nothing left for the two to disagree about.
+ */
+function spend(userId: string, providerId: string, at: string, micro: number): void {
   run(
     `insert into usage_records
-       (user_id, agent, model, provider_id, billable_tokens, cost_micro, status, created_at, day, source)
-     values (?, 'claude', 'm', ?, ?, ?, 'completed', ?, ?, 'gateway')`,
+       (user_id, agent, model, provider_id, cost_micro, status, created_at, day, source)
+     values (?, 'claude', 'm', ?, ?, 'completed', ?, ?, 'gateway')`,
     userId,
     providerId,
-    tokens,
     micro,
     at,
     at.slice(0, 10),
@@ -175,8 +180,8 @@ console.log('\n=== The arithmetic ===');
   ok('but the window is still reported, so the client has a reset', s.window !== undefined);
 }
 {
-  // Alone on the platform: 400 of the 400 tokens spent in this window are theirs
-  spend('alice', ANTHROPIC.id, '2026-08-23T15:00:00.000Z', 400, 200);
+  // Alone on the platform: 400 of the 400 spent in this window are theirs
+  spend('alice', ANTHROPIC.id, '2026-08-23T15:00:00.000Z', 400);
   pool();
   const s = poolShare(q({ window: { used: 400 } }), ANTHROPIC);
   ok(
@@ -186,7 +191,7 @@ console.log('\n=== The arithmetic ===');
   );
 }
 {
-  spend('bob', ANTHROPIC.id, '2026-08-23T16:00:00.000Z', 600, 1800);
+  spend('bob', ANTHROPIC.id, '2026-08-23T16:00:00.000Z', 600);
   pool();
   const s = poolShare(q({ window: { used: 400 } }), ANTHROPIC);
   ok(
@@ -203,7 +208,7 @@ console.log('\n=== The arithmetic ===');
 }
 {
   // A turn through a second upstream is not part of this subscription's consumption
-  spend('carol', DEEPSEEK.id, '2026-08-23T16:30:00.000Z', 9000, 9000);
+  spend('carol', DEEPSEEK.id, '2026-08-23T16:30:00.000Z', 9000);
   pool();
   const s = poolShare(q({ window: { used: 400 } }), ANTHROPIC);
   ok(
@@ -214,8 +219,8 @@ console.log('\n=== The arithmetic ===');
 }
 {
   // 13:00 is before the window opened, 20:00 after it closed
-  spend('dave', ANTHROPIC.id, '2026-08-23T13:00:00.000Z', 5000, 5000);
-  spend('dave', ANTHROPIC.id, '2026-08-23T20:00:00.000Z', 5000, 5000);
+  spend('dave', ANTHROPIC.id, '2026-08-23T13:00:00.000Z', 5000);
+  spend('dave', ANTHROPIC.id, '2026-08-23T20:00:00.000Z', 5000);
   pool();
   const s = poolShare(q({ window: { used: 400 }, week: { used: 400 } }), ANTHROPIC);
   ok(
@@ -239,18 +244,6 @@ console.log('\n=== The arithmetic ===');
   pool();
   const s = poolShare(q({ window: { used: 999_999 } }), ANTHROPIC);
   ok('a share cannot exceed the pool’s utilisation', s.window?.utilization === 0.6, String(s.window?.utilization));
-}
-
-console.log('\n=== Money, when that is what is being counted ===');
-{
-  // In this window: alice 400 tokens / 200 micro, bob 600 / 1800. The two ratios differ.
-  pool();
-  const s = poolShare(q({ window: { used: 200 } }, { limitKind: 'cost' }), ANTHROPIC);
-  ok(
-    'a cost-billed user is divided by everybody’s cost, not everybody’s tokens',
-    near(s.window?.utilization, (200 / 2000) * 0.6),
-    String(s.window?.utilization),
-  );
 }
 
 console.log('\n=== The status is the pool’s, unchanged ===');

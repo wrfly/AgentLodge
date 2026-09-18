@@ -24,6 +24,7 @@ const { initDb, run } = await import('./index.js');
 initDb();
 const usage = await import('./usage.js');
 const users = await import('./users.js');
+const pricing = await import('./pricing.js');
 
 let pass = 0;
 let fail = 0;
@@ -45,6 +46,19 @@ const SPEND = {
   inputTokens: 1_000, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 100,
   costUsd: 0, durationMs: 1_000, numTurns: 1,
 };
+/*
+ * A chart is drawn from money, so the fixture has to cost something. `record` prices each
+ * turn from the table as it writes the row, and a model nobody priced is recorded as free —
+ * a chart of zeroes would pass every "adds up" check below while telling the reader nothing.
+ * One catch-all row, so every model in this file is priced the same and the arithmetic stays
+ * readable.
+ */
+pricing.add({
+  model: '*', currency: 'USD',
+  priceInput: 3_000_000, priceCacheRead: 300_000, priceCacheWrite: 3_750_000,
+  priceOutput: 15_000_000,
+  effectiveFrom: '1970-01-01T00:00:00.000Z',
+});
 /** The local wall-clock keys the server cuts, in both units */
 const two = (n: number) => String(n).padStart(2, '0');
 const dayKey = (d: Date) =>
@@ -82,8 +96,8 @@ console.log('\n=== Every bucket in the range, spent or not ===');
   ok('a quiet stretch is drawn as quiet, not as one full bar', s.length >= 5, String(s.length));
   ok('the busy hour is in there, at the key the server cut', s.some((p) => p.t === hourKey(busy)),
     JSON.stringify(s.map((p) => p.t)));
-  ok('and it carries the spend', (s.find((p) => p.t === hourKey(busy))?.billableTokens ?? 0) > 0);
-  ok('the empty ones are zero, not missing', s.filter((p) => p.billableTokens === 0).length >= 4);
+  ok('and it carries the spend', (s.find((p) => p.t === hourKey(busy))?.costSettled ?? 0) > 0);
+  ok('the empty ones are zero, not missing', s.filter((p) => p.costSettled === 0).length >= 4);
   ok('no bucket appears twice', new Set(s.map((p) => p.t)).size === s.length);
   ok('they run in order', s.every((p, i) => i === 0 || p.t > s[i - 1]!.t));
 }
@@ -113,9 +127,9 @@ console.log('\n=== A range that does not start on the bucket grid still reaches 
   const s = usage.seriesAllInRange(range, 'day');
   ok('the last bucket is generated', s.some((p) => p.t === dayKey(last)),
     JSON.stringify(s.map((p) => p.t)));
-  ok('carrying what was spent in it', (s.find((p) => p.t === dayKey(last))?.billableTokens ?? 0) > 0);
-  const charted = s.reduce((n, p) => n + p.billableTokens, 0);
-  const total = usage.totalsAllInRange(range).billableTokens;
+  ok('carrying what was spent in it', (s.find((p) => p.t === dayKey(last))?.costSettled ?? 0) > 0);
+  const charted = s.reduce((n, p) => n + p.costSettled, 0);
+  const total = usage.totalsAllInRange(range).costSettled;
   ok('and the chart adds up to the number printed above it', charted === total, `${charted} vs ${total}`);
 }
 
@@ -127,7 +141,7 @@ console.log('\n=== Nothing spent at all ===');
     'day',
   );
   ok('is still a shape, not an empty list', s.length === 3 || s.length === 4, String(s.length));
-  ok('all of it zero', s.every((p) => p.billableTokens === 0 && p.turns === 0));
+  ok('all of it zero', s.every((p) => p.costSettled === 0 && p.turns === 0));
 }
 
 console.log('\n=== One person\'s chart covers the period, not just the days they used it ===');
@@ -159,9 +173,9 @@ console.log('\n=== One person\'s chart covers the period, not just the days they
   ok('the query still returns only the day that was used', raw.length === 1, String(raw.length));
   ok('the chart gets one bucket per day in the range', series.length === 6, String(series.length));
   ok('the empty ones are empty rather than missing',
-    series.filter((p) => p.billableTokens === 0).length === 5, JSON.stringify(series.map((p) => p.billableTokens)));
+    series.filter((p) => p.costSettled === 0).length === 5, JSON.stringify(series.map((p) => p.costSettled)));
   ok('and the total is unchanged by the padding',
-    series.reduce((n, p) => n + p.billableTokens, 0) === usage.totalsForUser(carol, range).billableTokens);
+    series.reduce((n, p) => n + p.costSettled, 0) === usage.totalsForUser(carol, range).costSettled);
   ok('the first bucket is the start of the range', series[0]?.t === dayKey(from), `${series[0]?.t} vs ${dayKey(from)}`);
 }
 
@@ -193,7 +207,7 @@ console.log('\n=== A range nobody could chart is not filled in ===');
   ok('a range back to the epoch comes back unpadded, not with twenty thousand buckets',
     wild.length === 1, String(wild.length));
   ok('and still adds up to the total',
-    wild.reduce((n, p) => n + p.billableTokens, 0) === usage.totalsForUser(dave, epoch).billableTokens);
+    wild.reduce((n, p) => n + p.costSettled, 0) === usage.totalsForUser(dave, epoch).costSettled);
 
   // The cap is on the range, not on how much of it was used: a month is still filled in
   const monthAgo = new Date(at);
@@ -246,7 +260,7 @@ console.log('\n=== The breakdown adds up to the total printed above it ===');
     rows.reduce((n, r) => n + (r[k] ?? 0), 0);
 
   for (const field of ['inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens',
-                       'billableTokens', 'calls'] as const) {
+                       'costSettled', 'calls'] as const) {
     ok(`${field} adds up across models`, add(byAgent as never, field) === totals[field],
       `${add(byAgent as never, field)} vs ${totals[field]}`);
     ok(`${field} adds up across buckets`, add(hourly as never, field) === totals[field],

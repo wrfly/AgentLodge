@@ -128,8 +128,8 @@ export function register(app: FastifyInstance): void {
      *
      * It is the price of every model without a row of its own. Take it away and resolve()
      * returns undefined and costMicro returns 0, so every unpriced model is billed at
-     * nothing — silently, because a token ceiling still counts and the refusals go on
-     * working. The table just stops answering about money.
+     * nothing — and since quota is money, that traffic draws nothing against anybody's
+     * ceiling either. Silently: nothing errors, the table just stops answering.
      *
      * Superseded '*' rows are still removable, which is the actual housekeeping somebody
      * wants: a price change appends, so old catch-alls accumulate. Only the one that would

@@ -24,10 +24,8 @@ create table if not exists users (
 
 create table if not exists user_quotas (
   user_id      text primary key references users(id) on delete cascade,
-  -- tokens limits by billable tokens; cost limits by money in micro-units
-  limit_kind   text not null default 'tokens',
   /*
-   * Three ceilings, all in the unit named above, all null-means-unlimited.
+   * Three ceilings, all in micro-units of the settlement currency, all null-means-unlimited.
    *
    * The windows they apply to are the platform's, not each user's: one 5-hour window, one
    * week, one month, beginning and ending at the same instants for everybody. A window
@@ -64,6 +62,8 @@ create table if not exists invite_codes (
   max_uses           integer not null default 1,
   used_count         integer not null default 0,
   expires_at         text,
+  -- The monthly ceiling an account created from this code starts with, in micro-units of
+  -- the settlement currency. The name is older than the unit; see migration 19.
   preset_token_limit integer,
   disabled           integer not null default 0,
   created_at         text not null,
@@ -241,8 +241,6 @@ create table if not exists usage_records (
   cache_read_tokens     integer not null default 0,
   cache_creation_tokens integer not null default 0,
   output_tokens         integer not null default 0,
-  -- Billable tokens after weighting; this is what quota compares against
-  billable_tokens       integer not null default 0,
   cost_usd              real    not null default 0,   -- as the CLI reported; usually 0 off-platform
   -- Cost from the price table, in micro-units. This is what money-based billing uses.
   cost_micro            integer not null default 0,

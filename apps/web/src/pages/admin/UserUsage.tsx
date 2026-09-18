@@ -25,7 +25,7 @@ import {
   type UserAgentUsage,
   type UsersUsage,
 } from '../../lib/api';
-import { Banner, Button, Card, Empty, Spinner, fmtTokens } from '../../components/ui';
+import { Banner, Button, Card, Empty, Spinner } from '../../components/ui';
 import { AgentModelTable } from '../../components/AgentModelTable';
 import { TokenCells, TokenHeaders, TokenSplit } from '../../components/TokenSplit';
 import { useT } from '../../lib/i18n';
@@ -128,9 +128,6 @@ export function UserUsage() {
         <>
           <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="font-mono text-[17px] tabular-nums">
-              {data.totals.billableTokens.toLocaleString()}
-            </span>
-            <span className="font-mono text-[13px] text-muted tabular-nums">
               {fmtCost(data.totals.cost, data.currency)}
             </span>
             <TokenSplit totals={data.totals} />
@@ -143,13 +140,12 @@ export function UserUsage() {
             <Empty text={t('No usage in this period')} />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[660px] text-[13px]">
+              <table className="w-full min-w-[600px] text-[13px]">
                 <thead>
                   <tr className="border-b border-line text-left text-faint">
                     <th className="pb-1.5 font-medium">{t('User')}</th>
                     <th className="pb-1.5 text-right font-medium">{t('Turns')}</th>
                     <TokenHeaders />
-                    <th className="pb-1.5 text-right font-medium">{t('Billable tokens')}</th>
                     <th className="pb-1.5 text-right font-medium">{t('Cost')}</th>
                   </tr>
                 </thead>
@@ -183,9 +179,6 @@ export function UserUsage() {
                           </td>
                           <td className="py-1.5 text-right tabular-nums">{u.turns}</td>
                           <TokenCells totals={u} />
-                          <td className="py-1.5 text-right font-mono tabular-nums">
-                            {fmtTokens(u.billableTokens)}
-                          </td>
                           {/* Tokens and money both: two models differ by a factor of ten per
                               token, so a column of counts on its own does not say where the
                               budget went */}
@@ -195,7 +188,7 @@ export function UserUsage() {
                         </tr>
                         {shown && (
                           <tr className="border-b border-line bg-bubble/40">
-                            <td colSpan={7} className="px-3 py-2">
+                            <td colSpan={6} className="px-3 py-2">
                               <UserModels userId={u.userId} preset={preset} />
                             </td>
                           </tr>

@@ -162,7 +162,7 @@ export const fr: Record<string, string> = {
   'Create an account': 'Créer un compte',
   'Already have an account?': 'Vous avez déjà un compte ?',
   'Invite is valid': 'Invitation valide',
-  'quota {n} tokens/month': 'quota {n} jetons/mois',
+  'quota {amount}/month': 'quota {amount}/mois',
   'This invite code is bound to that address': 'Ce code d\'invitation est lié à cette adresse',
   '2–24 characters': '2 à 24 caractères',
   'Invite code': 'Code d\'invitation',
@@ -187,7 +187,7 @@ export const fr: Record<string, string> = {
   'created {when}': 'créée {when}',
   'last used {when}': 'dernière utilisation {when}',
   'never used': 'jamais utilisée',
-  '{calls} calls · {tokens} billable tokens': '{calls} appels · {tokens} jetons facturables',
+  '{calls} calls · {cost}': '{calls} appels · {cost}',
   Revoke: 'Révoquer',
   Setup: 'Configuration',
   'The key you just created is already filled in below.': 'La clé que vous venez de créer est déjà renseignée ci-dessous.',
@@ -210,7 +210,7 @@ export const fr: Record<string, string> = {
   period: 'période',
   'No usage in this period': 'Aucune utilisation sur cette période',
   'No data in this period': 'Aucune donnée sur cette période',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} jetons · {turns} tours · {calls} appels',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · {turns} tours · {calls} appels',
   Quota: 'Quota',
   'warn only, not enforced': 'avertir seulement, sans bloquer',
   '{n} turns': '{n} tours',
@@ -222,7 +222,6 @@ export const fr: Record<string, string> = {
   'By agent and model': 'Par agent et modèle',
   Turns: 'Tours',
   Calls: 'Appels',
-  'Billable tokens': 'Jetons facturables',
   '(default)': '(par défaut)',
   'Heaviest conversations': 'Conversations les plus lourdes',
   Users: 'Utilisateurs',
@@ -372,8 +371,6 @@ export const fr: Record<string, string> = {
   '1 = Monday … 7 = Sunday': '1 = lundi … 7 = dimanche',
   'Reset hour': 'Heure de réinitialisation',
   '0–23, server time.': '0–23, heure du serveur',
-  'Cache-hit weight': 'Coefficient de cache',
-  'Output weight': 'Coefficient de sortie',
   'Agents offered': 'Agents proposés',
   'Anthropic Messages native (official / DeepSeek compatibility layer / your own gateway)': 'Anthropic Messages natif (officiel / couche de compatibilité DeepSeek / votre propre passerelle)',
   'OpenAI Chat compatible (Ollama / LM Studio / third party)': 'Compatible OpenAI Chat (Ollama / LM Studio / tiers)',
@@ -414,7 +411,7 @@ export const fr: Record<string, string> = {
   'Empty if the relay needs no login.': 'Vide si le relais n\'exige pas d\'identifiants',
   'SMTP password': 'Mot de passe SMTP',
   'Refresh the model list hourly': 'Actualiser la liste des modèles toutes les heures',
-  'Millions of billable tokens per period; empty is unlimited.': 'Millions de tokens facturables par période ; vide = illimité',
+  'A monthly ceiling for a new account, in the settlement currency; empty is unlimited.': 'Plafond mensuel d\'un nouveau compte, dans la devise de règlement ; vide = illimité',
   'Quota used up — ask an administrator': 'Quota épuisé — contactez un administrateur',
   '{scope} quota used up ({used} / {limit}) — ask an administrator': 'Quota {scope} épuisé ({used} / {limit}) — contactez un administrateur',
   '5 h': '5 h',
@@ -564,9 +561,9 @@ export const fr: Record<string, string> = {
   'Out': 'Sortie',
   'Cost': 'Coût',
 
-  // Billing currency and the fallback weights
+  // Billing currency
   'Currency': 'Devise',
-  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Les tokens facturés sont le coût réel d\'un tour, exprimé en tokens d\'entrée au tarif standard : un modèle plus cher consomme davantage du même quota',
+  'What each turn cost, at the price the upstream charges for that model — so a costlier model draws more of the same quota': 'Ce qu\'a coûté chaque tour, au tarif que le fournisseur applique à ce modèle : un modèle plus cher consomme davantage du même quota',
 
   // Admin: the price table
   'Price table': 'Table des prix',
@@ -657,6 +654,5 @@ export const fr: Record<string, string> = {
   'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'Devise dans laquelle sont comptés les plafonds en argent. Les prix restent dans la devise publiée par chaque fournisseur ; la conversion n\'a lieu que lorsqu\'un plafond exige un seul nombre.',
   'Exchange rates': 'Taux de change',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, devise → combien d\'unités de règlement vaut une unité, par exemple {"USD": 6.75} pour un règlement en CNY. Utilisé uniquement là où un plafond impose un seul nombre.',
-  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'Ce que compte un plafond en jetons. L\'argent est tarifé séparément et par devise ; seuls ces poids décident du quota.',
   'Cache written': 'Cache écrit',
 };

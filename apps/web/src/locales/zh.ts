@@ -175,7 +175,7 @@ export const zh: Record<string, string> = {
   'Create an account': '创建账号',
   'Already have an account?': '已经有账号？',
   'Invite is valid': '邀请有效',
-  'quota {n} tokens/month': '额度 {n} tokens/月',
+  'quota {amount}/month': '额度 {amount}/月',
   'This invite code is bound to that address': '该邀请码已绑定这个邮箱',
   '2–24 characters': '2–24 个字符',
   'Invite code': '邀请码',
@@ -200,7 +200,7 @@ export const zh: Record<string, string> = {
   'created {when}': '建于 {when}',
   'last used {when}': '最后使用 {when}',
   'never used': '从未使用',
-  '{calls} calls · {tokens} billable tokens': '{calls} 次 · {tokens} 计费 token',
+  '{calls} calls · {cost}': '{calls} 次 · {cost}',
   Revoke: '撤销',
   Setup: '怎么配',
   'The key you just created is already filled in below.': '刚创建的那把 key 已经填进下面了。',
@@ -225,7 +225,7 @@ export const zh: Record<string, string> = {
   period: '周期',
   'No usage in this period': '这段时间没有用量',
   'No data in this period': '这段时间没有数据',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} tokens · {turns} 轮 · {calls} 次调用',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · {turns} 轮 · {calls} 次调用',
   Quota: '额度',
   'warn only, not enforced': '仅告警，不拦截',
   '{n} turns': '{n} 轮',
@@ -237,7 +237,6 @@ export const zh: Record<string, string> = {
   'By agent and model': '按 agent 与模型',
   Turns: '轮次',
   Calls: '调用',
-  'Billable tokens': '计费 token',
   '(default)': '(默认)',
   'Heaviest conversations': '消耗最多的会话',
 
@@ -397,8 +396,6 @@ export const zh: Record<string, string> = {
   '1 = Monday … 7 = Sunday': '1=周一 … 7=周日',
   'Reset hour': '重置时刻',
   '0–23, server time.': '0–23，服务器本地时间',
-  'Cache-hit weight': '缓存命中权重',
-  'Output weight': '输出权重',
   'Agents offered': '启用的 agent',
   'Anthropic Messages native (official / DeepSeek compatibility layer / your own gateway)': 'Anthropic Messages 原生（官方 / DeepSeek 兼容层 / 自建网关）',
   'OpenAI Chat compatible (Ollama / LM Studio / third party)': 'OpenAI Chat 兼容（Ollama / LM Studio / 第三方）',
@@ -439,7 +436,7 @@ export const zh: Record<string, string> = {
   'Empty if the relay needs no login.': '中继不要求登录就留空',
   'SMTP password': 'SMTP 密码',
   'Refresh the model list hourly': '每小时刷新模型列表',
-  'Millions of billable tokens per period; empty is unlimited.': '每周期多少百万计费 token，留空不限',
+  'A monthly ceiling for a new account, in the settlement currency; empty is unlimited.': '新账号每月的金额上限，按结算币种计；留空不限',
   'Quota used up — ask an administrator': '额度已用完，请联系管理员',
   '{scope} quota used up ({used} / {limit}) — ask an administrator': '{scope} 额度已用完（{used} / {limit}），请联系管理员',
   '5 h': '5 小时',
@@ -591,9 +588,9 @@ export const zh: Record<string, string> = {
   'Out': '输出',
   'Cost': '金额',
 
-  // Billing currency and the fallback weights
+  // Billing currency
   'Currency': '币种',
-  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': '计费 token = 这一轮实际花的钱，换算成标准价下的输入 token —— 所以越贵的模型占掉越多同样的配额',
+  'What each turn cost, at the price the upstream charges for that model — so a costlier model draws more of the same quota': '每一轮按上游对该模型的实际牌价计费 —— 所以越贵的模型占掉越多同样的配额',
 
   // Admin: the price table
   'Price table': '价格表',
@@ -684,6 +681,5 @@ export const zh: Record<string, string> = {
   'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '按金额限额时用哪种币计。价格表里各家保持厂商自己发布的币种，只有在限额需要一个数时才换算成它。',
   'Exchange rates': '汇率',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON，币种 → 一单位折合多少结算币，例如结算用 CNY 时写 {"USD": 6.75}。只在限额必须折成一个数时使用。',
-  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': '按 token 限额时就是靠这几个权重算的。金额另按价格表、分币种记；配额只看这里。',
   'Cache written': '缓存写入',
 };

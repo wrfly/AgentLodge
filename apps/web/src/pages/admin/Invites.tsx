@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Check, Copy, Mail, Plus, Send, Trash2 } from 'lucide-react';
-import { admin, type InviteCode } from '../../lib/api';
+import { admin, fmtMoney, type InviteCode, unitsToMicro } from '../../lib/api';
 import {
   Banner,
   Button,
@@ -14,8 +14,6 @@ import {
   Field,
   Input,
   Spinner,
-  fmtTokens,
-  mToTokens,
 } from '../../components/ui';
 import { useT } from '../../lib/i18n';
 import { WithUnit } from './shared';
@@ -42,6 +40,8 @@ function CopyButton({ text }: { text: string }) {
 export function Invites() {
   const t = useT();
   const [invites, setInvites] = useState<InviteCode[] | null>(null);
+  // The currency a preset is counted in; it arrives with the list rather than being assumed
+  const [currency, setCurrency] = useState('USD');
   const [msg, setMsg] = useState<{ tone: 'success' | 'error' | 'warn'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -49,7 +49,14 @@ export function Invites() {
   const [limit, setLimit] = useState('');
   const [days, setDays] = useState('7');
 
-  const load = () => admin.invites().then(setInvites).catch(() => {});
+  const load = () =>
+    admin
+      .invites()
+      .then((r) => {
+        setInvites(r.invites);
+        setCurrency(r.currency);
+      })
+      .catch(() => {});
 
   useEffect(() => {
     void load();
@@ -62,7 +69,7 @@ export function Invites() {
     try {
       const res = await admin.emailInvite({
         email: email.trim(),
-        presetTokenLimit: limit ? mToTokens(limit) : null,
+        presetLimit: limit ? unitsToMicro(limit) : null,
         expiresInDays: Number(days) || 7,
       });
       setEmail('');
@@ -91,7 +98,7 @@ export function Invites() {
     try {
       await admin.createInvites({
         count: 1,
-        presetTokenLimit: limit ? mToTokens(limit) : null,
+        presetLimit: limit ? unitsToMicro(limit) : null,
         expiresInDays: Number(days) || undefined,
       });
       void load();
@@ -120,7 +127,7 @@ export function Invites() {
             <Field label={t('Quota')}>
               <WithUnit
                 className="block"
-                unit="M"
+                unit={currency}
                 value={limit}
                 onChange={(v) => setLimit(v.replace(/[^\d.]/g, ''))}
               />
@@ -185,7 +192,7 @@ export function Invites() {
                         )}
                       </td>
                       <td className="py-2 font-mono text-[12px] tabular-nums">
-                        {i.presetTokenLimit ? fmtTokens(i.presetTokenLimit) : t('unlimited')}
+                        {i.presetLimit ? fmtMoney(i.presetLimit, currency) : t('unlimited')}
                       </td>
                       <td className="py-2 tabular-nums">
                         {i.usedCount}/{i.maxUses}

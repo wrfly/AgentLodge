@@ -11,7 +11,8 @@ export interface InviteCode {
   maxUses: number;
   usedCount: number;
   expiresAt?: string;
-  presetTokenLimit: number | null;
+  /** A monthly ceiling for the account this invite creates, in micro-units */
+  presetLimit: number | null;
   disabled: boolean;
   createdAt: string;
   sentAt?: string;
@@ -41,7 +42,7 @@ const toInvite = (r: Row): InviteCode => ({
   maxUses: r.max_uses,
   usedCount: r.used_count,
   expiresAt: r.expires_at ?? undefined,
-  presetTokenLimit: r.preset_token_limit,
+  presetLimit: r.preset_token_limit,
   disabled: bool(r.disabled),
   createdAt: r.created_at,
   sentAt: r.sent_at ?? undefined,
@@ -61,7 +62,7 @@ export interface CreateInviteInput {
   note?: string;
   maxUses?: number;
   expiresAt?: string;
-  presetTokenLimit?: number | null;
+  presetLimit?: number | null;
 }
 
 export function create(input: CreateInviteInput): InviteCode {
@@ -81,7 +82,7 @@ export function create(input: CreateInviteInput): InviteCode {
     input.note ?? null,
     input.maxUses ?? 1,
     input.expiresAt ?? null,
-    input.presetTokenLimit ?? null,
+    input.presetLimit ?? null,
     nowIso(),
   );
   return findById(id)!;

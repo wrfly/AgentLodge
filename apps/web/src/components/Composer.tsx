@@ -509,7 +509,7 @@ export function Composer({ agent }: { agent: AgentId }) {
               const hit = quota && Object.values(quota.windows).find((w) => w.exceeded);
               if (!quota || !hit) return t('Quota used up — ask an administrator');
               const show = (v: number) =>
-                quota.limitKind === 'cost' ? fmtMoney(v, quota.currency) : v.toLocaleString();
+                fmtMoney(v, quota.currency);
               return t('{scope} quota used up ({used} / {limit}) — ask an administrator', {
                 scope: SCOPE_LABEL[hit.scope],
                 used: show(hit.used),

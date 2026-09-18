@@ -231,21 +231,10 @@ export interface TokenCounts {
   outputTokens: number;
 }
 
-/** Cost in micro-units. No matching price returns 0, and the interface says the model is unpriced. */
 /**
- * What a single input token of one model costs, in micro-units.
+ * Cost in micro-units, unrounded. No matching price returns 0, and the interface says the
+ * model is unpriced.
  *
- * The unit quota is measured in when `quota.pricingBaseline` names a model: every model's
- * spend is divided by this to get "tokens of the baseline model", which is a number an
- * administrator can set a ceiling in and compare across models.
- */
-export function inputMicroPerToken(model: string, at?: string, providerId?: string | null): number {
-  const p = resolve(model, at, providerId);
-  return p ? p.priceInput / 1_000_000 : 0;
-}
-
-/**
- * The same sum, unrounded.
  *
  * A micro-unit is a millionth, and a cheap model's token is a fraction of one — a DeepSeek
  * input token is 0.435 of a micro. Rounding before the caller is done with the number turns
@@ -400,10 +389,9 @@ function seedRows(): UpsertInput[] {
     // reads this shape, and a row it cannot parse is a row it silently stops comparing.
     { model: 'deepseek-v4-flash', currency: 'CNY', ...rate(1, 4, 0.02, 1), ...PEAK, note: DEEPSEEK_RETIRED },
     {
-      // Also the unit quota is counted in: one billable token is one input token at this rate
       model: '*',
       ...rate(5, 25),
-      note: 'The catch-all, used by any model without a price of its own — and the unit billable tokens are counted in',
+      note: 'The catch-all, used by any model without a price of its own',
     },
   ].map((r) => ({ currency: 'USD', ...r, effectiveFrom: now }));
   return seed;

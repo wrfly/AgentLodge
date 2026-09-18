@@ -175,7 +175,7 @@ export const ru: Record<string, string> = {
   'Create an account': 'Создать аккаунт',
   'Already have an account?': 'Уже есть аккаунт?',
   'Invite is valid': 'Приглашение действительно',
-  'quota {n} tokens/month': 'квота {n} токенов/месяц',
+  'quota {amount}/month': 'квота {amount}/месяц',
   'This invite code is bound to that address': 'Этот код привязан к данному адресу',
   '2–24 characters': '2–24 символа',
   'Invite code': 'Код приглашения',
@@ -200,7 +200,7 @@ export const ru: Record<string, string> = {
   'created {when}': 'создан {when}',
   'last used {when}': 'последнее использование {when}',
   'never used': 'не использовался',
-  '{calls} calls · {tokens} billable tokens': 'вызовов: {calls} · оплачиваемых токенов: {tokens}',
+  '{calls} calls · {cost}': 'вызовов: {calls} · {cost}',
   Revoke: 'Отозвать',
   Setup: 'Настройка',
   'The key you just created is already filled in below.': 'Только что созданный ключ уже подставлен ниже.',
@@ -225,7 +225,7 @@ export const ru: Record<string, string> = {
   period: 'период',
   'No usage in this period': 'За этот период использования не было',
   'No data in this period': 'За этот период данных нет',
-  '{tokens} tokens · {turns} turns · {calls} calls': '{tokens} токенов · ходов: {turns} · вызовов: {calls}',
+  '{cost} · {turns} turns · {calls} calls': '{cost} · ходов: {turns} · вызовов: {calls}',
   Quota: 'Квота',
   'warn only, not enforced': 'только предупреждение, без блокировки',
   '{n} turns': 'ходов: {n}',
@@ -237,7 +237,6 @@ export const ru: Record<string, string> = {
   'By agent and model': 'По агентам и моделям',
   Turns: 'Ходы',
   Calls: 'Вызовы',
-  'Billable tokens': 'Оплачиваемые токены',
   '(default)': '(по умолчанию)',
   'Heaviest conversations': 'Самые затратные беседы',
 
@@ -397,8 +396,6 @@ export const ru: Record<string, string> = {
   '1 = Monday … 7 = Sunday': '1 = понедельник … 7 = воскресенье',
   'Reset hour': 'Час сброса',
   '0–23, server time.': '0–23, по времени сервера',
-  'Cache-hit weight': 'Вес попадания в кэш',
-  'Output weight': 'Вес вывода',
   'Agents offered': 'Предлагаемые агенты',
   'Anthropic Messages native (official / DeepSeek compatibility layer / your own gateway)': 'Нативный Anthropic Messages (официальный / слой совместимости DeepSeek / собственный шлюз)',
   'OpenAI Chat compatible (Ollama / LM Studio / third party)': 'Совместимый с OpenAI Chat (Ollama / LM Studio / сторонний)',
@@ -439,7 +436,7 @@ export const ru: Record<string, string> = {
   'Empty if the relay needs no login.': 'Пусто, если релей не требует логина',
   'SMTP password': 'Пароль SMTP',
   'Refresh the model list hourly': 'Обновлять список моделей каждый час',
-  'Millions of billable tokens per period; empty is unlimited.': 'Миллионы оплачиваемых токенов за период; пусто — без ограничения',
+  'A monthly ceiling for a new account, in the settlement currency; empty is unlimited.': 'Месячный лимит для нового аккаунта, в валюте расчётов; пусто — без ограничения',
   'Quota used up — ask an administrator': 'Квота исчерпана — обратитесь к администратору',
   '{scope} quota used up ({used} / {limit}) — ask an administrator': 'Квота {scope} исчерпана ({used} / {limit}) — обратитесь к администратору',
   '5 h': '5 ч',
@@ -591,9 +588,9 @@ export const ru: Record<string, string> = {
   'Out': 'Выход',
   'Cost': 'Стоимость',
 
-  // Billing currency and the fallback weights
+  // Billing currency
   'Currency': 'Валюта',
-  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Тарифицируемые токены — это фактическая стоимость хода, выраженная во входных токенах по стандартной ставке: дорогая модель расходует больше той же квоты',
+  'What each turn cost, at the price the upstream charges for that model — so a costlier model draws more of the same quota': 'Стоимость каждого хода — по тому прайсу, который провайдер берёт за эту модель: дорогая модель расходует больше той же квоты',
 
   // Admin: the price table
   'Price table': 'Таблица цен',
@@ -684,6 +681,5 @@ export const ru: Record<string, string> = {
   'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'В чём считаются денежные лимиты. Цены остаются в валюте, которую публикует каждый поставщик; сюда они пересчитываются только тогда, когда лимиту нужно одно число.',
   'Exchange rates': 'Курсы валют',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, валюта → сколько единиц расчётной валюты стоит одна её единица, например {"USD": 6.75} при расчёте в CNY. Используется только там, где лимит требует одного числа.',
-  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'То, что считает лимит по токенам. Деньги считаются отдельно и по каждой валюте; квоту определяют только эти веса.',
   'Cache written': 'Запись в кэш',
 };

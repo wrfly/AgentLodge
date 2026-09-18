@@ -140,7 +140,7 @@ console.log('\n=== Only a revoked key can be deleted, and its usage stays ===');
   apiKeys.revoke(key.id, alice.user.id);
   const now = new Date().toISOString();
   db.run(
-    `insert into usage_records (user_id, agent, status, created_at, day, billable_tokens, api_key_id)
+    `insert into usage_records (user_id, agent, status, created_at, day, cost_micro, api_key_id)
      values (?, 'claude', 'completed', ?, ?, 1234, ?)`,
     alice.user.id,
     now,

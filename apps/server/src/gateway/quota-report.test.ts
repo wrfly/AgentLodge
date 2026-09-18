@@ -57,7 +57,6 @@ function q(over: Partial<Record<QuotaScope, Partial<QuotaWindow>>> = {}, top: Pa
   };
   const limited = Object.values(windows).filter((w) => w.limit !== null);
   return {
-    limitKind: 'tokens',
     currency: 'CNY',
     hardStop: true,
     windows,

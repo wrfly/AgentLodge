@@ -45,7 +45,7 @@ async function maybeWarnQuota(userId: string): Promise<void> {
   usersRepo.markWarned(userId, key);
   const base = getString('app.baseUrl', 'http://localhost:5173');
   // The refusal's own formatter, so the mail and the refusal cannot spell one number two ways
-  const { unit, amount } = quota.amountIn(status.limitKind, status.currency);
+  const { unit, amount } = quota.amountIn(status.currency);
   const tpl = mail.quotaWarningMail({
     username: user.username,
     used: amount(hit.used),

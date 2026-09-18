@@ -39,10 +39,21 @@ const PRESETS: Array<{ id: RangePreset; label: string }> = [
 
 
 /** A minimal bar chart — not worth a charting library for one trend line */
-function Chart({ data, unit, from }: { data: SeriesPoint[]; unit: 'day' | 'hour'; from: string }) {
+function Chart({
+  data,
+  unit,
+  from,
+  currency,
+}: {
+  data: SeriesPoint[];
+  unit: 'day' | 'hour';
+  from: string;
+  /** What an empty bucket's zero is denominated in; a bare $0.00 on a CNY deployment is a lie */
+  currency: string;
+}) {
   const t = useT();
   if (!data.length) return <Empty text={t('No usage in this period')} />;
-  const max = Math.max(...data.map((d) => d.billableTokens), 1);
+  const max = Math.max(...data.map((d) => d.costSettled), 1);
   const short = (stamp: string) => (unit === 'hour' ? stamp.slice(11, 16) : stamp.slice(5));
 
   /*
@@ -70,10 +81,10 @@ function Chart({ data, unit, from }: { data: SeriesPoint[]; unit: 'day' | 'hour'
             key={d.t}
             className={clsx(
               'group relative min-w-[3px] flex-1 rounded-t-sm transition',
-              d.billableTokens > 0 ? 'bg-accent/70 hover:bg-accent' : 'bg-line',
+              d.costSettled > 0 ? 'bg-accent/70 hover:bg-accent' : 'bg-line',
             )}
             style={{
-              height: `${d.billableTokens ? Math.max((d.billableTokens / max) * 100, 3) : 2}%`,
+              height: `${d.costSettled ? Math.max((d.costSettled / max) * 100, 3) : 2}%`,
             }}
           >
             <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 hidden -translate-x-1/2 rounded-md border border-line bg-surface px-2 py-1 text-[11px] whitespace-nowrap shadow-lg group-hover:block">
@@ -81,8 +92,8 @@ function Chart({ data, unit, from }: { data: SeriesPoint[]; unit: 'day' | 'hour'
                 {i === 0 && partial ? t('{bucket} · from {time}', { bucket: d.t, time: partial }) : d.t}
               </div>
               <div className="font-mono text-muted">
-                {t('{tokens} tokens · {turns} turns · {calls} calls', {
-                  tokens: d.billableTokens.toLocaleString(),
+                {t('{cost} · {turns} turns · {calls} calls', {
+                  cost: fmtCost(d.cost, currency),
                   turns: d.turns,
                   calls: d.calls,
                 })}
@@ -104,8 +115,7 @@ const SCOPES = ['window', 'week', 'month'] as const;
 
 function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
   const t = useT();
-  const byCost = quota.limitKind === 'cost';
-  const show = (v: number) => (byCost ? fmtMoney(v, quota.currency) : v.toLocaleString());
+  const show = (v: number) => fmtMoney(v, quota.currency);
   /*
    * The same words the buttons below use, for the same ranges.
    *
@@ -272,9 +282,9 @@ export function UsagePage() {
   return (
     <Page
       title={t('Usage')}
-      // The formula this used to quote is now only the fallback branch. Quota counts what a
-      // turn cost, so the same token count on two models is two different numbers.
-      subtitle={t('Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota')}
+      // It used to explain a token weighting, which is gone: quota is money, and money is
+      // what the upstream charges, so there is no formula of ours left to explain.
+      subtitle={t('What each turn cost, at the price the upstream charges for that model — so a costlier model draws more of the same quota')}
       actions={
         <Button onClick={() => void load()} loading={busy}>
           <RefreshCw size={13} />
@@ -288,20 +298,23 @@ export function UsagePage() {
           <QuotaCard quota={data.quota} />
 
           <div className="mb-4 grid grid-cols-3 gap-3">
+            {/* The headline is the money; the line under it is what that money bought.
+                Both used to be tokens and cost, and switching the headline to cost left the
+                same figure printed twice in every tile. */}
             <Stat
               label={t('Today')}
-              value={fmtTokens(data.quick.today.billableTokens)}
-              sub={`${fmtCost(data.quick.today.cost, data.quota.currency)} · ${t('{n} turns', { n: data.quick.today.turns })}`}
+              value={fmtCost(data.quick.today.cost, data.quota.currency)}
+              sub={t('{n} turns', { n: data.quick.today.turns })}
             />
             <Stat
               label={t('This month')}
-              value={fmtTokens(data.quick.month.billableTokens)}
-              sub={`${fmtCost(data.quick.month.cost, data.quota.currency)} · ${t('{n} turns', { n: data.quick.month.turns })}`}
+              value={fmtCost(data.quick.month.cost, data.quota.currency)}
+              sub={t('{n} turns', { n: data.quick.month.turns })}
             />
             <Stat
               label={t('All time')}
-              value={fmtTokens(data.quick.allTime.billableTokens)}
-              sub={`${fmtCost(data.quick.allTime.cost, data.quota.currency)} · ${t('{n} turns', { n: data.quick.allTime.turns })}`}
+              value={fmtCost(data.quick.allTime.cost, data.quota.currency)}
+              sub={t('{n} turns', { n: data.quick.allTime.turns })}
             />
           </div>
 
@@ -359,9 +372,6 @@ export function UsagePage() {
             <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-line pt-3">
               <span className="text-[13px] font-medium">{t(data.range.label)}</span>
               <span className="font-mono text-[17px] font-semibold text-accent tabular-nums">
-                {data.totals.billableTokens.toLocaleString()}
-              </span>
-              <span className="font-mono text-[13px] text-muted">
                 {fmtCost(data.totals.cost, data.quota.currency)}
               </span>
               {/* Cache is read plus creation, the same split the table below and the chat
@@ -379,7 +389,12 @@ export function UsagePage() {
               </span>
             </div>
 
-            <Chart data={data.series} unit={data.seriesUnit} from={data.range.from} />
+            <Chart
+              data={data.series}
+              unit={data.seriesUnit}
+              from={data.range.from}
+              currency={data.quota.currency}
+            />
           </Card>
 
           {/*
@@ -400,7 +415,6 @@ export function UsagePage() {
                       {/* Which credential it went out on, as the credential manager knows it */}
                       <th className="pb-2 font-medium">{t('Credential')}</th>
                       <th className="pb-2 text-right font-medium">{t('Turns')}</th>
-                      <th className="pb-2 text-right font-medium">{t('Billable tokens')}</th>
                       <th className="pb-2 text-right font-medium">{t('Cost')}</th>
                     </tr>
                   </thead>
@@ -427,9 +441,6 @@ export function UsagePage() {
                           <td className="py-2 font-mono text-[12px] text-muted">{r.kind || '—'}</td>
                           <td className="py-2 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
                           <td className="py-2 text-right tabular-nums">{r.turns}</td>
-                          <td className="py-2 text-right font-mono tabular-nums">
-                            {r.billableTokens.toLocaleString()}
-                          </td>
                           <td className="py-2 text-right font-mono tabular-nums">
                             {fmtCost(r.cost, data.quota.currency)}
                           </td>
@@ -469,7 +480,7 @@ export function UsagePage() {
                     <span className="w-12 shrink-0 font-mono text-[11px] text-faint">{c.agent}</span>
                     <span className="min-w-0 flex-1 truncate text-[13px]">{c.title}</span>
                     <span className="shrink-0 font-mono text-[12px] text-muted tabular-nums">
-                      {fmtTokens(c.billableTokens)}
+                      {fmtCost(c.cost, data.quota.currency)}
                     </span>
                   </button>
                 ))}

@@ -47,16 +47,15 @@ function makeUser(email: string): string {
   return users.create({ email, username: email.split('@')[0]!, passwordHash: 'x', role: 'user' }).id;
 }
 
-/** A usage record at a given instant, in billable tokens */
-function spend(userId: string, at: Date, tokens: number): void {
+/** A usage record at a given instant, in micro-units of money — what a ceiling is counted in */
+function spend(userId: string, at: Date, micro: number): void {
   // id is an autoincrement integer, so it is left to the database
   run(
     `insert into usage_records
-       (user_id, agent, model, billable_tokens, cost_micro, status, created_at, day, source)
-     values (?, 'claude', 'm', ?, ?, 'completed', ?, ?, 'gateway')`,
+       (user_id, agent, model, cost_micro, status, created_at, day, source)
+     values (?, 'claude', 'm', ?, 'completed', ?, ?, 'gateway')`,
     userId,
-    tokens,
-    tokens,
+    micro,
     at.toISOString(),
     at.toISOString().slice(0, 10),
   );
@@ -251,20 +250,19 @@ console.log('\n=== what a turn typically costs, for saying the remainder in turn
   const usageRepo = await import('./db/usage.js');
   const carol = makeUser('carol@example.com');
 
-  ok('with nothing spent there is no typical turn', usageRepo.typicalTurn(carol, 'tokens') === null);
+  ok('with nothing spent there is no typical turn', usageRepo.typicalTurn(carol) === null);
 
   // The gateway writes one row per upstream call, so a turn is the group of rows sharing a
   // turn_id — not a row. Three calls of 100 are one turn of 300, and reading them as three
   // turns of 100 would promise three times the runway.
-  const call = (turnId: string | null, tokens: number) =>
+  const call = (turnId: string | null, micro: number) =>
     run(
       `insert into usage_records
-         (user_id, turn_id, agent, model, billable_tokens, cost_micro, status, created_at, day, source)
-       values (?, ?, 'claude', 'm', ?, ?, 'completed', ?, ?, 'gateway')`,
+         (user_id, turn_id, agent, model, cost_micro, status, created_at, day, source)
+       values (?, ?, 'claude', 'm', ?, 'completed', ?, ?, 'gateway')`,
       carol,
       turnId,
-      tokens,
-      tokens * 2,
+      micro,
       new Date().toISOString(),
       new Date().toISOString().slice(0, 10),
     );
@@ -272,45 +270,70 @@ console.log('\n=== what a turn typically costs, for saying the remainder in turn
   call('t1', 100);
   call('t1', 100);
   call('t1', 100);
-  ok('calls sharing a turn are one turn', usageRepo.typicalTurn(carol, 'tokens') === 300);
+  ok('calls sharing a turn are one turn', usageRepo.typicalTurn(carol) === 300);
 
   call('t2', 500);
   call('t3', 400);
   // 300, 400, 500 — the middle one
-  ok('three turns give the median', usageRepo.typicalTurn(carol, 'tokens') === 400);
+  ok('three turns give the median', usageRepo.typicalTurn(carol) === 400);
 
   // The median rather than the mean, because one runaway turn is the thing somebody wants
   // warning about and also the thing that would drag a mean past usefulness.
   call('t4', 1_000_000);
-  ok('a runaway turn does not move it much', usageRepo.typicalTurn(carol, 'tokens') === 450, String(usageRepo.typicalTurn(carol, 'tokens')));
+  ok('a runaway turn does not move it much', usageRepo.typicalTurn(carol) === 450, String(usageRepo.typicalTurn(carol)));
 
   // A failed turn still gets a row, for debugging. Counting those as cheap turns would say
   // somebody has more room than they have.
   call('t5', 0);
   call('t6', 0);
-  ok('turns that cost nothing are left out', usageRepo.typicalTurn(carol, 'tokens') === 450);
+  ok('turns that cost nothing are left out', usageRepo.typicalTurn(carol) === 450);
 
-  // The unit follows the ceiling: cost_micro is twice billable_tokens in these fixtures
-  ok('the cost unit reads the other column', usageRepo.typicalTurn(carol, 'cost') === 900);
+  /*
+   * A turn that crossed two upstreams is still one turn.
+   *
+   * Grouped by turn *and* currency it becomes two, each entering the median as its own
+   * cheaper turn — so somebody is told they have about twice the runway the gate will give
+   * them. `settle` converts CNY at the configured rate, so the yuan half is worth its rate.
+   */
+  const { setSetting } = await import('./db/settings.js');
+  setSetting('billing.currency', 'USD');
+  setSetting('billing.rates', JSON.stringify({ CNY: 0.5 }));
+  const split = (turnId: string, micro: number, currency: string) =>
+    run(
+      `insert into usage_records
+         (user_id, turn_id, agent, model, cost_micro, cost_currency, status, created_at, day, source)
+       values (?, ?, 'claude', 'm', ?, ?, 'completed', ?, ?, 'gateway')`,
+      carol, turnId, micro, currency,
+      new Date().toISOString(), new Date().toISOString().slice(0, 10),
+    );
+  const before = usageRepo.typicalTurn(carol);
+  // 400 USD-micro + 400 CNY-micro at 0.5 = 600 settled, in one turn
+  split('t7', 400, 'USD');
+  split('t7', 400, 'CNY');
+  const sample = usageRepo.typicalTurn(carol, 200);
+  ok('a turn split across two currencies is one turn, not two cheaper ones',
+    sample !== null && sample >= (before ?? 0),
+    `${before} -> ${sample}`);
+  const one = usageRepo.typicalTurn(carol, 1);
+  ok('and it is worth both halves, settled', one === 600, String(one));
 
   // A row with no turn_id — the CLI path writes one row per turn — is its own turn, not
   // lumped with every other turn-less row into one enormous one.
   const dave = makeUser('dave@example.com');
-  const noTurn = (tokens: number) =>
+  const noTurn = (micro: number) =>
     run(
       `insert into usage_records
-         (user_id, agent, model, billable_tokens, cost_micro, status, created_at, day, source)
-       values (?, 'claude', 'm', ?, ?, 'completed', ?, ?, 'cli')`,
+         (user_id, agent, model, cost_micro, status, created_at, day, source)
+       values (?, 'claude', 'm', ?, 'completed', ?, ?, 'cli')`,
       dave,
-      tokens,
-      tokens,
+      micro,
       new Date().toISOString(),
       new Date().toISOString().slice(0, 10),
     );
   noTurn(10);
   noTurn(20);
   noTurn(30);
-  ok('rows with no turn id count one each', usageRepo.typicalTurn(dave, 'tokens') === 20, String(usageRepo.typicalTurn(dave, 'tokens')));
+  ok('rows with no turn id count one each', usageRepo.typicalTurn(dave) === 20, String(usageRepo.typicalTurn(dave)));
 }
 
 fs.rmSync(box, { recursive: true, force: true });

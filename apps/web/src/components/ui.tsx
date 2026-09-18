@@ -317,23 +317,6 @@ export function fmtTokens(n: number): string {
   return String(n);
 }
 
-/**
- * Tokens as millions, and back.
- *
- * Usage is counted in tokens and an allowance is typed in millions: an administrator sizing
- * a quota thinks in millions, and a misplaced zero in `5000000` is invisible in a way that
- * one in `5` is not. Only the fields convert — everything stored, billed and compared stays
- * in tokens.
- */
-export function tokensToM(tokens: number): string {
-  // Number() again to drop the trailing zeros toFixed leaves behind
-  return String(Number((tokens / 1_000_000).toFixed(6)));
-}
-
-export function mToTokens(m: string): number {
-  return Math.round(Number(m) * 1_000_000);
-}
-
 /** A file size, short enough to sit beside a name */
 export function fmtSize(n: number): string {
   if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;

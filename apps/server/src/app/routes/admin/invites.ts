@@ -2,6 +2,8 @@
 import type { FastifyInstance } from 'fastify';
 import * as usersRepo from '../../../core/db/users.js';
 import * as invitesRepo from '../../../core/db/invites.js';
+import * as usageRepo from '../../../core/db/usage.js';
+import * as quota from '../../../core/quota.js';
 import * as audit from '../../../core/db/audit.js';
 import { getString } from '../../../core/db/settings.js';
 import * as mail from '../../mail.js';
@@ -10,7 +12,14 @@ import { tr } from '../../../core/i18n/locale.js';
 
 export function register(app: FastifyInstance): void {
 
-  app.get('/api/admin/invites', guard, async () => invitesRepo.list());
+  /*
+   * The currency travels with the list because a preset is money now, and a money figure
+   * with no currency beside it is the bug this whole change exists to remove.
+   */
+  app.get('/api/admin/invites', guard, async () => ({
+    currency: usageRepo.settlementCurrency(),
+    invites: invitesRepo.list(),
+  }));
 
   app.post('/api/admin/invites', guard, async (req) => {
     const body = (req.body ?? {}) as {
@@ -18,7 +27,7 @@ export function register(app: FastifyInstance): void {
       note?: string;
       maxUses?: number;
       expiresInDays?: number;
-      presetTokenLimit?: number | null;
+      presetLimit?: number | null;
     };
     const count = Math.min(Math.max(body.count ?? 1, 1), 50);
     const expiresAt = body.expiresInDays
@@ -31,7 +40,7 @@ export function register(app: FastifyInstance): void {
         note: body.note,
         maxUses: body.maxUses,
         expiresAt,
-        presetTokenLimit: body.presetTokenLimit,
+        presetLimit: body.presetLimit,
       }),
     );
 
@@ -50,7 +59,7 @@ export function register(app: FastifyInstance): void {
       email?: string;
       note?: string;
       expiresInDays?: number;
-      presetTokenLimit?: number | null;
+      presetLimit?: number | null;
     };
     const email = (body.email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
@@ -68,7 +77,7 @@ export function register(app: FastifyInstance): void {
       note: body.note,
       maxUses: 1,
       expiresAt,
-      presetTokenLimit: body.presetTokenLimit,
+      presetLimit: body.presetLimit,
     });
 
     const base = getString('app.baseUrl', 'http://localhost:5173');
@@ -80,7 +89,13 @@ export function register(app: FastifyInstance): void {
       link,
       inviterName: inviter?.username,
       expiresAt,
-      tokenLimit: invite.presetTokenLimit,
+      // The refusal's own formatter, so a ceiling reads the same in the mail as at the gate
+      ...(invite.presetLimit === null
+        ? {}
+        : {
+            limit: quota.amountIn(usageRepo.settlementCurrency()).amount(invite.presetLimit),
+            unit: usageRepo.settlementCurrency(),
+          }),
     });
     const result = await mail.send({ to: email, ...tpl, link });
     if (result.sent) invitesRepo.markSent(invite.id);

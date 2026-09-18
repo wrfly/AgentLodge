@@ -1,5 +1,5 @@
 import { all, get, localDay, nowIso, run, tx } from './index.js';
-import { getString, quotaAnchor, quotaWeights } from './settings.js';
+import { getString, quotaAnchor } from './settings.js';
 import {
   periodEndAt,
   periodStartAt,
@@ -9,7 +9,7 @@ import {
 import * as pricing from './pricing.js';
 
 export type { QuotaPeriod };
-import type { AgentId, TurnUsage, LimitKind } from '../protocol.js';
+import type { AgentId, TurnUsage } from '../protocol.js';
 
 export type TurnStatus = 'completed' | 'error' | 'aborted';
 
@@ -32,36 +32,6 @@ export interface RecordInput {
   ttftMs?: number;
 }
 
-/**
- * Convert to billable tokens: a turn's weight against a **token** ceiling.
- *
- * A plain sum is distorted within a turn — a cache hit costs a fraction of ordinary input and
- * output costs several times more — so the four counts are weighted, and the weights are
- * configurable. That is the whole of it: this is a count, and it stays a count.
- *
- * It used to be derived from money: the turn was costed from the price table and divided by
- * the catch-all's input price, so an expensive model drew proportionally more quota. That is a
- * good property and it is **not** a property a token count can have once two vendors bill in
- * two currencies. Deriving it from money means either dividing each turn by the catch-all of
- * its own currency — which makes DeepSeek's cheapest model draw exactly what Opus draws,
- * because it *is* the yuan catch-all — or converting at a rate, which makes every user's quota
- * move when an exchange rate does. Neither is a token count.
- *
- * So the two questions are separated. A ceiling that should track what a model costs is a
- * **cost** ceiling — `limitKind: 'cost'`, counted in the settlement currency, which is where
- * an exchange rate legitimately belongs because a limit is one number. A token ceiling counts
- * tokens, weighted, in no currency at all.
- */
-export function billable(u: TurnUsage, _model?: string | null, _providerId?: string | null): number {
-  const w = quotaWeights();
-  return Math.round(
-    u.inputTokens * w.input +
-      u.cacheReadTokens * w.cacheRead +
-      u.cacheCreationTokens * w.cacheCreation +
-      u.outputTokens * w.output,
-  );
-}
-
 export function record(input: RecordInput): void {
   const u = input.usage;
   /*
@@ -76,9 +46,9 @@ export function record(input: RecordInput): void {
     `insert into usage_records
        (user_id, conversation_id, turn_id, agent, model, provider_id, effort,
         input_tokens, cache_read_tokens, cache_creation_tokens, output_tokens,
-        billable_tokens, cost_usd, cost_micro, cost_currency, duration_ms, num_turns, status,
+        cost_usd, cost_micro, cost_currency, duration_ms, num_turns, status,
         created_at, day, source, queue_wait_ms, ttft_ms, api_key_id)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.userId,
     input.conversationId ?? null,
     input.turnId ?? null,
@@ -90,7 +60,6 @@ export function record(input: RecordInput): void {
     u?.cacheReadTokens ?? 0,
     u?.cacheCreationTokens ?? 0,
     u?.outputTokens ?? 0,
-    u ? billable(u, input.model, input.providerId) : 0,
     u?.costUsd ?? 0,
     u && priced ? Math.round(pricing.costOf(priced, u)) : 0,
     priced?.currency ?? 'USD',
@@ -173,15 +142,8 @@ export function repriceHistory(): void {
         if (costMicro !== r.cost_micro) changed++;
 
         /*
-         * `cost_micro` and `cost_currency`, and deliberately **not** `billable_tokens`.
-         *
-         * Cost is derived from a table that was wrong, so deriving it again is a correction.
-         * A token count is not: rewriting it would restate what every user has already spent
-         * against their ceiling, and the two definitions do not agree — a row written when
-         * billable came from price and one written from the weights differ by up to an order
-         * of magnitude in both directions. Quota windows are five hours, a week and a month;
-         * old rows age out of all three on their own, which is a better outcome than a
-         * restart silently moving everybody's consumption.
+         * Cost is derived from a table that was wrong, so deriving it again is a correction —
+         * the tokens it is derived *from* are untouched, and they are what makes that possible.
          */
         run(
           'update usage_records set cost_micro = ?, cost_currency = ? where id = ?',
@@ -296,6 +258,23 @@ function warnMissingRate(from: string, to: string): void {
   );
 }
 
+/**
+ * Heaviest first, by the settled figure.
+ *
+ * **Not `order by sum(cost_micro)`.** That adds yuan to dollars, which is the one thing this
+ * module exists to avoid: at a configured rate ¥50 is about $7, but as raw micro-units it
+ * outranks $30. The rows themselves were always right — `toTotals` splits them per currency —
+ * so a leaderboard came back correctly costed in an order that contradicted its own numbers.
+ *
+ * `costSettled` is the figure the gate compares a ceiling against, so a list ordered by it
+ * and a refusal cannot disagree about who is spending most. It is done here rather than in
+ * SQL because the conversion is a setting rather than a column; the queries order by
+ * something stable instead, and `sort` is stable, so equal spenders keep that order.
+ */
+function heaviestFirst<T extends Totals>(rows: T[]): T[] {
+  return rows.sort((a, b) => b.costSettled - a.costSettled);
+}
+
 export interface Totals {
   /** Upstream calls — more than the number of turns, when counted by the gateway */
   calls: number;
@@ -303,7 +282,6 @@ export interface Totals {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   outputTokens: number;
-  billableTokens: number;
   costUsd: number;
   /** Cost from the price table, in micro-units, per currency */
   cost: Money;
@@ -323,7 +301,6 @@ interface TotalsRow {
   cache_read_tokens: number | null;
   cache_creation_tokens: number | null;
   output_tokens: number | null;
-  billable_tokens: number | null;
   cost_usd: number | null;
   turns: number | null;
   calls: number | null;
@@ -379,7 +356,6 @@ const SUM = (a = ''): string => `
   coalesce(sum(${a}cache_read_tokens),0)     as cache_read_tokens,
   coalesce(sum(${a}cache_creation_tokens),0) as cache_creation_tokens,
   coalesce(sum(${a}output_tokens),0)         as output_tokens,
-  coalesce(sum(${a}billable_tokens),0)       as billable_tokens,
   coalesce(sum(${a}cost_usd),0)              as cost_usd,
   ${pricedCurrencies()
     .map((c) => `coalesce(sum(case when ${a}cost_currency = '${c}' then ${a}cost_micro else 0 end),0) as money_${c}`)
@@ -410,7 +386,6 @@ const totalsFrom = (money: Money, r?: TotalsRow): Totals => ({
   cacheReadTokens: r?.cache_read_tokens ?? 0,
   cacheCreationTokens: r?.cache_creation_tokens ?? 0,
   outputTokens: r?.output_tokens ?? 0,
-  billableTokens: r?.billable_tokens ?? 0,
   costUsd: r?.cost_usd ?? 0,
   cost: money,
   costSettled: settle(money),
@@ -512,9 +487,9 @@ export function firstRecordFor(userId: string): string | undefined {
  * What one of this user's turns typically costs, in the unit their quota is counted in.
  *
  * For telling somebody how much room they have left in a unit that means something to
- * them. "1.2M billable tokens remaining" answers nothing on its own — the same number is
- * two turns for one person and forty for another, and which they are is not something they
- * can work out. It is derived from what they have actually spent rather than estimated
+ * them. "$4.20 remaining" answers nothing on its own — the same figure is two turns for one
+ * person and forty for another, and which they are is not something they can work out. It is
+ * derived from what they have actually spent rather than estimated
  * from the model and the context, because a turn's cost depends on how many upstream calls
  * the agent makes, which nobody can know in advance.
  *
@@ -523,7 +498,9 @@ export function firstRecordFor(userId: string): string | undefined {
  * warning being useful for the other twenty.
  *
  * Zero-cost rows are left out. A failed turn still gets a row, for debugging, and counting
- * those as cheap turns would say somebody has more room than they do.
+ * those as cheap turns would say somebody has more room than they do. "Zero" is the turn's
+ * whole cost, not one currency's share of it, so a turn that spent nothing on one upstream and
+ * something on another still counts once, for what it cost.
  *
  * **Bounded to a window on purpose, and not called on the hot path.** `group by` defeats
  * the (user_id, created_at) index, so without `since` this reads every row the user has
@@ -535,38 +512,42 @@ export function firstRecordFor(userId: string): string | undefined {
  */
 export function typicalTurn(
   userId: string,
-  kind: LimitKind,
   sample = 20,
   /** How far back to look. A month is long enough to have twenty turns in it and short
    *  enough that the scan stays small — and recent turns are the ones that predict. */
   since = new Date(Date.now() - 30 * 86_400_000).toISOString(),
 ): number | null {
   /*
-   * A cost figure has to be settled, not summed raw.
+   * Settled, not summed raw.
    *
-   * This number is divided into a remainder the gate counts in the settlement currency, so a
-   * per-turn figure that is a mixture of yuan and dollar micro-units answers a different
+   * This figure is divided into a remainder the gate counts in the settlement currency, so a
+   * per-turn number that is a mixture of yuan and dollar micro-units answers a different
    * question from the one it is compared against — and on a yuan-heavy account it overstates
    * the turn by the whole exchange rate, telling somebody they have a fraction of the turns
    * the gate will actually let them have.
    */
-  const byCost = kind === 'cost';
-  const rows = all<{ spent: number; currency: string }>(
-    byCost
-      ? `select sum(cost_micro) as spent, cost_currency as currency
-           from usage_records
-          where user_id = ? and created_at >= ?
-          group by coalesce(turn_id, 'row:' || id), cost_currency
-         having spent > 0
-          order by max(created_at) desc
-          limit ?`
-      : `select sum(billable_tokens) as spent, '' as currency
-           from usage_records
-          where user_id = ? and created_at >= ?
-          group by coalesce(turn_id, 'row:' || id)
-         having spent > 0
-          order by max(created_at) desc
-          limit ?`,
+  /*
+   * Grouped by turn alone, with the currencies as conditional columns — the same trick, and
+   * for the same reason, as `SUM()`.
+   *
+   * Adding `cost_currency` to the `group by` is what a first version did, and it splits a turn
+   * that crossed two upstreams into two rows. Each half then enters the median as its own
+   * cheaper "turn", and `limit 20` samples twenty halves rather than twenty turns — so the
+   * remainder is reported as roughly twice the turns the gate will actually allow. It mattered
+   * less when only cost-limited accounts took this path; every account takes it now.
+   */
+  const cols = pricedCurrencies();
+  const rows = all<Record<string, number>>(
+    `select ${cols
+      .map((c) => `coalesce(sum(case when cost_currency = '${c}' then cost_micro else 0 end),0) as money_${c}`)
+      .join(',\n           ')},
+            sum(cost_micro) as spent
+       from usage_records
+      where user_id = ? and created_at >= ?
+      group by coalesce(turn_id, 'row:' || id)
+     having spent > 0
+      order by max(created_at) desc
+      limit ?`,
     userId,
     since,
     sample,
@@ -574,7 +555,7 @@ export function typicalTurn(
   if (!rows.length) return null;
   // The gateway writes a row per upstream call, so a turn is the group, not the row
   const spent = rows
-    .map((r) => (byCost ? settle({ [r.currency]: r.spent }) : r.spent))
+    .map((r) => settle(Object.fromEntries(cols.map((c) => [c, Number(r[`money_${c}`] ?? 0)]))))
     .sort((a, b) => a - b);
   const mid = Math.floor(spent.length / 2);
   return spent.length % 2 ? spent[mid]! : Math.round((spent[mid - 1]! + spent[mid]!) / 2);
@@ -750,20 +731,19 @@ export function hourlyForUserRange(userId: string, range: Range, only?: Upstream
  * child of a child.
  */
 export function byModelForConversation(conversationId: string): Array<Totals & { model: string }> {
-  return all<TotalsRow & { model: string | null }>(
+  const rows = all<TotalsRow & { model: string | null }>(
     `select coalesce(model, '') as model, ${SUM()}
        from usage_records
       where conversation_id = ?
          or conversation_id in (select id from conversations where parent_id = ?)
       group by coalesce(model, '')
-      -- Explicit, not the bare name: SUM() stopped emitting a cost_micro alias when money
-      -- became per-currency, and SQLite would resolve the bare column to an arbitrary row of
-      -- the group. Ordering by a sum across currencies is approximate -- a conversation is
-      -- almost always one vendor -- but it is at least the group's own total.
-      order by sum(cost_micro) desc`,
+      -- A stable tie-break only; what is shown is ordered by heaviestFirst, which settles
+      -- the currencies first. SQL cannot: the rates are a setting, not a column.
+      order by coalesce(model, '')`,
     conversationId,
     conversationId,
   ).map((r) => ({ model: r.model ?? '', ...toTotals(r) }));
+  return heaviestFirst(rows);
 }
 
 export interface AgentBreakdown extends Totals {
@@ -774,15 +754,16 @@ export interface AgentBreakdown extends Totals {
 export function byAgentForUser(userId: string, range?: Range | string, only?: UpstreamFilter): AgentBreakdown[] {
   const [from, to] = bounds(range);
   const f = onlyUpstream(only);
-  return all<TotalsRow & { agent: string; model: string | null }>(
+  const rows = all<TotalsRow & { agent: string; model: string | null }>(
     `select agent, model, ${SUM()} from usage_records
      where user_id = ? and created_at >= ? and created_at < ?${f.sql}
-     group by agent, model order by billable_tokens desc`,
+     group by agent, model order by agent, model`,
     userId,
     from,
     to,
     ...f.params,
   ).map((r) => ({ agent: r.agent, model: r.model, ...toTotals(r) }));
+  return heaviestFirst(rows);
 }
 
 /** Cumulative usage per API key — shown beside each key on the settings page, so it is visible which one is in use */
@@ -832,12 +813,12 @@ export function byUpstreamAll(range?: Range | string): UpstreamUsage[] {
 function byUpstream(range?: Range | string, userId?: string): UpstreamUsage[] {
   const [from, to] = bounds(range);
   const mine = userId === undefined ? '' : ' and u.user_id = ?';
-  return all<TotalsRow & { provider_id: string | null; name: string | null; kind: string | null; credential_id: string | null }>(
+  const rows = all<TotalsRow & { provider_id: string | null; name: string | null; kind: string | null; credential_id: string | null }>(
     `select u.provider_id, p.name, p.kind, p.credential_id, ${SUM('u.')}
      from usage_records u left join upstream_providers p on p.id = u.provider_id
      where u.created_at >= ? and u.created_at < ?${mine}
      group by u.provider_id
-     order by billable_tokens desc`,
+     order by coalesce(p.name, '')`,
     from,
     to,
     ...(userId === undefined ? [] : [userId]),
@@ -848,6 +829,7 @@ function byUpstream(range?: Range | string, userId?: string): UpstreamUsage[] {
     credentialId: r.credential_id ?? '',
     ...toTotals(r),
   }));
+  return heaviestFirst(rows);
 }
 
 /** One model's share of one upstream — `providerId` empty for the rows with no upstream of ours */
@@ -873,12 +855,12 @@ export interface UpstreamModelUsage extends Totals {
  */
 export function byUpstreamModelAll(range?: Range | string): UpstreamModelUsage[] {
   const [from, to] = bounds(range);
-  return all<TotalsRow & { provider_id: string | null; model: string | null }>(
+  const rows = all<TotalsRow & { provider_id: string | null; model: string | null }>(
     `select u.provider_id, coalesce(u.model, '') as model, ${SUM('u.')}
      from usage_records u
      where u.created_at >= ? and u.created_at < ?
      group by u.provider_id, coalesce(u.model, '')
-     order by billable_tokens desc`,
+     order by coalesce(u.provider_id, ''), coalesce(u.model, '')`,
     from,
     to,
   ).map((r) => ({
@@ -886,6 +868,7 @@ export function byUpstreamModelAll(range?: Range | string): UpstreamModelUsage[]
     model: r.model ?? '',
     ...toTotals(r),
   }));
+  return heaviestFirst(rows);
 }
 
 export function byConversationForUser(
@@ -896,18 +879,25 @@ export function byConversationForUser(
 ): ConversationUsage[] {
   const [from, to] = bounds(range);
   const f = onlyUpstream(only, 'u.');
-  return all<TotalsRow & { conversation_id: string; title: string; agent: string; updated_at: string }>(
+  /*
+   * The `limit` is applied here rather than in SQL, and that is the point of the slice.
+   *
+   * "The twenty heaviest" has to be chosen by the same figure it is then ordered by. Chosen in
+   * SQL by `sum(cost_micro)` it would be the twenty largest raw sums across currencies, and
+   * re-ordering those afterwards only rearranges a selection that already left the right
+   * conversations out. One row per conversation, per user, over one period is small enough to
+   * settle and cut here.
+   */
+  const rows = all<TotalsRow & { conversation_id: string; title: string; agent: string; updated_at: string }>(
     `select u.conversation_id, c.title, c.agent, c.updated_at, ${SUM('u.')}
      from usage_records u join conversations c on c.id = u.conversation_id
      where u.user_id = ? and u.created_at >= ? and u.created_at < ?${f.sql}
      group by u.conversation_id
-     order by billable_tokens desc
-     limit ?`,
+     order by c.updated_at desc`,
     userId,
     from,
     to,
     ...f.params,
-    limit,
   ).map((r) => ({
     conversationId: r.conversation_id,
     title: r.title,
@@ -915,6 +905,7 @@ export function byConversationForUser(
     updatedAt: r.updated_at,
     ...toTotals(r),
   }));
+  return heaviestFirst(rows).slice(0, limit);
 }
 
 export interface UserLeaderRow extends Totals {
@@ -945,12 +936,12 @@ export interface UserLeaderRow extends Totals {
  */
 export function allUsersInRange(range: Range): UserLeaderRow[] {
   const [from, to] = bounds(range);
-  return all<TotalsRow & { user_id: string; username: string | null; email: string | null }>(
+  const rows = all<TotalsRow & { user_id: string; username: string | null; email: string | null }>(
     `select u.user_id, us.username, us.email, ${SUM('u.')}
      from usage_records u left join users us on us.id = u.user_id
      where u.created_at >= ? and u.created_at < ?
      group by u.user_id
-     order by billable_tokens desc`,
+     order by coalesce(us.username, '')`,
     from,
     to,
   ).map((r) => ({
@@ -959,6 +950,7 @@ export function allUsersInRange(range: Range): UserLeaderRow[] {
     email: r.email ?? '',
     ...toTotals(r),
   }));
+  return heaviestFirst(rows);
 }
 
 export function dailyAllInRange(range: Range, only?: UpstreamFilter): DailyPoint[] {
@@ -1075,7 +1067,7 @@ const keyOf = (d: Date, unit: 'hour' | 'day'): string =>
  */
 const emptyTotals = (): Totals => ({
   calls: 0, inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0,
-  billableTokens: 0, costUsd: 0, cost: {}, costSettled: 0, turns: 0,
+  costUsd: 0, cost: {}, costSettled: 0, turns: 0,
 });
 
 /** Everybody's series over a range, one point per bucket, empty ones included */

@@ -15,10 +15,9 @@
  * nothing.
  *
  * The damage was silent, which is the reason for this file. costMicro() returns 0 when no
- * row matches, so every Claude turn was recorded as free; and billable() divides by the '*'
- * row to convert a cost into quota units, so with that row missing it fell through to the
- * flat weights — the accounting the price table exists to replace. No error, no log, and
- * both columns keep being written.
+ * row matches, so every Claude turn was recorded as free — and quota is money, so a turn
+ * recorded as free draws nothing against anybody's ceiling either. No error, no log, and
+ * the column keeps being written.
  *
  * Run: npm -w @agentlodge/server run test:seed
  */
@@ -34,7 +33,6 @@ process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 const { initDb } = await import('./index.js');
 initDb();
 const pricing = await import('./pricing.js');
-const { billable } = await import('./usage.js');
 
 let pass = 0;
 let fail = 0;
@@ -80,12 +78,12 @@ console.log('\n=== and every lookup a running deployment makes answers ===');
   ok('a DeepSeek model resolves', pricing.resolve('deepseek-flash')?.model === 'deepseek-flash');
   ok("an unknown model falls to '*'", pricing.resolve('a-model-nobody-configured')?.model === '*');
 
-  // What billable() divides by to turn a cost into quota units. Zero here does not throw —
-  // it silently switches quota accounting to the flat weights.
+  // Every model nobody has priced is costed by this row. Zero here does not throw — it
+  // records that traffic as free, and quota is money, so it draws nothing either.
   ok(
     'the catch-all prices an input token above zero',
-    pricing.inputMicroPerToken('*') > 0,
-    String(pricing.inputMicroPerToken('*')),
+    (pricing.resolve('*')?.priceInput ?? 0) > 0,
+    String(pricing.resolve('*')?.priceInput),
   );
 }
 
@@ -104,9 +102,9 @@ console.log('\n=== so the same tokens cost what the model costs ===');
 
   /*
    * The property that made the price table worth having: a million tokens on a cheap model is
-   * not a million tokens on an expensive one. It lives on **money** now rather than on the
-   * billable-token count — a count cannot carry it once two vendors bill in two currencies,
-   * so a ceiling that should track price is a cost ceiling, not a token one.
+   * not a million tokens on an expensive one. It lives on **money**, which is also what a
+   * ceiling is counted in — a token count cannot carry a price once two vendors bill in two
+   * currencies.
    */
   const dear = pricing.costMicro('claude-opus-5', u);
   const cheap = pricing.costMicro('claude-haiku-4-5', u);
@@ -117,15 +115,11 @@ console.log('\n=== so the same tokens cost what the model costs ===');
       && pricing.resolve('deepseek-flash')?.currency === 'CNY',
     `${pricing.resolve('claude-opus-5')?.currency} / ${pricing.resolve('deepseek-flash')?.currency}`);
 
-  /*
-   * And the token count is what it says: weighted counts, no money in it at all. A model
-   * nobody priced and the most expensive one on the list weigh the same, because that is what
-   * a token ceiling means.
-   */
-  const reference = billable(u, 'a-model-nobody-configured');
-  ok('a token ceiling counts tokens', reference === 1_000_000, String(reference));
-  ok('whatever the model costs', billable(u, 'claude-opus-5') === reference,
-    `${billable(u, 'claude-opus-5')} vs ${reference}`);
+  // And a model nobody configured is costed rather than being free, which is the whole
+  // reason the '*' row is checked above
+  ok('an unpriced model still costs something',
+    pricing.costMicro('a-model-nobody-configured', u) > 0,
+    String(pricing.costMicro('a-model-nobody-configured', u)));
 }
 
 fs.rmSync(box, { recursive: true, force: true });
