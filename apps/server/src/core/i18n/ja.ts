@@ -16,8 +16,6 @@ export const ja: Record<string, string> = {
   'Missing model name': 'モデル名がありません',
   'Prices have to be numbers, written with a dot': '価格は数字で、小数点はピリオドを使ってください',
   'A price cannot be negative': '価格を負の数にはできません',
-  'The catch-all price cannot be zero — it is the unit quota is counted in, and a zero turns quota back into flat weights.': 'キャッチオールの価格を 0 にはできません。クォータを数える単位であり、0 にするとクォータは一律の重みに戻ってしまいます。',
-  'The catch-all price cannot be removed — it prices every model without a row of its own, and is the unit quota is counted in. Add a replacement first.': 'キャッチオールの価格は削除できません。専用の行がないすべてのモデルの価格であり、クォータを数える単位でもあります。先に置き換える行を追加してください。',
   'No such price': 'その価格は存在しません',
   'Missing name': '名前がありません',
   'Unknown kind': '不明な kind です',
@@ -101,4 +99,6 @@ export const ja: Record<string, string> = {
 
   'There is nothing to retry yet': 'まだ再試行できるものがありません',
   'Only the newest question can be edited. Select the passage and open a thread instead.': '編集できるのは最新の質問だけです。それより前の内容は、その一節を選んでスレッドを開いてください。',
+  'The catch-all price cannot be zero — it prices every model without a row of its own, and a zero bills all of them at nothing.': 'キャッチオール価格を 0 にはできません —— 独自の行を持たないすべてのモデルの価格であり、0 にするとそれらすべてが無料で課金されます。',
+  'The catch-all price cannot be removed — it prices every model without a row of its own. Add a replacement first.': 'キャッチオール価格は削除できません —— 独自の行を持たないすべてのモデルの価格です。先に代わりの行を追加してください。',
 };

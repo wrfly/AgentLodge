@@ -593,7 +593,6 @@ export const zh: Record<string, string> = {
 
   // Billing currency and the fallback weights
   'Currency': '币种',
-  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': '只在价格表算不出这个模型时才用。配额平时算的是这一轮实际花了多少钱。',
   'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': '计费 token = 这一轮实际花的钱，换算成标准价下的输入 token —— 所以越贵的模型占掉越多同样的配额',
 
   // Admin: the price table
@@ -685,4 +684,5 @@ export const zh: Record<string, string> = {
   'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '按金额限额时用哪种币计。价格表里各家保持厂商自己发布的币种，只有在限额需要一个数时才换算成它。',
   'Exchange rates': '汇率',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON，币种 → 一单位折合多少结算币，例如结算用 CNY 时写 {"USD": 6.75}。只在限额必须折成一个数时使用。',
+  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': '按 token 限额时就是靠这几个权重算的。金额另按价格表、分币种记；配额只看这里。',
 };

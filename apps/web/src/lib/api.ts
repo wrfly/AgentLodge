@@ -1359,6 +1359,3 @@ export function fmtCost(cost: Money | null | undefined, fallbackCurrency = 'USD'
   return entries.map(([c, v]) => fmtMoney(v, c)).join(' + ');
 }
 
-/** The currencies a figure spans, for deciding whether one line is enough */
-export const costCurrencies = (cost: Money | null | undefined): string[] =>
-  Object.entries(cost ?? {}).filter(([, v]) => v).map(([c]) => c).sort();

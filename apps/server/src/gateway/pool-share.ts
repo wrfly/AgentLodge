@@ -117,7 +117,7 @@ export function poolShare(
     // A share is a ratio, so both sides have to be one number in one unit — `settle` is what
     // the ceiling itself is compared in, and using anything else here would make the share
     // disagree with the bar beside it
-    const total = q.limitKind === 'cost' ? usageRepo.settle(all.cost) : all.billableTokens;
+    const total = q.limitKind === 'cost' ? all.costSettled : all.billableTokens;
     /*
      * Nobody has spent anything yet, so neither has this user.
      *

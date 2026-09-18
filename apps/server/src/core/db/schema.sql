@@ -275,6 +275,10 @@ create index if not exists idx_usage_conv on usage_records(conversation_id);
 -- every response from a user with no ceiling of their own. The two above both lead with
 -- user_id and so cannot serve a query that spans every user.
 create index if not exists idx_usage_provider_created on usage_records(provider_id, created_at);
+-- Every aggregate emits one money column per currency, and the list of currencies comes from a
+-- `select distinct` over this column. Without an index that is a full scan of the one table
+-- with no ceiling, on every aggregate query.
+create index if not exists idx_usage_cost_currency on usage_records(cost_currency);
 
 /*
  * Turns the quota gate refused, which never reach an upstream and so have no usage row.

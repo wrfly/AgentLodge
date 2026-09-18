@@ -49,6 +49,19 @@ function ok(label: string, cond: boolean, detail = ''): void {
   }
 }
 
+/**
+ * Two money maps holding the same amounts.
+ *
+ * Not `JSON.stringify`, which is key-order dependent: the aggregate's columns come back
+ * sorted and a hand-rolled fold comes back in row-encounter order, so two identical figures
+ * compare unequal depending on which currency was spent first.
+ */
+const sameMoney = (a: Record<string, number>, b: Record<string, number>): boolean => {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) if ((a[k] ?? 0) !== (b[k] ?? 0)) return false;
+  return true;
+};
+
 const perM = (n: number) => Math.round(n * 1_000_000);
 const alice = users.create({ email: 'a@example.com', username: 'alice', passwordHash: 'x', role: 'user' }).id;
 
@@ -99,7 +112,7 @@ console.log('\n=== A breakdown keeps them apart, and adds up currency by currenc
   ok('each row carries one currency', rows.every((r) => Object.keys(r.cost).length === 1),
     JSON.stringify(rows.map((r) => [r.model, r.cost])));
   ok('and they add up to the total, currency by currency',
-    JSON.stringify(summed) === JSON.stringify(total.cost),
+    sameMoney(summed, total.cost),
     `${JSON.stringify(summed)} vs ${JSON.stringify(total.cost)}`);
 }
 
@@ -155,6 +168,69 @@ console.log('\n=== The recost restates money and leaves every token alone ===');
   usage.repriceHistory();
   ok('and it does not run twice', usage.totalsForUser(alice).cost['CNY'] === 1,
     JSON.stringify(usage.totalsForUser(alice).cost));
+}
+
+/*
+ * The half of the recost that is about *not* acting.
+ *
+ * Cost is derived, so re-deriving it is a correction. A token count is not: the definition of
+ * a billable token changed with this work, and rewriting history under the new one would
+ * restate what every user has already spent against their ceiling — by up to an order of
+ * magnitude, in both directions depending on the shape of their turns. Written by hand here
+ * because rows produced by the current `billable()` would agree with themselves and prove
+ * nothing.
+ */
+console.log('\n=== The recost does not restate anybody\'s quota ===');
+{
+  const quiet = users.create({ email: 'q@example.com', username: 'quiet', passwordHash: 'x', role: 'user' }).id;
+  db.run(
+    `insert into usage_records
+       (user_id, turn_id, agent, model, input_tokens, cache_read_tokens, cache_creation_tokens,
+        output_tokens, billable_tokens, cost_usd, cost_micro, cost_currency, num_turns, status,
+        created_at, day, source)
+     values (?, 'old', 'claude', 'claude-opus-5', 0, 0, 0, 1000000, 5000000, 0, 0, 'USD', 1,
+             'completed', ?, '2026-01-01', 'cli')`,
+    quiet, '2026-01-01T00:00:00.000Z',
+  );
+  // What the old cost-derived definition wrote: a million output tokens on Opus, $25 ÷ $5
+  const stored = () => db.get<{ b: number; c: number }>(
+    'select billable_tokens b, cost_micro c from usage_records where turn_id = ?', 'old')!;
+  ok('a row written under the old definition', stored().b === 5_000_000, String(stored().b));
+
+  // The flag is per database, so clear it the way a fresh deployment would arrive
+  db.run("delete from settings where key = 'usage.repricedAt'");
+  usage.repriceHistory();
+
+  ok('its money is restated', stored().c === perM(25), String(stored().c));
+  ok('and its quota consumption is exactly where it was', stored().b === 5_000_000, String(stored().b));
+  /*
+   * The weights would have made it 1.5M — a 70% drop, handed back to that user silently. In
+   * the other direction a DeepSeek row would have risen twelvefold and pushed them over.
+   */
+  ok('rather than the 1.5M the weights would give', usage.billable({
+    inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 1_000_000,
+    costUsd: 0, durationMs: 0, numTurns: 1,
+  }) === 1_500_000);
+}
+
+console.log('\n=== A price row an operator deleted stays deleted ===');
+{
+  /*
+   * The backfill cannot tell "never seeded" from "removed on purpose" by looking at the table,
+   * so it records that it has run. Without that, deleting the retired `deepseek-v4-flash` row
+   * means deleting it again after every restart — each time backdated to 1970, so it claims to
+   * have priced all of history.
+   */
+  db.run("delete from settings where key = 'pricing.backfilledAt'");
+  pricing.seedDefaults();
+  const seeded = pricing.list().find((r) => r.model === 'claude-haiku-4-5');
+  ok('a first backfill adds the published rows', seeded !== undefined, String(seeded?.model));
+
+  pricing.remove(seeded!.id);
+  pricing.seedDefaults();
+  ok('and a second start does not put a deleted one back',
+    !pricing.list().some((r) => r.id === seeded!.id || r.model === 'claude-haiku-4-5'),
+    JSON.stringify(pricing.list().map((r) => r.model)));
 }
 
 console.log('\n=== A backfilled price reaches the rows already written ===');

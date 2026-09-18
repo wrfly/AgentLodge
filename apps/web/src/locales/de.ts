@@ -566,7 +566,6 @@ export const de: Record<string, string> = {
 
   // Billing currency and the fallback weights
   'Currency': 'Währung',
-  'Only for a model the price table cannot price. Quota normally counts what a turn cost.': 'Nur für ein Modell, das die Preistabelle nicht bepreisen kann. Sonst zählt das Kontingent, was ein Zug gekostet hat.',
   'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Abrechenbare Token sind die tatsächlichen Kosten eines Zuges, ausgedrückt in Eingabetoken zum Standardtarif — ein teureres Modell verbraucht mehr desselben Kontingents',
 
   // Admin: the price table
@@ -658,4 +657,5 @@ export const de: Record<string, string> = {
   'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'Worin kostenbasierte Obergrenzen gezählt werden. Preise bleiben in der Währung, die der jeweilige Anbieter veröffentlicht; umgerechnet wird nur, wenn eine Grenze eine einzelne Zahl braucht.',
   'Exchange rates': 'Wechselkurse',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, Währung → wie viele Einheiten der Abrechnungswährung eine Einheit wert ist, z. B. {"USD": 6.75} bei Abrechnung in CNY. Nur dort verwendet, wo eine Grenze eine einzelne Zahl erzwingt.',
+  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'Was eine Token-Obergrenze zählt. Geld wird separat und je Währung bepreist; über die Quote entscheiden allein diese Gewichte.',
 };

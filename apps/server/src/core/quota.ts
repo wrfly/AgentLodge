@@ -101,7 +101,7 @@ function windowStatus(
    * choice. Everything that reports rather than enforces keeps the currencies apart.
    */
   const amountOf = (t: usageRepo.Totals) =>
-    (q.limitKind === 'cost' ? usageRepo.settle(t.cost) : t.billableTokens);
+    (q.limitKind === 'cost' ? t.costSettled : t.billableTokens);
   const from = start.toISOString();
   const to = end.toISOString();
   const used = amountOf(usageRepo.totalsForUser(userId, { from, to }));

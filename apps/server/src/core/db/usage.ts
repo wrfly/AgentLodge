@@ -1,4 +1,4 @@
-import { all, get, localDay, nowIso, run } from './index.js';
+import { all, get, localDay, nowIso, run, tx } from './index.js';
 import { getString, quotaAnchor, quotaWeights } from './settings.js';
 import {
   periodEndAt,
@@ -92,7 +92,7 @@ export function record(input: RecordInput): void {
     u?.outputTokens ?? 0,
     u ? billable(u, input.model, input.providerId) : 0,
     u?.costUsd ?? 0,
-    u ? pricing.costMicro(input.model, u, undefined, input.providerId) : 0,
+    u && priced ? Math.round(pricing.costOf(priced, u)) : 0,
     priced?.currency ?? 'USD',
     u?.durationMs ?? null,
     u?.numTurns ?? null,
@@ -128,48 +128,76 @@ export function record(input: RecordInput): void {
 export function repriceHistory(): void {
   if (repriceMark() === 'done') return;
 
-  const rows = all<{
-    id: number; model: string | null; provider_id: string | null; created_at: string;
-    input_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
-    output_tokens: number; cost_micro: number;
-  }>(`select id, model, provider_id, created_at, input_tokens, cache_read_tokens,
-             cache_creation_tokens, output_tokens, cost_micro
-        from usage_records`);
-
+  /** A page at a time: the gateway writes a row per upstream call, so this table has no ceiling */
+  const PAGE = 2_000;
+  let after = 0;
+  let scanned = 0;
   let changed = 0;
-  const before: Money = {};
-  const after: Money = {};
-  for (const r of rows) {
-    const u: TurnUsage = {
-      inputTokens: r.input_tokens,
-      cacheReadTokens: r.cache_read_tokens,
-      cacheCreationTokens: r.cache_creation_tokens,
-      outputTokens: r.output_tokens,
-      costUsd: 0,
-      durationMs: 0,
-      numTurns: 1,
-    };
-    const priced = pricing.resolve(r.model, r.created_at, r.provider_id);
-    const currency = priced?.currency ?? 'USD';
-    const costMicro = pricing.costMicro(r.model, u, r.created_at, r.provider_id);
-    const billableTokens = billable(u, r.model, r.provider_id);
+  let wasMicro = 0;
+  const now: Money = {};
 
-    before['(before)'] = (before['(before)'] ?? 0) + r.cost_micro;
-    after[currency] = (after[currency] ?? 0) + costMicro;
-    if (costMicro !== r.cost_micro) changed++;
+  for (;;) {
+    const rows = all<{
+      id: number; model: string | null; provider_id: string | null; created_at: string;
+      input_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
+      output_tokens: number; cost_micro: number;
+    }>(`select id, model, provider_id, created_at, input_tokens, cache_read_tokens,
+               cache_creation_tokens, output_tokens, cost_micro
+          from usage_records where id > ? order by id limit ?`, after, PAGE);
+    if (!rows.length) break;
+    after = rows[rows.length - 1]!.id;
 
-    run(
-      'update usage_records set cost_micro = ?, cost_currency = ?, billable_tokens = ? where id = ?',
-      costMicro, currency, billableTokens, r.id,
-    );
+    /*
+     * One transaction per page. Left implicit this is one commit — and under WAL one fsync —
+     * per row, on the blocking startup path.
+     */
+    tx(() => {
+      for (const r of rows) {
+        const u: TurnUsage = {
+          inputTokens: r.input_tokens,
+          cacheReadTokens: r.cache_read_tokens,
+          cacheCreationTokens: r.cache_creation_tokens,
+          outputTokens: r.output_tokens,
+          costUsd: 0,
+          durationMs: 0,
+          numTurns: 1,
+        };
+        // Resolved once and costed from that row, rather than resolving again inside costMicro
+        const priced = pricing.resolve(r.model, r.created_at, r.provider_id);
+        const currency = priced?.currency ?? 'USD';
+        const costMicro = priced ? Math.round(pricing.costOf(priced, u)) : 0;
+
+        scanned++;
+        wasMicro += r.cost_micro;
+        now[currency] = (now[currency] ?? 0) + costMicro;
+        if (costMicro !== r.cost_micro) changed++;
+
+        /*
+         * `cost_micro` and `cost_currency`, and deliberately **not** `billable_tokens`.
+         *
+         * Cost is derived from a table that was wrong, so deriving it again is a correction.
+         * A token count is not: rewriting it would restate what every user has already spent
+         * against their ceiling, and the two definitions do not agree — a row written when
+         * billable came from price and one written from the weights differ by up to an order
+         * of magnitude in both directions. Quota windows are five hours, a week and a month;
+         * old rows age out of all three on their own, which is a better outcome than a
+         * restart silently moving everybody's consumption.
+         */
+        run(
+          'update usage_records set cost_micro = ?, cost_currency = ? where id = ?',
+          costMicro, currency, r.id,
+        );
+      }
+    });
   }
 
   repriceMark('done');
-  if (rows.length) {
+  if (scanned) {
     const say = (m: Money) => Object.entries(m).map(([c, v]) => `${c} ${(v / 1e6).toFixed(4)}`).join(' + ');
     console.log(
-      `[usage] recosted ${rows.length} row(s) from the price table, ${changed} of them changed. ` +
-        `Was ${say(before)}, now ${say(after)}.`,
+      `[usage] recosted ${scanned} row(s) from the price table, ${changed} of them changed. ` +
+        `Was ${(wasMicro / 1e6).toFixed(4)} in one unlabelled figure, now ${say(now)}. ` +
+        'Token counts were not touched.',
     );
   }
 }
@@ -210,8 +238,6 @@ function repriceMark(value?: string): string {
  * list of currencies actually used in whatever was asked about.
  */
 export type Money = Record<string, number>;
-
-export const isEmptyMoney = (m: Money): boolean => Object.keys(m).length === 0;
 
 /** The currency a single money figure — a ceiling, a quota bar — is expressed in */
 export const settlementCurrency = (): string => getString('billing.currency', 'USD');
@@ -316,16 +342,23 @@ const CODE = /^[A-Z]{3}$/;
 /**
  * The currencies to emit a cost column for.
  *
- * Read from the price table rather than from `usage_records`: it is a handful of rows with an
- * index behind it, where a `select distinct` over every usage row ever written is a full scan
- * on the one table that grows without bound. Every row's currency comes from a price row, so
- * the two agree — and 'USD' is always included, because it is what `record()` falls back to
- * when nothing priced a turn at all.
+ * Both sides, and the union matters. The price table alone is not enough: deleting a price row
+ * is something the console can do, and a currency that leaves the table would take every
+ * figure ever recorded in it out of every total, breakdown and ceiling — silently, because a
+ * column that is not emitted is money that simply is not there. The usage table alone is not
+ * enough either, since a currency can be priced before anything has been spent in it.
+ *
+ * `idx_usage_cost_currency` is what keeps the second query off a full table scan; it is the
+ * one table that grows without bound.
  */
 function pricedCurrencies(): string[] {
-  const rows = all<{ c: string }>('select distinct currency as c from model_pricing');
-  const set = new Set(rows.map((r) => r.c).filter((c) => CODE.test(c)));
-  set.add('USD');
+  const set = new Set<string>(['USD']);   // what `record()` falls back to when nothing priced a turn
+  for (const r of all<{ c: string }>('select distinct currency as c from model_pricing')) {
+    if (CODE.test(r.c)) set.add(r.c);
+  }
+  for (const r of all<{ c: string }>('select distinct cost_currency as c from usage_records')) {
+    if (CODE.test(r.c)) set.add(r.c);
+  }
   return [...set].sort();
 }
 
@@ -508,22 +541,41 @@ export function typicalTurn(
    *  enough that the scan stays small — and recent turns are the ones that predict. */
   since = new Date(Date.now() - 30 * 86_400_000).toISOString(),
 ): number | null {
-  const column = kind === 'cost' ? 'cost_micro' : 'billable_tokens';
-  const rows = all<{ spent: number }>(
-    `select sum(${column}) as spent
-     from usage_records
-     where user_id = ? and created_at >= ?
-     group by coalesce(turn_id, 'row:' || id)
-     having spent > 0
-     order by max(created_at) desc
-     limit ?`,
+  /*
+   * A cost figure has to be settled, not summed raw.
+   *
+   * This number is divided into a remainder the gate counts in the settlement currency, so a
+   * per-turn figure that is a mixture of yuan and dollar micro-units answers a different
+   * question from the one it is compared against — and on a yuan-heavy account it overstates
+   * the turn by the whole exchange rate, telling somebody they have a fraction of the turns
+   * the gate will actually let them have.
+   */
+  const byCost = kind === 'cost';
+  const rows = all<{ spent: number; currency: string }>(
+    byCost
+      ? `select sum(cost_micro) as spent, cost_currency as currency
+           from usage_records
+          where user_id = ? and created_at >= ?
+          group by coalesce(turn_id, 'row:' || id), cost_currency
+         having spent > 0
+          order by max(created_at) desc
+          limit ?`
+      : `select sum(billable_tokens) as spent, '' as currency
+           from usage_records
+          where user_id = ? and created_at >= ?
+          group by coalesce(turn_id, 'row:' || id)
+         having spent > 0
+          order by max(created_at) desc
+          limit ?`,
     userId,
     since,
     sample,
   );
   if (!rows.length) return null;
   // The gateway writes a row per upstream call, so a turn is the group, not the row
-  const spent = rows.map((r) => r.spent).sort((a, b) => a - b);
+  const spent = rows
+    .map((r) => (byCost ? settle({ [r.currency]: r.spent }) : r.spent))
+    .sort((a, b) => a - b);
   const mid = Math.floor(spent.length / 2);
   return spent.length % 2 ? spent[mid]! : Math.round((spent[mid - 1]! + spent[mid]!) / 2);
 }
@@ -704,7 +756,11 @@ export function byModelForConversation(conversationId: string): Array<Totals & {
       where conversation_id = ?
          or conversation_id in (select id from conversations where parent_id = ?)
       group by coalesce(model, '')
-      order by cost_micro desc`,
+      -- Explicit, not the bare name: SUM() stopped emitting a cost_micro alias when money
+      -- became per-currency, and SQLite would resolve the bare column to an arbitrary row of
+      -- the group. Ordering by a sum across currencies is approximate -- a conversation is
+      -- almost always one vendor -- but it is at least the group's own total.
+      order by sum(cost_micro) desc`,
     conversationId,
     conversationId,
   ).map((r) => ({ model: r.model ?? '', ...toTotals(r) }));
@@ -945,12 +1001,18 @@ function padded<T extends { t: string }>(
   from: string,
   to: string,
   unit: 'hour' | 'day',
-  blank: Omit<T, 't'>,
+  /*
+   * A factory, not an object. Spreading one object into every missing bucket gives them all
+   * the same `cost` map, so folding money into a bucket in place writes through to its
+   * neighbours — and, when the object was a module-level constant, to every later request in
+   * the process. A shallow spread does not copy what it points at.
+   */
+  blank: () => Omit<T, 't'>,
 ): T[] {
   const keys = bucketKeys(from, to, unit);
   if (!keys) return rows;
   const hit = new Map(rows.map((r) => [r.t, r]));
-  return keys.map((t) => hit.get(t) ?? ({ ...blank, t } as T));
+  return keys.map((t) => hit.get(t) ?? ({ ...blank(), t } as T));
 }
 
 /**
@@ -1004,10 +1066,17 @@ const keyOf = (d: Date, unit: 'hour' | 'day'): string =>
     ? `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:00`
     : `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
 
-const EMPTY_TOTALS: Totals = {
+/**
+ * A fresh one each time, and that is the whole point of it being a function.
+ *
+ * As a const it handed every padded bucket the *same* `cost` object. Folding money into a
+ * bucket in place — the obvious idiom — then wrote through to the constant, and every empty
+ * bucket of every later request in that process carried the leftovers.
+ */
+const emptyTotals = (): Totals => ({
   calls: 0, inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0,
   billableTokens: 0, costUsd: 0, cost: {}, costSettled: 0, turns: 0,
-};
+});
 
 /** Everybody's series over a range, one point per bucket, empty ones included */
 /**
@@ -1029,7 +1098,7 @@ export function seriesForUserInRange(
     unit === 'hour'
       ? hourlyForUserRange(userId, range, only).map(({ hour, ...rest }) => ({ ...rest, t: hour }))
       : dailyForUserRange(userId, range, only).map(({ day, ...rest }) => ({ ...rest, t: day }));
-  return padded(rows, from, to, unit, EMPTY_TOTALS);
+  return padded(rows, from, to, unit, emptyTotals);
 }
 
 export function seriesAllInRange(
@@ -1042,7 +1111,7 @@ export function seriesAllInRange(
     unit === 'hour'
       ? hourlyAllInRange(range, only).map(({ hour, ...rest }) => ({ ...rest, t: hour }))
       : dailyAllInRange(range, only).map(({ day, ...rest }) => ({ ...rest, t: day }));
-  return padded(rows, from, to, unit, EMPTY_TOTALS);
+  return padded(rows, from, to, unit, emptyTotals);
 }
 
 export function hourlyAllInRange(range: Range, only?: UpstreamFilter): HourlyPoint[] {

@@ -16,8 +16,6 @@ export const fr: Record<string, string> = {
   'Missing model name': 'Nom du modèle manquant',
   'Prices have to be numbers, written with a dot': 'Les prix doivent être des nombres, écrits avec un point',
   'A price cannot be negative': 'Un prix ne peut pas être négatif',
-  'The catch-all price cannot be zero — it is the unit quota is counted in, and a zero turns quota back into flat weights.': 'Le prix par défaut ne peut pas être nul — il est l’unité de comptage du quota, et un zéro le ramène à des pondérations forfaitaires.',
-  'The catch-all price cannot be removed — it prices every model without a row of its own, and is the unit quota is counted in. Add a replacement first.': 'Le prix par défaut ne peut pas être supprimé — il tarifie tout modèle sans ligne propre et sert d’unité de comptage du quota. Ajoutez d’abord un remplacement.',
   'No such price': 'Ce tarif n\'existe pas',
   'Missing name': 'Nom manquant',
   'Unknown kind': 'Type inconnu',
@@ -101,4 +99,6 @@ export const fr: Record<string, string> = {
 
   'There is nothing to retry yet': 'Il n’y a encore rien à réessayer',
   'Only the newest question can be edited. Select the passage and open a thread instead.': 'Seule la question la plus récente est modifiable. Pour une plus ancienne, sélectionnez le passage et ouvrez un fil.',
+  'The catch-all price cannot be zero — it prices every model without a row of its own, and a zero bills all of them at nothing.': 'Le prix générique ne peut pas être nul — il tarifie tous les modèles sans ligne propre, et un zéro les facture tous à rien.',
+  'The catch-all price cannot be removed — it prices every model without a row of its own. Add a replacement first.': 'Le prix générique ne peut pas être supprimé — il tarifie tous les modèles sans ligne propre. Ajoutez d\'abord un remplaçant.',
 };

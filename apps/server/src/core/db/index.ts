@@ -756,6 +756,9 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
     if (!columns(d, 'usage_records').has('cost_currency')) {
       d.exec("alter table usage_records add column cost_currency text not null default 'USD'");
     }
+    // schema.sql indexes it, and schema.sql runs *after* this on an existing file — but the
+    // index has to survive a file that reaches here with the column already added
+    d.exec('create index if not exists idx_usage_cost_currency on usage_records(cost_currency)');
   }
 
   d.exec(`pragma user_version = ${SCHEMA_VERSION}`);

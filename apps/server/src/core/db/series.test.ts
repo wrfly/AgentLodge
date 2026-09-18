@@ -259,6 +259,19 @@ console.log('\n=== The breakdown adds up to the total printed above it ===');
    * would still balance if the two were summed first.
    */
   type Money = Record<string, number>;
+/**
+ * Two money maps holding the same amounts.
+ *
+ * Not `JSON.stringify`, which is key-order dependent: the aggregate's columns come back
+ * sorted and a hand-rolled fold comes back in row-encounter order, so two identical figures
+ * compare unequal depending on which currency was spent first.
+ */
+const sameMoney = (a: Record<string, number>, b: Record<string, number>): boolean => {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) if ((a[k] ?? 0) !== (b[k] ?? 0)) return false;
+  return true;
+};
+
   const addMoney = (rows: Array<{ cost: Money }>): Money => {
     const out: Money = {};
     for (const r of rows) for (const [c, v] of Object.entries(r.cost)) out[c] = (out[c] ?? 0) + v;
@@ -267,7 +280,7 @@ console.log('\n=== The breakdown adds up to the total printed above it ===');
   for (const [label, rows] of [['models', byAgent], ['buckets', hourly]] as const) {
     const summed = addMoney(rows);
     ok(`cost adds up across ${label}, currency by currency`,
-      JSON.stringify(summed) === JSON.stringify(totals.cost),
+      sameMoney(summed, totals.cost),
       `${JSON.stringify(summed)} vs ${JSON.stringify(totals.cost)}`);
   }
   ok('input is input alone, not input plus cache', totals.inputTokens === 310, String(totals.inputTokens));

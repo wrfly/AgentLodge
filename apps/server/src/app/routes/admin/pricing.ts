@@ -84,15 +84,16 @@ export function register(app: FastifyInstance): void {
      * without meaning to: the form's empty boxes parse to 0, so typing `*` and pressing Add
      * does it.
      *
-     * What that costs: `billable()` divides a turn's cost by this row to express quota in
-     * "one input token at the standard rate", and a zero there fails its own guard and
-     * drops quota back to the flat weights. costMicroExact returns 0 for every model with
-     * no row of its own at the same moment. Only the global row is checked — a '*' scoped
-     * to one upstream is that upstream being free, which is a thing somebody may mean.
+     * What that costs: every model with no row of its own is priced by this one, so a zero
+     * here bills all of them at nothing — the whole Anthropic side, on a table that only
+     * lists DeepSeek. Quota is unaffected (a token ceiling counts tokens), which is exactly
+     * why it would go unnoticed: the refusals keep working and only the money is wrong.
+     * Only the global row is checked — a '*' scoped to one upstream is that upstream being
+     * free, which is a thing somebody may mean.
      */
     if (body.model.trim() === '*' && !body.providerId?.trim() && !(Number(body.priceInput) > 0)) {
       return reply.code(400).send({
-        error: tr(req, 'The catch-all price cannot be zero — it is the unit quota is counted in, and a zero turns quota back into flat weights.'),
+        error: tr(req, 'The catch-all price cannot be zero — it prices every model without a row of its own, and a zero bills all of them at nothing.'),
       });
     }
 
@@ -125,11 +126,10 @@ export function register(app: FastifyInstance): void {
     /*
      * The last catch-all cannot be deleted.
      *
-     * It is two things at once: the price of every model without a row of its own, and the
-     * unit billable tokens are counted in — a turn's cost divided by one input token at
-     * this rate. Take it away and resolve() returns undefined, costMicro returns 0, and
-     * every unpriced model becomes free while quota silently falls back to flat weights.
-     * None of that raises anything; the table just stops answering.
+     * It is the price of every model without a row of its own. Take it away and resolve()
+     * returns undefined and costMicro returns 0, so every unpriced model is billed at
+     * nothing — silently, because a token ceiling still counts and the refusals go on
+     * working. The table just stops answering about money.
      *
      * Superseded '*' rows are still removable, which is the actual housekeeping somebody
      * wants: a price change appends, so old catch-alls accumulate. Only the one that would
@@ -141,7 +141,7 @@ export function register(app: FastifyInstance): void {
       const others = rows.filter((r) => r.model === '*' && !r.providerId && r.id !== doomed.id);
       if (!others.length) {
         return reply.code(400).send({
-          error: tr(req, 'The catch-all price cannot be removed — it prices every model without a row of its own, and is the unit quota is counted in. Add a replacement first.'),
+          error: tr(req, 'The catch-all price cannot be removed — it prices every model without a row of its own. Add a replacement first.'),
         });
       }
     }

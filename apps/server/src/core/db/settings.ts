@@ -371,7 +371,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'quota',
     type: 'number',
     default: '0.1',
-    hint: 'Only for a model the price table cannot price. Quota normally counts what a turn cost.',
+    hint: 'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.',
   },
   {
     key: 'quota.weightOutput',
@@ -380,7 +380,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'quota',
     type: 'number',
     default: '1.5',
-    hint: 'Only for a model the price table cannot price. Quota normally counts what a turn cost.',
+    hint: 'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.',
   },
 
   // agent

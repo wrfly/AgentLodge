@@ -252,20 +252,6 @@ export function inputMicroPerToken(model: string, at?: string, providerId?: stri
  * that into 0, and a caller that then treats 0 as "cannot price this" gets a cliff: quota
  * measured this way billed one token as 1, two through five as 0, and six as 1 again.
  */
-/**
- * The catch-all row for one currency.
- *
- * `billable()` divides a turn's cost by this to express quota as a token count, and the
- * division is only meaningful within a currency — so each currency the table prices in needs
- * one. Falls back to the unscoped `*` when a currency has none, which is right for a
- * single-currency deployment and visible as a wrong figure in a mixed one; `seedDefaults`
- * writes a row per currency it seeds.
- */
-export function catchAllIn(currency: string): Pricing | undefined {
-  const rows = all<Row>("select * from model_pricing where model = '*'").map(toPricing);
-  return rows.find((r) => r.currency === currency) ?? rows[0];
-}
-
 export function costMicroExact(
   model: string | null | undefined,
   u: TokenCounts,
@@ -273,7 +259,17 @@ export function costMicroExact(
   providerId?: string | null,
 ): number {
   const p = resolve(model, at, providerId);
-  if (!p) return 0;
+  return p ? costOf(p, u) : 0;
+}
+
+/**
+ * The same sum against a row already in hand.
+ *
+ * `resolve()` reads and maps the whole price table, and the two callers that need both the
+ * row and its cost — `record()` on the per-turn path and the one-off recost — were doing it
+ * twice for the same arguments.
+ */
+export function costOf(p: Pricing, u: TokenCounts): number {
   const per = (tokens: number, price: number) => (tokens * price) / 1_000_000;
   return (
     per(u.inputTokens, p.priceInput) +
@@ -409,50 +405,52 @@ function seedRows(): UpsertInput[] {
       ...rate(5, 25),
       note: 'The catch-all, used by any model without a price of its own — and the unit billable tokens are counted in',
     },
-    /*
-     * A catch-all per currency, because `billable()` divides a turn's cost by one and the
-     * division only means anything inside a single currency. Without this row a DeepSeek turn
-     * would be divided by a dollar price, which is an exchange rate nobody chose.
-     *
-     * Priced at flash's input rate rather than pro's: it is what an unpriced model on a
-     * yuan-billed upstream most likely is.
-     */
-    {
-      model: '*',
-      currency: 'CNY',
-      ...rate(1, 4, 0.02, 1),
-      note: 'The catch-all for yuan-priced upstreams — quota inside this currency is counted in it',
-    },
   ].map((r) => ({ currency: 'USD', ...r, effectiveFrom: now }));
   return seed;
+}
+
+/**
+ * One flag, so the backfill above happens once rather than on every start.
+ *
+ * Written straight to the settings table rather than through `setSetting`, which validates
+ * against the declared spec and would put this in the console among things an operator is
+ * meant to change. This is bookkeeping.
+ */
+const SEEDED_KEY = 'pricing.backfilledAt';
+
+function seedMark(value?: string): string {
+  if (value !== undefined) {
+    run(
+      `insert into settings (key, value, updated_at) values (?, ?, ?)
+       on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+      SEEDED_KEY, value, nowIso(),
+    );
+    return value;
+  }
+  return get<{ value: string }>('select value from settings where key = ?', SEEDED_KEY)?.value ?? '';
 }
 
 export function seedDefaults(): void {
   if (get('select 1 as x from model_pricing limit 1')) {
     // Non-empty is not the same as complete; see ensureSeedRows
     ensureSeedRows();
-    return;
+  } else {
+    for (const s of seedRows()) add(s);
+    seedMark('done');
+    console.log(
+      "[pricing] price table seeded — Claude in USD and DeepSeek in CNY, each at its vendor's own list. " +
+        'Check the rates in the console, and add a row for any upstream that is neither.',
+    );
   }
-  for (const s of seedRows()) add(s);
   /*
-   * A starting rate between the two currencies the seed prices in.
+   * Last, and on both paths.
    *
-   * It has to exist, because the two lists are not comparable without one: quota counts what
-   * a turn cost, and a deployment settling in dollars has to be able to say what a yuan of
-   * DeepSeek is worth against a dollar of Opus. Both directions are written so the same map
-   * serves either settlement currency — only the entry for a currency that is *not* the
-   * settlement one is ever read.
-   *
-   * Derived from the vendors' own two lists rather than from a market quote: DeepSeek
-   * publishes flash at $0.15 and ¥1 per MTok for the same tokens, which is the rate it is
-   * willing to be paid at. Check it in the console; a rate is a decision with a date on it and
-   * this one is only a default.
+   * A table holding two currencies is not comparable without a rate, and a ceiling needs one
+   * number — so this has to happen whether the rows arrived from the seed or from the
+   * backfill, and whether or not the backfill had anything to do. Behind either branch's
+   * early return is how a deployment ends up counting every yuan as a dollar for ever.
    */
   ensureRates();
-  console.log(
-    "[pricing] price table seeded — Claude in USD and DeepSeek in CNY, each at its vendor's own list. " +
-      'Check the rates in the console, and add a row for any upstream that is neither.',
-  );
 }
 
 /**
@@ -496,12 +494,31 @@ function ensureRates(): void {
 }
 
 export function ensureSeedRows(): void {
-  const key = (model: string, currency: string): string => `${model} ${currency}`;
+  /*
+   * Once, and then never again. The table cannot tell "never seeded" from "removed on
+   * purpose", so what an operator deleted would come back on every restart — each time
+   * backdated to 1970, claiming to have priced all of history.
+   */
+  if (seedMark() === 'done') return;
+  const key = (model: string, currency: string): string => `${model} ${currency}`;
   const have = new Set(
     all<{ model: string; currency: string }>('select model, currency from model_pricing')
       .map((r) => key(r.model, r.currency)),
   );
-  const missing = seedRows().filter((r) => !have.has(key(r.model, r.currency ?? 'USD')));
+  /*
+   * The catch-all is skipped when this table already has one, in any currency.
+   *
+   * `resolve()` has no notion of currency: it takes the first unscoped `*` in
+   * `effective_from desc` order, so a second one does not sit beside the first — it replaces
+   * it for every unpriced model, and stamps them in a currency somebody else chose. A table
+   * with a `*` already has the row this backfill is for.
+   */
+  const hasCatchAll = have.size > 0
+    && all<{ n: number }>("select count(*) as n from model_pricing where model = '*' and provider_id is null")[0]!.n > 0;
+  const missing = seedRows()
+    .filter((r) => !have.has(key(r.model, r.currency ?? 'USD')))
+    .filter((r) => !(hasCatchAll && r.model === '*'));
+  seedMark('done');
   if (!missing.length) return;
   /*
    * Backdated, unlike the seed's own rows.
@@ -519,7 +536,6 @@ export function ensureSeedRows(): void {
       .filter(Boolean).join(' '),
   }));
   for (const m of backfilled) add(m);
-  ensureRates();
   console.log(
     `[pricing] ${missing.length} published price row(s) had never been seeded and were added ` +
       `(${missing.map((m) => `${m.model} ${m.currency ?? 'USD'}`).join(', ')}). Check them in the console.`,
