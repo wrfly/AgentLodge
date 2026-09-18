@@ -210,6 +210,23 @@ const ROOTS = [
   'aiserver.v1.AvailableModelsResponse.ModelVariantConfig',
 
   /*
+   * And the parameters themselves, which the variant table does not cover. A variant is a
+   * thinking-and-effort combination that has a slug; a context window is a parameter with no
+   * slug of its own, so a caller asking for one — `claude-opus-5[1m]` — can only be checked
+   * against the values the model declares it takes. Each definition carries an `id` and an
+   * enum of legal `value` strings, which is exactly the pair a lookup needs.
+   *
+   * The badge messages these reach are the model picker's own decoration and stay opaque.
+   * See gateway/cursor/catalog.ts.
+   */
+  'aiserver.v1.ModelParameterDefinition',
+  'aiserver.v1.ModelParameterDefinition.ModelParameterType',
+  'aiserver.v1.ModelParameterDefinition.EnumParameterDefinition',
+  'aiserver.v1.ModelParameterDefinition.EnumParameterDefinition.EnumParameterValue',
+  'aiserver.v1.ModelParameterDefinition.BooleanParameterDefinition',
+  'aiserver.v1.ModelParameterDefinition.BooleanParameterDefinition.BooleanParameterValue',
+
+  /*
    * `google.protobuf.Value`, because the MCP arm carries a tool's arguments as one rather than
    * as JSON text. Declared in the bundle the descriptor way even now, which is half of why both
    * formats are still read.

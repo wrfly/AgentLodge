@@ -65,6 +65,10 @@ const textOf = (content: ChatMessage['content']): string => {
  * turn, or for one restarted because its parked turn was lost. So the whole conversation is
  * rendered, tool traffic included: a transcript with the calls but not their results makes the
  * model call the same tools over again.
+ *
+ * The system prompt comes back apart from the words because that is how it travels: on the
+ * first turn of a conversation it is rendered in front of them, and on the turns after it
+ * Cursor already has it. See withSystem().
  */
 export function flatten(messages: ChatMessage[]): { prompt: string; system: string } {
   const system: string[] = [];
@@ -107,6 +111,47 @@ export function flatten(messages: ChatMessage[]): { prompt: string; system: stri
   }
 
   return { prompt: parts.join('\n\n').trim(), system: system.join('\n\n') };
+}
+
+/**
+ * The transcript with the system prompt in front of it, which is the only place it fits.
+ *
+ * `AgentRunRequest` has a `custom_system_prompt` field and it cannot be used: the server maps
+ * it onto the CLI's `--system-prompt`, which current builds of Agent Run refuse outright with
+ * `invalid_argument`. Sending it failed every request that carried a system prompt, which is
+ * every Claude Code request. So it is rendered as the first block of the prompt instead,
+ * labelled the way the transcript labels its own turns.
+ */
+export const withSystem = (prompt: string, system: string): string =>
+  system ? `System: ${system}\n\n${prompt}` : prompt;
+
+/**
+ * A parameter a caller named in brackets: `claude-opus-5[1m]`, `claude-sonnet-5[context=300k]`.
+ *
+ * Not a syntax of our own — it is how Claude Code names itself. The model id it reports carries
+ * the window it is running with, so the bracket arrives on ordinary requests, and a slug that
+ * keeps it is a model name Cursor has never heard of.
+ *
+ * The window is the one parameter with no variant of its own: `-thinking-high` is a slug
+ * Cursor lists and `1m` is not, so it cannot be resolved by lookup and has to travel as a
+ * parameter. Which parameters a model takes is something its catalogue entry states — see
+ * catalog.ts, which checks these against it rather than sending them on trust.
+ *
+ * A value with no key is read as the context window, because that is what a client writing one
+ * on its own means.
+ */
+export function parseSlug(slug: string): { base: string; parameters: Map<string, string> } {
+  const parameters = new Map<string, string>();
+  const bracketed = /^([^[]+)\[([^\]]*)\]$/.exec(slug.trim());
+  if (!bracketed) return { base: slug.trim(), parameters };
+
+  for (const part of bracketed[2]!.split(',')) {
+    const [left, right] = part.split('=');
+    const key = (right === undefined ? 'context' : left)?.trim().toLowerCase() ?? '';
+    const value = (right ?? left)?.trim() ?? '';
+    if (key && value) parameters.set(key, value);
+  }
+  return { base: bracketed[1]!.trim(), parameters };
 }
 
 /**
@@ -177,15 +222,37 @@ export interface BuildOptions {
    */
   conversationId?: string;
   /**
+   * What Cursor groups this conversation under, when that is not the conversation itself.
+   *
+   * A thread whose state was replaced continues under the group it started in, so the turns
+   * before and after the reset still read as one piece of work on Cursor's side.
+   */
+  conversationGroupId?: string;
+  /**
    * This turn's id. Shared with the `x-original-request-id` header the calls carry, because
    * the real client uses one value for both — see bidi.ts.
    */
   runId?: string;
+  /**
+   * The state a previous turn of this conversation left behind — see conversation.ts.
+   *
+   * Absent starts a conversation, which is what a first turn wants and what every turn used to
+   * do. Present is what makes this one a continuation: Cursor keeps the history against this
+   * state, so the prompt below only has to carry what is new.
+   */
+  state?: Uint8Array;
+  /**
+   * The messages that become the prompt, when that is not the whole transcript.
+   *
+   * A continuation sends the difference rather than the conversation: the rest is already on
+   * Cursor's side, behind the state above, and sending it again is what this exists to stop.
+   */
+  messages?: ChatMessage[];
 }
 
 /** The run request, ready for the codec */
 export function buildRunRequest(body: ChatRequest, opts: BuildOptions): { request: Message; delegate: boolean } {
-  const { prompt, system } = flatten(body.messages ?? []);
+  const { prompt, system } = flatten(opts.messages ?? body.messages ?? []);
   const tools: ClientTool[] = (body.tools ?? [])
     .map((t) => t.function)
     .filter((f): f is NonNullable<typeof f> => Boolean(f?.name));
@@ -203,13 +270,16 @@ export function buildRunRequest(body: ChatRequest, opts: BuildOptions): { reques
     delegate,
     request: {
       run_request: {
-        // Empty rather than absent: a first turn has no state, and the server fills this in
-        // from here on by asking for blobs
-        conversation_state: new Uint8Array(0),
+        /*
+         * The server's own state, as bytes it handed over on an earlier turn of this
+         * conversation — see conversation.ts. Empty rather than absent on a first turn, which
+         * is what the real client sends and what tells the server to start one.
+         */
+        conversation_state: opts.state ?? new Uint8Array(0),
         action: {
           user_message_action: {
             user_message: {
-              text: prompt,
+              text: withSystem(prompt, system),
               message_id: crypto.randomUUID(),
               selected_context: new Uint8Array(0),
               mode: delegate ? MODE_AGENT : MODE_ASK,
@@ -219,15 +289,20 @@ export function buildRunRequest(body: ChatRequest, opts: BuildOptions): { reques
         // Sent even when it is empty, which is what the real client does
         mcp_tools: definitions.length ? { mcp_tools: definitions } : {},
         conversation_id: conversationId,
-        conversation_group_id: conversationId,
+        conversation_group_id: opts.conversationGroupId || conversationId,
         requested_model: {
           model_id: model.id,
           max_mode: model.max,
           ...(model.parameters.length ? { parameters: model.parameters } : {}),
         },
-        ...(system ? { custom_system_prompt: system } : {}),
-        // There is no workspace on this side to index, and saying so stops the agent asking
-        exclude_workspace_context: true,
+        /*
+         * There is no workspace on this side to index, and the field for saying so cannot be
+         * used: `exclude_workspace_context: true` is refused — "Workspace context exclusion is
+         * not allowed" — and the turn ends as a 502 before a token of it arrives. Sent as
+         * false, explicitly, because the field has presence and absent is not the same answer.
+         * What the agent then asks for, session.ts answers.
+         */
+        exclude_workspace_context: false,
         run_id: opts.runId || crypto.randomUUID(),
       },
     },

@@ -69,20 +69,42 @@ export interface SessionOptions extends BidiOptions {
    * it. See run().
    */
   delegate: boolean;
+  /**
+   * What a previous turn of this conversation left behind, when this is a later one.
+   *
+   * The server asks for its blobs by id and does not care which request stored them, so a turn
+   * continuing a conversation has to start with the ones already handed over — see
+   * conversation.ts. Absent means this turn is the conversation's first.
+   */
+  blobs?: Map<string, Uint8Array>;
 }
 
 export class AgentSession {
   private readonly stream: BidiStream;
-  private readonly blobs = new Map<string, Uint8Array>();
+  private readonly blobs: Map<string, Uint8Array>;
   private readonly pending = new Map<string, Pending>();
+  private checkpoint: Uint8Array = new Uint8Array(0);
 
   constructor(private readonly opts: SessionOptions) {
     this.stream = new BidiStream(opts);
+    this.blobs = new Map(opts.blobs ?? []);
   }
 
   /** What Cursor is calling this conversation, for a caller that wants to log it */
   get requestId(): string {
     return this.stream.requestId;
+  }
+
+  /**
+   * What this turn leaves behind for the next turn of the same conversation.
+   *
+   * The checkpoint is the server's own state and the blobs are what it asked this side to hold;
+   * together they are what makes the next turn a continuation rather than a fresh conversation.
+   * Empty until the server sends a checkpoint, which it does part way through a turn — so this
+   * is worth reading once the turn has produced something, not before it starts.
+   */
+  get carried(): { state: Uint8Array; blobs: Map<string, Uint8Array> } {
+    return { state: this.checkpoint, blobs: new Map(this.blobs) };
   }
 
   /**
@@ -153,6 +175,22 @@ export class AgentSession {
 
   /** One server message: answered here, or turned into an event */
   private async *handle(message: Message): AsyncGenerator<AgentEvent> {
+    /*
+     * The server's own state, handed over part way through a turn so the next turn of the same
+     * conversation can send it back as `conversation_state`. Bytes rather than a structure:
+     * `ConversationStateStructure` is not in the schema tables, so the codec carries it
+     * opaquely — which is exactly what this end wants, since it is written back unchanged and
+     * a structure nobody here parses cannot be half-understood after a Cursor release.
+     */
+    const checkpoint = message['conversation_checkpoint_update'];
+    if (checkpoint !== undefined) {
+      // Through asBytes, like every other opaque field here: if the tables ever gain this type
+      // it arrives as a structure instead, and an empty checkpoint costs the next turn its
+      // cache read rather than sending Cursor state it cannot read back
+      this.checkpoint = asBytes(checkpoint);
+      return;
+    }
+
     const kv = message['kv_server_message'];
     if (isMessage(kv)) {
       await this.stream.send({ kv_client_message: this.blobReply(kv) });

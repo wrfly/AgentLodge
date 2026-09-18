@@ -37,6 +37,14 @@ export interface ParkedTurn {
   callId: string;
   /** Which model this turn is for, so a resumed one still names it in the stream */
   model: string;
+  /**
+   * Which lane this turn's conversation belongs to, when it has one.
+   *
+   * Carried because the request that resumes this turn cannot work it out: the lane is keyed by
+   * the resolved model (see conversation.ts), and a resumed request never resolves one — it
+   * picks up a turn that was already running. Absent where the turn had no lane to begin with.
+   */
+  lane?: string;
   parkedAt: number;
   /**
    * The session's own lifetime, which is not the request's.

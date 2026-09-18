@@ -14,7 +14,7 @@ import { decode, encode, oneofOf, type Message } from './codec.js';
 import { endOfStream, envelope, FrameReader, FLAG_END_STREAM } from './connect.js';
 import { EXEC_TOOLS, shellStream, toolFor } from './exec-bridge.js';
 import { argsOf, clientName, fromValue, toDefinitions, toValue, wireName } from './mcp.js';
-import { buildRunRequest, flatten, splitModel, toolResults, type ChatRequest } from './request.js';
+import { buildRunRequest, flatten, parseSlug, splitModel, toolResults, type ChatRequest } from './request.js';
 import { MESSAGES } from './schema.generated.js';
 import { ChatStream } from './stream.js';
 
@@ -247,6 +247,24 @@ console.log('\n=== The request matches the one the real client sends ===');
   ok('and an empty selected context rather than none', message['selected_context'] instanceof Uint8Array);
 }
 
+/*
+ * The two fields a live turn settled, which no amount of reading the bundle would have: both
+ * are declared, both look like exactly what this bridge wants, and the server refuses each of
+ * them — one as `invalid_argument`, the other as "Workspace context exclusion is not allowed".
+ */
+console.log('\n=== Neither of the two fields the server refuses is sent ===');
+{
+  const { request } = buildRunRequest(
+    { messages: [{ role: 'system', content: 'be terse' }, { role: 'user', content: 'say hi' }] },
+    { model: asModel('m') },
+  );
+  const run = roundTrip(CLIENT, request)['run_request'] as Message;
+  const message = ((run['action'] as Message)['user_message_action'] as Message)['user_message'] as Message;
+  ok('the system prompt is not a field of its own', run['custom_system_prompt'] === undefined, String(run['custom_system_prompt']));
+  ok('it is in front of the words instead', message['text'] === 'System: be terse\n\nsay hi', String(message['text']));
+  ok('and the workspace context is not excluded', run['exclude_workspace_context'] === false, String(run['exclude_workspace_context']));
+}
+
 console.log('\n=== A client message is carried the way the real client carries it ===');
 {
   /*
@@ -302,6 +320,32 @@ console.log('\n=== A model slug carries its variant, and the wire wants them apa
   ok('a plain name is left alone', splitModel('gpt-5.2').id === 'gpt-5.2');
   ok('max is a mode rather than a parameter', splitModel('gemini-3.1-pro-max').max === true);
   ok('and is off unless the slug says so', splitModel('gemini-3.1-pro').max === false);
+}
+
+/*
+ * The bracket is not a syntax of ours: Claude Code reports the model it is running as with the
+ * context window on the end of it, so this arrives on ordinary requests. Left on the name it is
+ * a model Cursor has never heard of — the whole slug misses the catalogue and the turn goes out
+ * asking for `claude-opus-5[1m]`.
+ */
+console.log('\n=== A window a caller named in brackets is read off the slug ===');
+{
+  const plain = parseSlug('claude-opus-5');
+  ok('a bare name is all base and no parameters', plain.base === 'claude-opus-5' && plain.parameters.size === 0);
+
+  const window = parseSlug('claude-opus-5[1m]');
+  ok('the bracket comes off the name', window.base === 'claude-opus-5', window.base);
+  ok('and a value on its own is the context window', window.parameters.get('context') === '1m', JSON.stringify([...window.parameters]));
+
+  const named = parseSlug('claude-sonnet-5[context=300k]');
+  ok('which can also be said in full', named.parameters.get('context') === '300k', JSON.stringify([...named.parameters]));
+
+  const several = parseSlug('claude-sonnet-5-thinking-high[ context = 300k , thinking = true ]');
+  ok('several travel comma-separated', several.parameters.get('thinking') === 'true', JSON.stringify([...several.parameters]));
+  ok('with the spacing a person would write', several.base === 'claude-sonnet-5-thinking-high' && several.parameters.get('context') === '300k', JSON.stringify(several.base));
+
+  const empty = parseSlug('claude-opus-5[]');
+  ok('an empty bracket asks for nothing', empty.base === 'claude-opus-5' && empty.parameters.size === 0, JSON.stringify(empty.base));
 }
 
 console.log("\n=== Cursor's tool requests map onto the caller's own tools ===");

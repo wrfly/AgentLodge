@@ -3,6 +3,7 @@ import { accessToken, CursorAuthError } from './auth.js';
 import type { Egress } from './bidi.js';
 import { listModels, resolveModel, type CatalogOptions } from './catalog.js';
 import { AgentSession, type AgentEvent } from './session.js';
+import { canonical, identify, keep, planFor, recall, spoken, systemOf, type Sticky } from './conversation.js';
 import { buildRunRequest, toolResults, type ChatRequest } from './request.js';
 import { ChatStream } from './stream.js';
 import { BUNDLE_VERSION } from './schema.generated.js';
@@ -122,12 +123,21 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
   const route = opts.egress ?? direct;
 
   /*
+   * The transcript as the conversation store compares them, and the instructions that came with
+   * it. Read once, here, because both paths below want them: the one that resumes a parked turn
+   * and the one that starts a new one.
+   */
+  const messages = opts.body.messages ?? [];
+  const now = canonical(messages);
+  const system = systemOf(messages);
+
+  /*
    * A request answering a tool call resumes the turn that asked for it, if that turn is still
    * here. When it is not — it expired, or this process restarted — the transcript carries the
    * whole history including the tool results, so starting again is a worse answer rather than
    * a wrong one.
    */
-  const results = toolResults(opts.body.messages ?? []);
+  const results = toolResults(messages);
   const parked = results.length ? resume(results.map((r) => r.callId)) : undefined;
 
   if (parked) {
@@ -138,7 +148,14 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
       await parked.session.close().catch(() => {});
       return jsonError(502, `Could not return a tool result to Cursor: ${(e as Error).message}`);
     }
-    return relay(parked.events, parked.session, parked.controller, opts, parked.model);
+    /*
+     * The lane comes from the parked turn rather than being worked out here: it is keyed by the
+     * resolved model, and this path never resolves one — it picks up a turn already running.
+     * The transcript is this request's, which is the one carrying the tool results, and so the
+     * one the next turn has to be compared against.
+     */
+    const resumed = parked.lane ? { lane: parked.lane, messages: now, system } : undefined;
+    return relay(parked.events, parked.session, parked.controller, opts, parked.model, undefined, resumed);
   }
 
   let token: string;
@@ -164,6 +181,15 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
   });
 
   /*
+   * Which Cursor conversation this request belongs to, and what that conversation left behind.
+   * Worked out here rather than earlier because a lane is keyed by the model configuration as
+   * well as the thread — see conversation.ts — and the model has only just been resolved.
+   */
+  const identity = identify({ conversationId: opts.conversationId, model, messages: now });
+  const plan = planFor(recall(identity.lane), now, system);
+  const held = plan.kind === 'continue' ? plan.held : undefined;
+
+  /*
    * The turn's own id, which is not the stream's. The real client keeps the two apart — a
    * retried turn opens a new stream and keeps this — so it is minted here and travels as both
    * the request's `run_id` and the `x-original-request-id` header on every call.
@@ -171,9 +197,29 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
   const turnId = crypto.randomUUID();
   const { request, delegate } = buildRunRequest(opts.body, {
     model,
-    conversationId: opts.conversationId,
+    /*
+     * An aside is not this thread, so it is sent as a conversation of its own — one
+     * buildRunRequest mints — under the thread's group, where Cursor's own accounting can still
+     * read the two as one piece of work.
+     */
+    conversationId: plan.kind === 'aside' ? undefined : identity.id,
+    conversationGroupId: identity.groupId,
     runId: turnId,
+    state: held?.state,
+    /*
+     * Only what is new, sliced out of spoken() because that is the filter the held transcript
+     * was counted with: `from` indexes the conversation, not the request the system prompt is
+     * still in.
+     */
+    messages: plan.kind === 'continue' ? spoken(messages).slice(plan.from) : undefined,
   });
+
+  /*
+   * What this turn writes back to the lane if it finishes. An aside writes nothing: it is not
+   * the thread, and the state it produces would stand where the thread's own belongs.
+   */
+  const sticky: Sticky | undefined =
+    plan.kind === 'aside' ? undefined : { lane: identity.lane, messages: now, system };
 
   const start = async (bearer: string) => {
     const controller = new AbortController();
@@ -187,34 +233,84 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
       signal: controller.signal,
       workspace: WORKSPACE,
       delegate,
+      /*
+       * The blobs this conversation has already handed over. The server asks for them by id
+       * and does not care which request stored them, so a turn that continues one without them
+       * stops at the first `get_blob` it cannot answer.
+       */
+      blobs: held?.blobs,
     });
     const events = session.run(request);
-    // Pulled here rather than in relay(): while nothing has been written, a refusal can still
-    // be a status, which is the difference between a client retrying and a client giving up
-    const first = await events.next();
-    return { session, events, controller, first };
+    /*
+     * Started here rather than in relay(), and deliberately not awaited here: while nothing has
+     * been written a refusal can still be a status, which is the difference between a client
+     * retrying and a client giving up. The pull travels on either way, so a turn that outlasts
+     * the wait below still delivers its first event rather than losing it to a dropped promise.
+     */
+    const pending = events.next();
+    return { session, events, controller, pending };
   };
 
   let run = await start(token);
+  let first = await settled(run.pending);
   /*
    * A token that was refused. It may have been revoked rather than aged out — the cache cannot
    * tell the difference — so the one retry mints a new one and tries again. Only once: a key
    * that is genuinely invalid would otherwise be exchanged on every request.
    */
-  if (unauthorised(run.first.value)) {
+  if (unauthorised(first?.value)) {
     run.controller.abort();
     const fresh = await accessToken(opts.secret, base, { force: true, signal: opts.signal }).catch(() => token);
-    if (fresh !== token) run = await start(fresh);
+    if (fresh !== token) {
+      run = await start(fresh);
+      first = await settled(run.pending);
+    }
   }
 
-  const event = run.first.value;
+  const event = first?.value;
   if (event?.kind === 'error') {
     run.controller.abort();
     await run.session.close().catch(() => {});
     return jsonError(event.status ?? 502, event.message);
   }
 
-  return relay(run.events, run.session, run.controller, opts, opts.model, event);
+  return relay(run.events, run.session, run.controller, opts, opts.model, run.pending, sticky);
+}
+
+/**
+ * How long a refusal is worth waiting for before the stream starts anyway.
+ *
+ * Two cases arrive on the same promise and want opposite things. A refusal — an expired token,
+ * an exhausted plan, a model this account cannot use — comes back in the first moment, and
+ * while nothing has been written it can still be an HTTP **status**, which is what a client
+ * retries on and what the gate reads to decide whether to back off. A turn that is merely slow
+ * to start is the other, and waiting on that one costs: the response headers are what start the
+ * gateway's keep-alive, so until they go out the client hears nothing at all, and the upstream
+ * headers bound would eventually abort a turn that was working the whole time.
+ *
+ * So the wait is short, and what has not arrived by the end of it arrives in band instead.
+ */
+const FIRST_EVENT_MS = 20_000;
+
+/**
+ * The first event, if it turns up in time.
+ *
+ * `undefined` means it has not arrived **yet** — not that it failed. The same promise is handed
+ * to relay(), which awaits it for its own first pull, so giving up on it here loses nothing:
+ * awaiting a promise twice yields the same answer, and a rejection is reported by the stream,
+ * which by then is the only place left to say anything.
+ */
+async function settled(pending: Promise<IteratorResult<AgentEvent>>): Promise<IteratorResult<AgentEvent> | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const elapsed = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), FIRST_EVENT_MS);
+  });
+  try {
+    return await Promise.race([pending.catch(() => undefined), elapsed]);
+  } finally {
+    // Otherwise the timer holds the event loop open for its full length after every turn
+    clearTimeout(timer);
+  }
 }
 
 const unauthorised = (event?: AgentEvent): boolean =>
@@ -237,7 +333,21 @@ function relay(
   controller: AbortController,
   opts: FetchOptions,
   model: string,
-  first?: AgentEvent,
+  /**
+   * The pull already in flight, which this stream owns from here.
+   *
+   * An async generator hands each `next()` to the caller that asked for it, so the first event
+   * belongs to the pull fetchCursor started — asking for another one here would wait for the
+   * *second* event and lose the first.
+   */
+  first?: Promise<IteratorResult<AgentEvent>>,
+  /**
+   * Which lane this turn's state belongs to, and the transcript to file it under.
+   *
+   * Absent for a turn whose state is nobody's to keep — an aside, or a resumed turn whose lane
+   * did not outlive the request that parked it.
+   */
+  sticky?: Sticky,
 ): Response {
   const out = new ChatStream(model);
   const encoder = new TextEncoder();
@@ -259,7 +369,7 @@ function relay(
     if (!parkedHere) void session.close().catch(() => {});
   };
 
-  let queued = first;
+  let pending = first;
 
   const stream = new ReadableStream<Uint8Array>({
     async pull(controllerOut) {
@@ -267,30 +377,29 @@ function relay(
         if (text) controllerOut.enqueue(encoder.encode(text));
       };
 
-      let event: AgentEvent | undefined;
-      if (queued) {
-        event = queued;
-        queued = undefined;
-      } else {
-        let step;
-        try {
-          step = await events.next();
-        } catch (e) {
-          write(out.error(`Cursor stopped answering: ${(e as Error).message}`));
-          controllerOut.close();
-          finish();
-          return;
-        }
-        if (step.done) {
-          // The generator ended without saying how, which nothing in session.ts does; saying
-          // `stop` here would tell the client the model finished
-          write(out.error('the upstream ended the turn without finishing'));
-          controllerOut.close();
-          finish();
-          return;
-        }
-        event = step.value;
+      // The pull in flight on the first turn of this loop, a fresh one after that. Taken before
+      // the await so a rejection cannot leave it to be awaited a second time.
+      const source = pending ?? events.next();
+      pending = undefined;
+
+      let step: IteratorResult<AgentEvent>;
+      try {
+        step = await source;
+      } catch (e) {
+        write(out.error(`Cursor stopped answering: ${(e as Error).message}`));
+        controllerOut.close();
+        finish();
+        return;
       }
+      if (step.done) {
+        // The generator ended without saying how, which nothing in session.ts does; saying
+        // `stop` here would tell the client the model finished
+        write(out.error('the upstream ended the turn without finishing'));
+        controllerOut.close();
+        finish();
+        return;
+      }
+      const event = step.value;
 
       if (event.kind === 'text') {
         write(out.text(event.text));
@@ -306,7 +415,12 @@ function relay(
          */
         write(out.done());
         parkedHere = true;
-        park({ session, events, controller, callId: event.callId, model });
+        /*
+         * The lane travels with the turn rather than being written now. The state is not this
+         * turn's to keep yet — it is still running, and the request that resumes it cannot work
+         * the lane out for itself, because it never resolves a model.
+         */
+        park({ session, events, controller, callId: event.callId, model, lane: sticky?.lane });
         controllerOut.close();
         finish();
         return;
@@ -319,6 +433,12 @@ function relay(
         return;
       }
 
+      /*
+       * A turn that finished is the only one worth filing. One that errored leaves the lane as
+       * it was: its checkpoint describes a conversation that did not get to the end of a turn,
+       * and the client's retry carries the same transcript anyway.
+       */
+      keep(sticky, session.carried);
       write(out.done(event.usage));
       controllerOut.close();
       finish();

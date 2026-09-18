@@ -1,6 +1,6 @@
 import { accessToken } from './auth.js';
 import { decode, encode, type Message } from './codec.js';
-import { splitModel } from './request.js';
+import { parseSlug, splitModel } from './request.js';
 
 /**
  * What Cursor calls a model, and what it wants sent instead.
@@ -21,6 +21,13 @@ import { splitModel } from './request.js';
  *   `-fast`  is a parameter on some models and part of the name on others
  *            (`cursor-grok-4.6-high-fast` against `composer-2.5-fast`)
  *
+ * And one parameter has no slug at all: the context window. `claude-opus-5[1m]` is how Claude
+ * Code names the model it is running as, and no variant stands for it — so it is read off the
+ * slug (request.ts, parseSlug) and checked here against the `parameter_definitions` the model
+ * carries, which say which parameters it takes and which values each of them accepts. A window
+ * nothing is asking for is not sent: the variant's own parameters are what Cursor's client would
+ * have sent, and inventing a default would be this end choosing a context size — and a price.
+ *
  * The table is fetched once per credential and held: it is the same answer for every request,
  * and a round trip per turn would buy nothing. When it cannot be had, the suffix reading in
  * splitModel() stands in — a model sent slightly wrong is recoverable, and refusing the turn
@@ -39,11 +46,16 @@ export interface ResolvedModel {
   from: 'catalog' | 'suffix';
 }
 
+/** What a model says it takes: each parameter's id, and the values it will accept for it */
+type Parameters = Map<string, Set<string>>;
+
 interface Catalog {
   /** Every slug the console can offer */
   names: string[];
   /** Every slug Cursor answers to — variants and legacy names included — resolved */
   slugs: Map<string, ResolvedModel>;
+  /** Keyed by model name, which is what `model_id` carries rather than what a caller asked for */
+  parameters: Map<string, Parameters>;
 }
 
 const MODELS_RPC = '/aiserver.v1.AiService/AvailableModels';
@@ -65,6 +77,28 @@ const parametersOf = (variant: Message | undefined): Message[] =>
   (Array.isArray(variant?.['parameter_values']) ? (variant!['parameter_values'] as Message[]) : [])
     .map((p) => ({ id: str(p['id']), value: str(p['value']) }))
     .filter((p) => p['id']);
+
+/**
+ * What one model says its parameters are, and which values each of them takes.
+ *
+ * Both kinds answer the same way — a boolean parameter lists `"true"` and `"false"` just as an
+ * enum lists `"1m"` and `"300k"` — so a caller's value is checked the same way whichever it is.
+ */
+function definitionsOf(model: Message): Parameters {
+  const out: Parameters = new Map();
+  const definitions = Array.isArray(model['parameter_definitions'])
+    ? (model['parameter_definitions'] as Message[])
+    : [];
+  for (const definition of definitions) {
+    const id = str(definition['id']);
+    if (!id) continue;
+    const type = definition['parameter_type'] as Message | undefined;
+    const arm = (type?.['enum_parameter'] ?? type?.['boolean_parameter']) as Message | undefined;
+    const values = Array.isArray(arm?.['values']) ? (arm!['values'] as Message[]) : [];
+    out.set(id, new Set(values.map((v) => str(v['value'])).filter(Boolean)));
+  }
+  return out;
+}
 
 /** One model's variants, as resolutions keyed by every slug that selects them */
 function variantsOf(model: Message, into: Map<string, ResolvedModel>): void {
@@ -147,7 +181,14 @@ async function fetchCatalog(opts: CatalogOptions): Promise<Catalog> {
   const models = Array.isArray(body['models']) ? (body['models'] as Message[]) : [];
 
   const slugs = new Map<string, ResolvedModel>();
-  for (const model of models) variantsOf(model, slugs);
+  const parameters = new Map<string, Parameters>();
+  for (const model of models) {
+    variantsOf(model, slugs);
+    // Keyed by the model's own name, because that is what a resolution carries in `model_id`;
+    // the slug a caller asked for is one of several that can arrive at the same model
+    const name = str(model['name']);
+    if (name) parameters.set(name, definitionsOf(model));
+  }
 
   /*
    * Two lists, and the structured one is the better answer: `model_names` is the flat legacy
@@ -161,7 +202,7 @@ async function fetchCatalog(opts: CatalogOptions): Promise<Catalog> {
    * the effort levels, and on this upstream those are how a model is chosen.
    */
   const names = slugs.size ? [...slugs.keys()].sort() : flat;
-  return { names, slugs };
+  return { names, slugs, parameters };
 }
 
 /** The catalog for this credential, fetched if it is not held or has aged out */
@@ -176,20 +217,53 @@ async function catalogOf(opts: CatalogOptions): Promise<Catalog> {
 }
 
 /**
+ * A resolution with a caller's own parameters applied, where the model accepts them.
+ *
+ * A copy rather than an edit in place: one resolution object is shared by every slug that
+ * selects the same variant, so writing this caller's context window into it would hand that
+ * window to everybody who asked for the model afterwards.
+ *
+ * Anything the model does not declare is dropped rather than sent. A parameter Cursor does not
+ * know, or a value outside the set it listed, is an `invalid_argument` that fails the whole
+ * turn — and the request is perfectly good without it.
+ */
+function withParameters(model: ResolvedModel, asked: Map<string, string>, accepts?: Parameters): ResolvedModel {
+  const parameters = model.parameters.map((p) => ({ ...p }));
+  for (const [id, value] of asked) {
+    if (!accepts?.get(id)?.has(value)) continue;
+    const at = parameters.findIndex((p) => p['id'] === id);
+    if (at >= 0) parameters[at] = { id, value };
+    else parameters.push({ id, value });
+  }
+  return { ...model, parameters };
+}
+
+/**
  * What to send for the model a request asked for.
  *
  * Never throws: a catalog that cannot be reached falls back to reading the suffixes. `from`
  * says which happened, so a probe can tell a resolved model from a guessed one.
+ *
+ * The bracket a caller may have written — `claude-opus-5[1m]` — is taken off before the lookup
+ * and applied after it, because it names a parameter rather than a variant and no slug in the
+ * catalogue carries one.
  */
 export async function resolveModel(slug: string, opts: CatalogOptions): Promise<ResolvedModel> {
+  const { base, parameters: asked } = parseSlug(slug);
   try {
-    const hit = (await catalogOf(opts)).slugs.get(slug);
-    if (hit) return hit;
+    const catalog = await catalogOf(opts);
+    const hit = catalog.slugs.get(base);
+    if (hit) return asked.size ? withParameters(hit, asked, catalog.parameters.get(hit.id)) : hit;
   } catch {
     // Falls through to the suffix reading, deliberately: the model is the request's subject,
     // not its destination, and a second call failing must not fail the turn
   }
-  const split = splitModel(slug);
+  /*
+   * The suffixes, of the slug without its bracket. The parameters the bracket asked for are
+   * dropped with the catalogue that would have checked them: sending one unverified is how a
+   * turn fails outright, and the window it names is a preference rather than the request.
+   */
+  const split = splitModel(base);
   return { ...split, from: 'suffix' };
 }
 

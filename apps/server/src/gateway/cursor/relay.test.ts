@@ -66,6 +66,13 @@ const CATALOG: Message = {
     {
       name: 'claude-opus-5',
       legacy_slugs: ['claude-opus-4-6'],
+      /*
+       * The context window, which is a parameter and not a variant: no slug in the table below
+       * selects one, so a caller asking for it can only be checked against this.
+       */
+      parameter_definitions: [
+        { id: 'context', parameter_type: { enum_parameter: { values: [{ value: '1m' }, { value: '300k' }] } } },
+      ],
       variants: [
         {
           variant_string_representation: 'claude-opus-5-high',
@@ -228,6 +235,7 @@ const { fetchCursorModels } = await import('./index.js');
 const catalog = await import('./catalog.js');
 const { splitModel } = await import('./request.js');
 const turns = await import('./turns.js');
+const conversation = await import('./conversation.js');
 
 let pass = 0;
 let fail = 0;
@@ -319,7 +327,9 @@ async function run(): Promise<void> {
     const sent = runRequest();
     const message = ((sent['action'] as Message)?.['user_message_action'] as Message)?.['user_message'] as Message;
     ok('the question travelled as the prompt', String(message?.['text']).includes('what is 2 + 2'), JSON.stringify(message));
-    ok('the system prompt travelled as a custom one', sent['custom_system_prompt'] === 'be brief', String(sent['custom_system_prompt']));
+    // In front of the words rather than in `custom_system_prompt`, which the server refuses
+    ok('the system prompt travelled at the head of the prompt', String(message?.['text']).startsWith('System: be brief'), JSON.stringify(message));
+    ok('and not in the field that would have been refused', sent['custom_system_prompt'] === undefined, String(sent['custom_system_prompt']));
     ok('the model name is the one the row names', (sent['requested_model'] as Message)?.['model_id'] === 'cursor-model');
     ok('and with no tools of its own the caller gets an asked turn', message?.['mode'] === 2, String(message?.['mode']));
   }
@@ -387,6 +397,126 @@ async function run(): Promise<void> {
     ok('and the turn gets to its answer', res.body.includes('context in hand'), res.body);
   }
 
+  console.log('\n=== A second turn continues the conversation rather than retelling it ===');
+  {
+    conversation.clear();
+    const checkpoint = new TextEncoder().encode('state-after-turn-one');
+    const blobId = new Uint8Array([9, 9]);
+    const blob = new TextEncoder().encode('what was said before');
+
+    /*
+     * Turn one, as Cursor runs one: a blob for this side to hold, and then the checkpoint that
+     * is the whole point — the server's own state, handed over part way through the turn.
+     */
+    reset((message, out) => {
+      if (message['run_request']) {
+        out(frame({ kv_server_message: { id: 1, set_blob_args: { blob_id: blobId, blob_data: blob } } }));
+        return;
+      }
+      if ((message['kv_client_message'] as Message | undefined)?.['set_blob_result']) {
+        out(frame({ conversation_checkpoint_update: checkpoint }));
+        out(text('noted'));
+        out(ended({ input_tokens: 40, output_tokens: 2 }));
+        endStream();
+      }
+    });
+
+    const thread = [{ role: 'user', content: 'remember the number seven' }];
+    const first = await asClaude({ system: 'be brief', messages: thread });
+    ok('the first turn finishes', first.body.includes('noted'), first.body);
+    const opened = runRequest();
+    ok(
+      'and it opened a conversation rather than continuing one',
+      ((opened['conversation_state'] as Uint8Array) ?? []).length === 0,
+      JSON.stringify(opened['conversation_state']),
+    );
+    const conversationId = String(opened['conversation_id'] ?? '');
+    ok('what it left behind is kept', conversation.laneCount() === 1, String(conversation.laneCount()));
+
+    reset((message, out) => {
+      if (message['run_request']) {
+        // The blob turn one was handed, asked for again — a continuation stops here without it
+        out(frame({ kv_server_message: { id: 2, get_blob_args: { blob_id: blobId } } }));
+        return;
+      }
+      if ((message['kv_client_message'] as Message | undefined)?.['get_blob_result']) {
+        out(text('ten'));
+        out(ended({ input_tokens: 4, output_tokens: 1, cache_read_tokens: 40 }));
+        endStream();
+      }
+    });
+
+    const second = await asClaude({
+      system: 'be brief',
+      messages: [...thread, { role: 'assistant', content: 'noted' }, { role: 'user', content: 'add three to it' }],
+    });
+    const carried = runRequest();
+    ok(
+      'the second turn sends the state the first one left',
+      Buffer.from((carried['conversation_state'] as Uint8Array) ?? []).equals(Buffer.from(checkpoint)),
+      JSON.stringify(carried['conversation_state']),
+    );
+    ok('under the same conversation', String(carried['conversation_id']) === conversationId, `${carried['conversation_id']} vs ${conversationId}`);
+    const asked = ((carried['action'] as Message)?.['user_message_action'] as Message)?.['user_message'] as Message;
+    ok('carrying what is new', String(asked?.['text']).includes('add three to it'), String(asked?.['text']));
+    ok('and not the turn Cursor already has', !String(asked?.['text']).includes('remember the number seven'), String(asked?.['text']));
+    // The instructions went out inside the first turn's prompt and are part of the state now
+    ok('nor the instructions it was given with', !String(asked?.['text']).startsWith('System:'), String(asked?.['text']));
+
+    const returned = sentWith('get_blob_result')?.['get_blob_result'] as Message;
+    ok(
+      "a blob from the first turn is still this side's to answer with",
+      Buffer.from((returned?.['blob_data'] as Uint8Array) ?? []).equals(Buffer.from(blob)),
+      JSON.stringify(returned),
+    );
+    ok('and the turn gets its answer', second.body.includes('ten'), second.body);
+  }
+
+  console.log('\n=== A classifier beside the thread does not take the thread with it ===');
+  {
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(text('a sum'));
+      out(ended({ input_tokens: 3, output_tokens: 1 }));
+      endStream();
+    });
+
+    /*
+     * What Claude Code interleaves with the conversation: a short exchange of its own, under
+     * its own instructions, on the same gateway conversation as the thread.
+     */
+    const aside = await asClaude({
+      system: 'name this conversation in four words',
+      messages: [{ role: 'user', content: 'what should this be called' }],
+    });
+    ok('it is answered', aside.body.includes('a sum'), aside.body);
+    const sent = runRequest();
+    ok('as a conversation of its own', ((sent['conversation_state'] as Uint8Array) ?? []).length === 0, JSON.stringify(sent['conversation_state']));
+    ok('under the thread it happened beside', String(sent['conversation_group_id'] ?? '').length > 0, JSON.stringify(sent['conversation_group_id']));
+    ok('and it leaves the thread where it was', conversation.laneCount() === 1, String(conversation.laneCount()));
+
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(text('thirteen'));
+      out(ended({ input_tokens: 2, output_tokens: 1 }));
+      endStream();
+    });
+    const third = await asClaude({
+      system: 'be brief',
+      messages: [
+        { role: 'user', content: 'remember the number seven' },
+        { role: 'assistant', content: 'noted' },
+        { role: 'user', content: 'add three to it' },
+        { role: 'assistant', content: 'ten' },
+        { role: 'user', content: 'add three again' },
+      ],
+    });
+    const resumed = runRequest();
+    ok('so the next real turn still continues it', ((resumed['conversation_state'] as Uint8Array) ?? []).length > 0, JSON.stringify(resumed['conversation_state']));
+    ok('and gets its answer', third.body.includes('thirteen'), third.body);
+    conversation.clear();
+  }
+
   console.log("\n=== Cursor asks the caller to read a file, across two requests ===");
   {
     reset((message, out) => {
@@ -398,6 +528,9 @@ async function run(): Promise<void> {
       const exec = message['exec_client_message'] as Message | undefined;
       if (exec?.['pi_read_result']) {
         out(text('it exports a'));
+        // Sent on the far side of the tool call, so the state belongs to a turn that was
+        // parked in one request and finished in another
+        out(frame({ conversation_checkpoint_update: new TextEncoder().encode('state-after-the-tool') }));
         out(ended({ input_tokens: 5, output_tokens: 4 }));
         endStream();
       }
@@ -429,6 +562,12 @@ async function run(): Promise<void> {
     ok('the answer continues the same turn', second.body.includes('it exports a'), second.body);
     ok('which now finishes', second.body.includes('"stop_reason":"end_turn"'), second.body);
     ok('and nothing is left parked', turns.parkedCount() === 0, String(turns.parkedCount()));
+    /*
+     * The lane a parked turn belongs to travels with it: the request that resumed this one
+     * never resolved a model, so it could not have worked the lane out for itself.
+     */
+    ok('the state it ended with is filed all the same', conversation.laneCount() === 1, String(conversation.laneCount()));
+    conversation.clear();
   }
 
   console.log("\n=== A tool the caller declared is called by name ===");
@@ -513,7 +652,8 @@ async function run(): Promise<void> {
     ok('it opens as a response', res.body.includes('event: response.created'), res.body.slice(0, 200));
     ok('the text arrives as output_text', res.body.includes('response.output_text.delta') && res.body.includes('four'), res.body);
     ok('and it completes', res.body.includes('event: response.completed'), res.body);
-    ok('the instructions travelled as the system prompt', runRequest()['custom_system_prompt'] === 'be brief', String(runRequest()['custom_system_prompt']));
+    const asked = ((runRequest()['action'] as Message)?.['user_message_action'] as Message)?.['user_message'] as Message;
+    ok('the instructions travelled as the system prompt', String(asked?.['text']).startsWith('System: be brief'), JSON.stringify(asked));
   }
 
   console.log('\n=== A slug is resolved through the catalogue, not off the end of itself ===');
@@ -542,6 +682,32 @@ async function run(): Promise<void> {
 
     const fast = await catalog.resolveModel('composer-2.5-fast', options);
     ok('a suffix that is part of the name is left alone', fast.id === 'composer-2.5-fast' && fast.parameters.length === 0, JSON.stringify(fast));
+
+    /*
+     * The bracket Claude Code puts on its own model name. Nothing in the variant table carries
+     * one, so the slug has to come apart before the lookup and the window has to be checked
+     * against what the model declares rather than passed straight through.
+     */
+    const window = await catalog.resolveModel('claude-opus-5-thinking-high[1m]', options);
+    ok('a bracketed window still finds its model', window.id === 'claude-opus-5' && window.from === 'catalog', JSON.stringify(window));
+    ok(
+      "and goes out beside the variant's own parameters",
+      JSON.stringify(window.parameters) === '[{"id":"thinking","value":"true"},{"id":"effort","value":"high"},{"id":"context","value":"1m"}]',
+      JSON.stringify(window.parameters),
+    );
+
+    const refused = await catalog.resolveModel('claude-opus-5-thinking-high[999k]', options);
+    ok('a window the model never offered is dropped rather than sent', refused.parameters.every((p) => p['id'] !== 'context'), JSON.stringify(refused.parameters));
+
+    const none = await catalog.resolveModel('composer-2.5-fast[1m]', options);
+    ok('as is one on a model that takes no parameters at all', none.id === 'composer-2.5-fast' && none.parameters.length === 0, JSON.stringify(none));
+
+    /*
+     * The one that would be silent: every slug selecting a variant shares one resolution
+     * object, so applying a caller's window in place would hand it to everybody after them.
+     */
+    const after = await catalog.resolveModel('claude-opus-5-thinking-high', options);
+    ok('and the resolution the table holds is left as it was', after.parameters.length === 2, JSON.stringify(after.parameters));
 
     ok('the catalogue is asked once and held', modelCalls === 1, String(modelCalls));
 
@@ -603,6 +769,7 @@ try {
   await run();
 } finally {
   turns.clear();
+  conversation.clear();
   catalog.forget();
   closeStream();
   cursor.close();

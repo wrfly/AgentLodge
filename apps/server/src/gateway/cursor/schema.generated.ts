@@ -879,6 +879,39 @@ export const MESSAGES: Record<string, MessageDesc> = {
   "aiserver.v1.BidiRequestId": [
     {"no":1,"name":"request_id","kind":"scalar","scalar":9},
   ],
+  "aiserver.v1.ModelParameterDefinition": [
+    {"no":1,"name":"id","kind":"scalar","scalar":9},
+    {"no":2,"name":"name","kind":"scalar","scalar":9},
+    {"no":3,"name":"markdown_tooltip","kind":"scalar","opt":true,"scalar":9},
+    {"no":4,"name":"parameter_type","kind":"message","type":"aiserver.v1.ModelParameterDefinition.ModelParameterType"},
+    {"no":5,"name":"is_cycleable_by_hotkey","kind":"scalar","opt":true,"scalar":8},
+  ],
+  "aiserver.v1.ModelParameterDefinition.BooleanParameterDefinition": [
+    {"no":1,"name":"values","kind":"message","repeated":true,"type":"aiserver.v1.ModelParameterDefinition.BooleanParameterDefinition.BooleanParameterValue"},
+  ],
+  "aiserver.v1.ModelParameterDefinition.BooleanParameterDefinition.BooleanParameterValue": [
+    {"no":1,"name":"value","kind":"scalar","scalar":9},
+    {"no":2,"name":"display_name","kind":"scalar","opt":true,"scalar":9},
+    {"no":3,"name":"increases_model_cost","kind":"scalar","opt":true,"scalar":8},
+    {"no":4,"name":"default_blocked_in_admin_allowlist","kind":"scalar","opt":true,"scalar":8},
+    {"no":5,"name":"hide_from_user_picker_when_admin_blocked","kind":"scalar","opt":true,"scalar":8},
+    {"no":6,"name":"blocked_by_admin_allowlist","kind":"scalar","opt":true,"scalar":8},
+  ],
+  "aiserver.v1.ModelParameterDefinition.EnumParameterDefinition": [
+    {"no":1,"name":"values","kind":"message","repeated":true,"type":"aiserver.v1.ModelParameterDefinition.EnumParameterDefinition.EnumParameterValue"},
+  ],
+  "aiserver.v1.ModelParameterDefinition.EnumParameterDefinition.EnumParameterValue": [
+    {"no":1,"name":"value","kind":"scalar","scalar":9},
+    {"no":2,"name":"display_name","kind":"scalar","opt":true,"scalar":9},
+    {"no":3,"name":"increases_model_cost","kind":"scalar","opt":true,"scalar":8},
+    {"no":4,"name":"blocked_by_admin_allowlist","kind":"scalar","opt":true,"scalar":8},
+    {"no":5,"name":"markdown_tooltip","kind":"scalar","opt":true,"scalar":9},
+    {"no":6,"name":"model_picker_badges","kind":"message","repeated":true,"type":"aiserver.v1.AvailableModelsResponse.ModelPickerBadge"},
+  ],
+  "aiserver.v1.ModelParameterDefinition.ModelParameterType": [
+    {"no":1,"name":"boolean_parameter","kind":"message","opt":true,"type":"aiserver.v1.ModelParameterDefinition.BooleanParameterDefinition"},
+    {"no":2,"name":"enum_parameter","kind":"message","opt":true,"type":"aiserver.v1.ModelParameterDefinition.EnumParameterDefinition"},
+  ],
   "google.protobuf.ListValue": [
     {"no":1,"name":"values","kind":"message","type":"google.protobuf.Value","repeated":true},
   ],
