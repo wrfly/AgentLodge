@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
-import { publicApi } from '../lib/api';
+import { fmtMoney, publicApi } from '../lib/api';
 import { useAuth } from '../store/auth';
 import { navigate } from '../lib/route';
 import { useT } from '../lib/i18n';
@@ -105,7 +105,8 @@ export function RegisterPage({ code, email: presetEmail }: { code?: string; emai
     valid: boolean;
     reason?: string;
     email?: string;
-    tokenLimit?: number | null;
+    limit?: number | null;
+    currency?: string;
   } | null>(null);
 
   const register = useAuth((s) => s.register);
@@ -164,8 +165,8 @@ export function RegisterPage({ code, email: presetEmail }: { code?: string; emai
         <div className="mb-4 rounded-lg border border-emerald-500/30 bg-emerald-500/8 px-3 py-2 text-[13px] text-emerald-700 dark:text-emerald-300">
           <CheckCircle2 size={13} className="mr-1 inline" />
           {t('Invite is valid')}
-          {inviteInfo.tokenLimit != null &&
-            ` · ${t('quota {n} tokens/month', { n: inviteInfo.tokenLimit.toLocaleString() })}`}
+          {inviteInfo.limit != null &&
+            ` · ${t('quota {amount}/month', { amount: fmtMoney(inviteInfo.limit, inviteInfo.currency ?? 'USD') })}`}
         </div>
       )}
       {error && <ErrorBox text={error} />}

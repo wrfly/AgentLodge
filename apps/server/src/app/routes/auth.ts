@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../../core/config.js';
 import * as usersRepo from '../../core/db/users.js';
 import * as invitesRepo from '../../core/db/invites.js';
+import * as usageRepo from '../../core/db/usage.js';
 import * as sessionsRepo from '../../core/db/sessions.js';
 import * as audit from '../../core/db/audit.js';
 import { getString } from '../../core/db/settings.js';
@@ -162,7 +163,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       // administrator promotes them from the user list
       role: usersRepo.count() === 0 ? 'admin' : 'user',
       inviteCodeId: invite.id,
-      tokenLimit: invite.presetTokenLimit,
+      monthLimit: invite.presetLimit,
     });
     invitesRepo.consume(invite.id);
 
@@ -191,7 +192,8 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       reason: usable.ok ? undefined : usable.reason,
       email: invite.email,
       expiresAt: invite.expiresAt,
-      tokenLimit: invite.presetTokenLimit,
+      limit: invite.presetLimit,
+      currency: usageRepo.settlementCurrency(),
     };
   });
 

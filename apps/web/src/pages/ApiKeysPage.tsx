@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Ban, Check, Copy, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
-import { me, type ApiKeyRow } from '../lib/api';
-import { Banner, Button, Card, Empty, Field, Input, Page, Spinner, fmtDate, fmtTokens } from '../components/ui';
+import { fmtCost, me, type ApiKeyRow } from '../lib/api';
+import { Banner, Button, Card, Empty, Field, Input, Page, Spinner, fmtDate } from '../components/ui';
 import { useT } from '../lib/i18n';
 
 /**
@@ -185,9 +185,9 @@ export function ApiKeysPage() {
                     </span>
                     {k.usage && (
                       <span>
-                        {t('{calls} calls · {tokens} billable tokens', {
+                        {t('{calls} calls · {cost}', {
                           calls: k.usage.calls,
-                          tokens: fmtTokens(k.usage.billableTokens),
+                          cost: fmtCost(k.usage.cost),
                         })}
                       </span>
                     )}

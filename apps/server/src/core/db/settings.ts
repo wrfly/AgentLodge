@@ -106,11 +106,11 @@ export interface SettingSpec {
   /**
    * What the console shows and takes, as a multiple of what is stored.
    *
-   * A token allowance is stored in tokens because that is what usage is counted in, and
-   * typed in millions because nobody sizes an allowance in single tokens — and a misplaced
-   * zero in `5000000` is invisible in a way that one in `5` is not. The conversion is the
-   * console's; the stored value, the environment fallback and validate() all stay in the
-   * unit the rest of the server uses.
+   * A money setting is stored in micro-units because that is what every cost and ceiling in
+   * the database is counted in, and typed in whole units because nobody sizes an allowance
+   * to the sixth decimal place — and a misplaced zero in `10000000` is invisible in a way
+   * that one in `10` is not. The conversion is the console's; the stored value, the
+   * environment fallback and validate() all stay in the unit the rest of the server uses.
    */
   scale?: number;
   /** Shown inside the field, in the entered scale */
@@ -239,14 +239,16 @@ export const SETTING_SPECS: SettingSpec[] = [
 
   // Quota
   {
-    key: 'quota.defaultTokenLimit',
+    key: 'quota.defaultLimit',
     span: 2,
     label: 'Default quota for new users',
     group: 'quota',
     type: 'number',
+    // Typed in whole units of the settlement currency, stored in micro-units, which is
+    // what every ceiling and every cost in the database is counted in
     scale: 1_000_000,
-    unit: 'M',
-    hint: 'Millions of billable tokens per period; empty is unlimited.',
+    unit: 'money',
+    hint: 'A monthly ceiling for a new account, in the settlement currency; empty is unlimited.',
   },
   {
     key: 'quota.anchorDayOfMonth',
@@ -364,26 +366,6 @@ export const SETTING_SPECS: SettingSpec[] = [
       return undefined;
     },
   },
-  {
-    key: 'quota.weightCacheRead',
-    span: 2,
-    label: 'Cache-hit weight',
-    group: 'quota',
-    type: 'number',
-    default: '0.1',
-    hint: 'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.',
-  },
-  {
-    key: 'quota.weightOutput',
-    span: 2,
-    label: 'Output weight',
-    group: 'quota',
-    type: 'number',
-    default: '1.5',
-    hint: 'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.',
-  },
-
-  // agent
   {
     /*
      * Not a setting anybody edits: the gateway writes it when the upstream reports when its
@@ -688,6 +670,12 @@ export function listSettings(): SettingView[] {
           : 'unset';
     return {
       ...spec,
+      /*
+       * A money field is labelled in whatever currency this deployment settles in, which is
+       * itself a setting — so the unit is filled in here rather than written into the spec.
+       * `money` is the placeholder, not something an administrator should ever read.
+       */
+      unit: spec.unit === 'money' ? getString('billing.currency', 'USD') : spec.unit,
       value: spec.type === 'secret' ? (resolved ? mask(resolved) : '') : resolved,
       isSet: Boolean(resolved),
       source,
@@ -704,9 +692,3 @@ export const quotaAnchor = () => ({
   hour: getNumber('quota.anchorHour') ?? 0,
 });
 
-export const quotaWeights = () => ({
-  input: 1,
-  cacheRead: getNumber('quota.weightCacheRead') ?? 0.1,
-  cacheCreation: 1,
-  output: getNumber('quota.weightOutput') ?? 1.5,
-});

@@ -3,10 +3,10 @@ import * as usageRepo from './db/usage.js';
 import { WINDOW_MS, periodEndAt, periodStartAt, weekBoundsAt, windowBoundsAt } from './db/period.js';
 import { quotaAnchor } from './db/settings.js';
 import { getStringFresh } from './db/settings.js';
-import type { LimitKind, QuotaScope, QuotaStatus, QuotaWindow } from './protocol.js';
+import type { QuotaScope, QuotaStatus, QuotaWindow } from './protocol.js';
 import { MICRO } from './db/pricing.js';
 
-export type { QuotaStatus, QuotaWindow, LimitKind, QuotaScope } from './protocol.js';
+export type { QuotaStatus, QuotaWindow, QuotaScope } from './protocol.js';
 
 /**
  * What a user has left, in each of the platform's three windows.
@@ -95,13 +95,12 @@ function windowStatus(
    * for everybody and there is nothing left for a second figure to reconcile.
    */
   /*
-   * A ceiling is one number, so what is compared against it has to be one too. `settle`
-   * converts the per-currency spend into the settlement currency at the configured rates —
-   * the only place in the system that collapses money, and only because a limit leaves no
-   * choice. Everything that reports rather than enforces keeps the currencies apart.
+   * A ceiling is one number, so what is compared against it has to be one too. `costSettled`
+   * is the per-currency spend converted at the configured rates — the only place in the
+   * system that collapses money, and only because a limit leaves no choice. Everything that
+   * reports rather than enforces keeps the currencies apart.
    */
-  const amountOf = (t: usageRepo.Totals) =>
-    (q.limitKind === 'cost' ? t.costSettled : t.billableTokens);
+  const amountOf = (t: usageRepo.Totals) => t.costSettled;
   const from = start.toISOString();
   const to = end.toISOString();
   const used = amountOf(usageRepo.totalsForUser(userId, { from, to }));
@@ -149,7 +148,6 @@ export function status(
     : null;
 
   return {
-    limitKind: q.limitKind,
     currency: q.currency,
     hardStop: q.hardStop,
     windows,
@@ -159,7 +157,7 @@ export function status(
     // Null both when nobody asked and when there is nothing to say — the one consumer
     // treats either as "no line to show", which is the same answer.
     typicalTurn:
-      opts.withTypicalTurn && limited.length ? usageRepo.typicalTurn(userId, q.limitKind) : null,
+      opts.withTypicalTurn && limited.length ? usageRepo.typicalTurn(userId) : null,
   };
 }
 
@@ -200,7 +198,7 @@ export function check(userId: string, now = new Date()): Verdict {
   if (!s.exceeded || !s.hardStop) return { allow: true, status: s };
 
   const hit = SCOPES.map((scope) => s.windows[scope]).find((w) => w.exceeded)!;
-  const { unit, amount } = amountIn(s.limitKind, s.currency);
+  const { unit, amount } = amountIn(s.currency);
 
   return {
     allow: false,
@@ -213,25 +211,16 @@ export function check(userId: string, now = new Date()): Verdict {
 }
 
 /**
- * How a quota figure is written down, in the unit its ceiling is counted in.
+ * How a quota figure is written down.
  *
  * Both the refusal and the warning mail quote the same pair of numbers, and they used to
- * format them apart: one `String(v)`, the other `v.toLocaleString()` — so the same 900,000
- * appeared as `900000` in the refusal and `900,000` in the mail, and on a server with a
- * non-English `LANG` the mail said `900.000` to an English reader. Neither is worth arguing
- * about on its own; two spellings of one number in two places is what makes people distrust
- * both. `en-US` is pinned because these strings are not translated.
+ * format them apart: one `String(v)`, the other `v.toLocaleString()` — so the same figure
+ * appeared two ways, and on a server with a non-English `LANG` the mail said `900.000` to an
+ * English reader. Two spellings of one number in two places is what makes people distrust
+ * both.
  */
-export function amountIn(
-  limitKind: LimitKind,
-  currency: string,
-): { unit: string; amount: (v: number) => string } {
-  const byCost = limitKind === 'cost';
-  return {
-    unit: byCost ? currency : 'tokens',
-    amount: (v: number) =>
-      byCost ? (v / MICRO).toFixed(2) : v.toLocaleString('en-US'),
-  };
+export function amountIn(currency: string): { unit: string; amount: (v: number) => string } {
+  return { unit: currency, amount: (v: number) => (v / MICRO).toFixed(2) };
 }
 
 export function formatDuration(ms: number): string {

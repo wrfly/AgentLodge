@@ -163,7 +163,7 @@ export const zhHant: Record<string, string> = {
   'Create an account': '建立帳號',
   'Already have an account?': '已經有帳號了？',
   'Invite is valid': '邀請碼有效',
-  'quota {n} tokens/month': '配額 {n} tokens/月',
+  'quota {amount}/month': '配額 {amount}/月',
   'This invite code is bound to that address': '這個邀請碼綁定了該信箱',
   '2–24 characters': '2–24 個字元',
   'Invite code': '邀請碼',
@@ -188,7 +188,7 @@ export const zhHant: Record<string, string> = {
   'created {when}': '建立於 {when}',
   'last used {when}': '最後使用 {when}',
   'never used': '從未使用',
-  '{calls} calls · {tokens} billable tokens': '{calls} 次呼叫 · {tokens} 計費 tokens',
+  '{calls} calls · {cost}': '{calls} 次呼叫 · {cost}',
   Revoke: '撤銷',
   Setup: '設定方式',
   'The key you just created is already filled in below.': '剛才建立的金鑰已經填在下面了。',
@@ -223,7 +223,6 @@ export const zhHant: Record<string, string> = {
   'By agent and model': '按 agent 和模型',
   Turns: '輪次',
   Calls: '呼叫',
-  'Billable tokens': '計費 tokens',
   '(default)': '（預設）',
   'Heaviest conversations': '用得最多的對話',
   Users: '使用者',
@@ -373,8 +372,6 @@ export const zhHant: Record<string, string> = {
   '1 = Monday … 7 = Sunday': '1 = 週一 … 7 = 週日',
   'Reset hour': '重置時刻',
   '0–23, server time.': '0–23，伺服器本地時間',
-  'Cache-hit weight': '快取命中權重',
-  'Output weight': '輸出權重',
   'Agents offered': '提供哪些 agent',
   'Anthropic Messages native (official / DeepSeek compatibility layer / your own gateway)': 'Anthropic Messages 原生（官方 / DeepSeek 相容層 / 自建網關）',
   'OpenAI Chat compatible (Ollama / LM Studio / third party)': 'OpenAI Chat 相容（Ollama / LM Studio / 第三方）',
@@ -415,7 +412,7 @@ export const zhHant: Record<string, string> = {
   'Empty if the relay needs no login.': '中繼不要求登入就留空',
   'SMTP password': 'SMTP 密碼',
   'Refresh the model list hourly': '每小時更新模型清單',
-  'Millions of billable tokens per period; empty is unlimited.': '每週期多少百萬計費 token，留空不限',
+  'A monthly ceiling for a new account, in the settlement currency; empty is unlimited.': '新帳號每月的金額上限，按結算幣種計；留空不限',
   'Quota used up — ask an administrator': '配額已用完——請聯絡管理員',
   '{scope} quota used up ({used} / {limit}) — ask an administrator': '{scope}配額已用完（{used} / {limit}）——請聯絡管理員',
   '5 h': '5 小時',
@@ -565,9 +562,9 @@ export const zhHant: Record<string, string> = {
   'Out': '輸出',
   'Cost': '金額',
 
-  // Billing currency and the fallback weights
+  // Billing currency
   'Currency': '幣別',
-  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': '計費 token = 這一輪實際花的錢，換算成標準價下的輸入 token —— 所以越貴的模型佔掉越多同樣的配額',
+  'What each turn cost, at the price the upstream charges for that model — so a costlier model draws more of the same quota': '每一輪按上游對該模型的實際牌價計費 —— 所以越貴的模型佔掉越多同樣的配額',
 
   // Admin: the price table
   'Price table': '價格表',
@@ -658,6 +655,5 @@ export const zhHant: Record<string, string> = {
   'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '按金額限額時以哪種幣計。價格表中各家維持廠商自己公布的幣別，只有在限額需要單一數字時才換算成它。',
   'Exchange rates': '匯率',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON，幣別 → 一單位折合多少結算幣，例如結算用 CNY 時寫 {"USD": 6.75}。僅在限額必須折成單一數字時使用。',
-  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': '按 token 限額時就是靠這幾個權重計算。金額另按價格表、分幣別記；配額只看這裡。',
   'Cache written': '快取寫入',
 };

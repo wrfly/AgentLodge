@@ -83,19 +83,37 @@ const added = [...source.matchAll(/alter table (\w+) add column (\w+)/g)].map((m
    * schema.sql: the column is not in there to begin with, so the step's own guard makes it a
    * no-op and the suite proves nothing about the only thing it does.
    *
-   * So the columns migration 17 removes go back in by hand, and a row goes in on top of them.
-   * `auto_renew` is one of the six left over from the quota model migration 1 replaced —
-   * dropping those is the reason 17 rebuilds the table rather than dropping one column.
-   * Deliberately not `token_limit`: that one is migration 1's own switch, and putting it back
-   * would send this fixture down a data repair written for a database far older than 16.
+   * So the columns migrations 17 and 19 remove go back in by hand, and a row goes in on top
+   * of them. `auto_renew` is one of the six left over from the quota model migration 1
+   * replaced — dropping those is the reason 17 rebuilds the table rather than dropping one
+   * column. Deliberately not `token_limit`: that one is migration 1's own switch, and putting
+   * it back would send this fixture down a data repair written for a database far older
+   * than 16.
    */
   old.exec('alter table user_quotas add column reset_at text');
   old.exec('alter table user_quotas add column auto_renew integer');
+  old.exec("alter table user_quotas add column limit_kind text not null default 'tokens'");
+  old.exec('alter table usage_records add column billable_tokens integer not null default 0');
+  /*
+   * A catch-all price for 19 to convert against: it re-expresses a token ceiling in money at
+   * the catch-all's input price. $2/MTok is 2 micro-units per thousand tokens, so the 5 M
+   * ceiling below has to come out at 10 000 000 micro — $10.
+   */
+  old.exec(`
+    insert into model_pricing
+      (model, currency, price_input, price_cache_read, price_cache_write, price_output,
+       effective_from, created_at)
+    values ('*', 'USD', 2000000, 200000, 2500000, 10000000,
+            '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z');
+  `);
   old.exec(`
     insert into users (id, email, username, password_hash, role, status, created_at)
     values ('u-old', 'old@example.com', 'old', 'x', 'user', 'active', '2026-01-01T00:00:00.000Z');
-    insert into user_quotas (user_id, hard_stop, warned_period, reset_at, auto_renew, updated_at, updated_by)
-    values ('u-old', 1, 'window:2026-01-01T00:00:00.000Z', '2026-01-01T12:00:00.000Z', 1, '2026-01-01T00:00:00.000Z', 'u-admin');
+    insert into user_quotas
+      (user_id, limit_kind, window_limit, hard_stop, warned_period, reset_at, auto_renew,
+       updated_at, updated_by)
+    values ('u-old', 'tokens', 5000000, 1, 'window:2026-01-01T00:00:00.000Z',
+            '2026-01-01T12:00:00.000Z', 1, '2026-01-01T00:00:00.000Z', 'u-admin');
   `);
 
   old.exec('pragma user_version = 0');
@@ -135,14 +153,19 @@ if (db) {
     }
   }
 
-  console.log('\n=== And the column migration 17 takes away is gone, with the row intact ===');
+  console.log('\n=== And the columns migrations 17 and 19 take away are gone, with the row intact ===');
   {
     const cols = columns('user_quotas');
     ok('reset_at is gone', !cols.has('reset_at'), [...cols].join(', '));
     ok('and so is auto_renew, left over from the quota model before this one',
       !cols.has('auto_renew'), [...cols].join(', '));
+    ok('and limit_kind, which 19 takes away now that a ceiling has one unit',
+      !cols.has('limit_kind'), [...cols].join(', '));
+    ok('along with the token count it used to choose between',
+      !columns('usage_records').has('billable_tokens'),
+      [...columns('usage_records')].join(', '));
     ok('while the columns that are still used stayed',
-      ['user_id', 'limit_kind', 'window_limit', 'week_limit', 'month_limit', 'hard_stop',
+      ['user_id', 'window_limit', 'week_limit', 'month_limit', 'hard_stop',
        'boost_scope', 'boost_amount', 'boost_until', 'warned_period', 'updated_at', 'updated_by']
         .every((c) => cols.has(c)), [...cols].join(', '));
 
@@ -151,6 +174,13 @@ if (db) {
     ok('the row survived the rebuild', row !== undefined, JSON.stringify(row));
     ok('with the rest of its values', row?.['warned_period'] === 'window:2026-01-01T00:00:00.000Z'
       && row?.['updated_by'] === 'u-admin' && row?.['hard_stop'] === 1, JSON.stringify(row));
+    /*
+     * And the ceiling itself is money now. Not cleared and not left as a token count: 5 M
+     * tokens at the catch-all's $2/MTok is $10, and an operator who set a limit before this
+     * migration should find a limit after it.
+     */
+    ok('the token ceiling was re-expressed in money, not dropped',
+      row?.['window_limit'] === 10_000_000, String(row?.['window_limit']));
 
     /*
      * SQLite's `drop column` removes a span of the stored CREATE TABLE text, from the column's

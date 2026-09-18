@@ -272,7 +272,9 @@ export interface InviteMailInput {
   link: string;
   inviterName?: string;
   expiresAt?: string;
-  tokenLimit?: number | null;
+  /** A monthly ceiling, in micro-units of `currency` */
+  limit?: number | null;
+  currency?: string;
 }
 
 export function inviteMail(input: InviteMailInput): { subject: string; html: string; text: string } {
@@ -280,8 +282,8 @@ export function inviteMail(input: InviteMailInput): { subject: string; html: str
   const who = input.inviterName ? `${input.inviterName} ` : '';
   const whoHtml = input.inviterName ? `${esc(input.inviterName)} ` : '';
   const quotaLine =
-    input.tokenLimit != null
-      ? `<p style="${P}">Your account quota is <strong>${input.tokenLimit.toLocaleString()}</strong> tokens per month.</p>`
+    input.limit != null
+      ? `<p style="${P}">Your account quota is <strong>${input.currency ?? ''} ${(input.limit / 1_000_000).toFixed(2)}</strong> per month.</p>`
       : '';
   const expiryLine = input.expiresAt
     ? `<p style="${P}">The invitation expires on ${new Date(input.expiresAt).toLocaleString('en-GB')}.</p>`

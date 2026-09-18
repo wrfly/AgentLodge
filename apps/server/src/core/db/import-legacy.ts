@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config, paths } from '../config.js';
 import { flag, get, nowIso, run, tx } from './index.js';
+import * as pricing from './pricing.js';
 import type { StoredMessage } from '../protocol.js';
 
 /**
@@ -10,6 +11,11 @@ import type { StoredMessage } from '../protocol.js';
  * The source directory is renamed to *.imported rather than deleted, so it is still there
  * if something went wrong. Rows whose id already exists are skipped, which makes repeated
  * starts safe.
+ *
+ * The export is old enough to predate everything about money here: it counts a quota in
+ * tokens and records no cost at all. Both are converted on the way in, against the price
+ * table as it stands at import — the same conversion migration 19 applied to the databases
+ * that were already running.
  */
 
 interface LegacyUser {
@@ -23,6 +29,20 @@ interface LegacyUser {
   createdAt: string;
   lastLoginAt?: string;
   quota?: { tokenLimit: number | null };
+}
+
+/**
+ * A legacy token ceiling, as money.
+ *
+ * At the catch-all's input price, which is what migration 19 used — so a database imported
+ * from JSON and one upgraded in place arrive at the same numbers. With no catch-all there is
+ * nothing to convert against, and the ceiling is cleared rather than turned into a figure
+ * with no meaning: an account with no ceiling is not refused.
+ */
+function asMoney(tokens: number | null): number | null {
+  if (tokens === null) return null;
+  const perToken = (pricing.resolve('*')?.priceInput ?? 0) / 1_000_000;
+  return perToken > 0 ? Math.round(tokens * perToken) : null;
 }
 
 interface LegacyInvite {
@@ -86,10 +106,10 @@ export function importLegacy(): void {
       u.lastLoginAt ?? null,
     );
     run(
-      `insert into user_quotas (user_id, token_limit, period, hard_stop, updated_at)
-       values (?, ?, 'monthly', 1, ?)`,
+      `insert into user_quotas (user_id, month_limit, hard_stop, updated_at)
+       values (?, ?, 1, ?)`,
       u.id,
-      u.quota?.tokenLimit ?? null,
+      asMoney(u.quota?.tokenLimit ?? null),
       nowIso(),
     );
     users += 1;
@@ -111,7 +131,7 @@ export function importLegacy(): void {
       i.maxUses,
       i.usedCount,
       i.expiresAt ?? null,
-      i.presetTokenLimit,
+      asMoney(i.presetTokenLimit),
       flag(i.disabled),
       i.createdAt,
     );
@@ -166,12 +186,19 @@ export function importLegacy(): void {
 
           // Backfill historical usage so the personal usage page has a history to draw
           if (m.role === 'assistant' && m.usage) {
+            /*
+             * Priced at the row's own instant, not at import time: an import run today would
+             * otherwise bill a two-year-old turn at today's rates, and the price table keeps
+             * `effective_from` precisely so it does not have to.
+             */
+            const priced = pricing.resolve(c.model, m.createdAt);
             run(
               `insert into usage_records
                  (user_id, conversation_id, agent, model, effort,
                   input_tokens, cache_read_tokens, cache_creation_tokens, output_tokens,
-                  billable_tokens, cost_usd, duration_ms, num_turns, status, created_at, day)
-               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  cost_micro, cost_currency, cost_usd, duration_ms, num_turns, status,
+                  created_at, day)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               c.userId,
               c.id,
               c.agent,
@@ -181,12 +208,8 @@ export function importLegacy(): void {
               m.usage.cacheReadTokens,
               m.usage.cacheCreationTokens,
               m.usage.outputTokens,
-              Math.round(
-                m.usage.inputTokens +
-                  m.usage.cacheReadTokens * 0.1 +
-                  m.usage.cacheCreationTokens +
-                  m.usage.outputTokens * 1.5,
-              ),
+              priced ? Math.round(pricing.costOf(priced, m.usage)) : 0,
+              priced?.currency ?? 'USD',
               m.usage.costUsd,
               m.usage.durationMs,
               m.usage.numTurns,

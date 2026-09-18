@@ -20,10 +20,11 @@ import * as allowance from './upstream-allowance.js';
  *     personal = (this user's usage ÷ everybody's usage) × the pool's utilisation
  *
  * both usages taken over the same window and the same upstream. The left factor is a
- * dimensionless share, so the unit cancels: our billable-token weights
- * (`quota.weightOutput` and friends) do not have to match whatever weighting the upstream
- * bills by. Only the *relative* standing of two users would shift if the weights disagreed,
- * and both figures are re-read on every response, so nothing accumulates.
+ * dimensionless share, so the unit cancels: what we charge a turn does not have to match
+ * what the upstream bills for it, and an exchange rate on one side of the ratio appears on
+ * the other too. Only the *relative* standing of two users would shift if the two priced
+ * things differently, and both figures are re-read on every response, so nothing
+ * accumulates.
  *
  * It behaves the way the arithmetic says it should. A user who is the only one on the
  * platform gets exactly the pool's utilisation, because their share is 1. Nobody can ever
@@ -114,10 +115,10 @@ export function poolShare(
      * theirs would divide by the wrong denominator.
      */
     const all = poolTotals({ from: w.startsAt, to: w.endsAt }, provider.id);
-    // A share is a ratio, so both sides have to be one number in one unit — `settle` is what
-    // the ceiling itself is compared in, and using anything else here would make the share
-    // disagree with the bar beside it
-    const total = q.limitKind === 'cost' ? all.costSettled : all.billableTokens;
+    // A share is a ratio, so both sides have to be one number in one unit — the settled
+    // figure is what the ceiling itself is compared in, and using anything else here would
+    // make the share disagree with the bar beside it
+    const total = all.costSettled;
     /*
      * Nobody has spent anything yet, so neither has this user.
      *

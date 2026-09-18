@@ -649,7 +649,7 @@ POST /api/auth/register  { email, username, password, inviteCode }
   6. 不自动创建容器（首次对话时惰性创建）
 ```
 
-管理员生成邀请码：`POST /api/admin/invites { count, maxUses, expiresIn, presetTokenLimit, note }`，返回明文码（只展示一次）。
+管理员生成邀请码：`POST /api/admin/invites { count, maxUses, expiresIn, presetLimit, note }`（`presetLimit` 是新账号的月上限，单位是结算币种的百万分之一），返回明文码（只展示一次）。
 
 ### 5.2 Token 方案（桌面 + 移动统一）
 
@@ -965,17 +965,17 @@ cost_micro =
    + cache_read_tokens   * P.in_hit
    + cache_write_tokens  * P.in_miss      // DeepSeek 缓存写入按 miss 价，需实测确认
    + output_tokens       * P.out) / 1_000_000;
-
-// 加权 token（用于 mode='tokens' 的配额）
-weighted = input + cache_read * W.hit + cache_write * W.write + output * W.out;
-// 默认权重按价格比：W.hit=0.1, W.write=1.0, W.out=1.5
 ```
+
+配额算的就是这个金额，没有第二个口径。曾经有一个「加权 token」的算法
+（`input + cache_read×0.1 + cache_write + output×1.5`）用来当配额单位，在两家厂商开始用两种
+币之后移除了——一个 token 计数承载不了价格。
 
 `model_pricing` 表带 `effective_from`，改价只需插新行，历史账单不受影响。**上线前务必去 DeepSeek 官网核对当前价格填入。**
 
 记账**同步**写一行 `usage_records`，没有计数器、没有队列、没有对账。
 
-上游响应结束时，网关从解析出的 usage 算出计费 token 与金额，直接 insert 一行。
+上游响应结束时，网关按价格表从解析出的 usage 算出金额，直接 insert 一行。
 用量汇总一律从这张流水表现算（按 `user_id` + 时间窗聚合）。
 
 不用计数器的理由：计数器省一次聚合查询，但一旦和明细对不上就无从查起，而对账逻辑本身
@@ -1242,8 +1242,8 @@ if (upstreamStatus === 404 || upstreamStatus === 400) {
 ```
 
 两个用量同一个窗口、同一条上游（按 `provider_id` 过滤——半数流量走别的上游的话分母被撑大，
-每个人的份额都算小一半）。左边是个无量纲的份额，**量纲相消**：`quota.weightOutput` 那套权重
-不必跟 Anthropic 的计价口径一致，权重只影响两个用户之间的相对关系，而两个数每次响应都重算，
+每个人的份额都算小一半）。左边是个无量纲的份额，**量纲相消**：我们价格表里的价钱
+不必跟 Anthropic 的计价口径一致，定价只影响两个用户之间的相对关系，而两个数每次响应都重算，
 不累积。
 
 三条性质都是算式直接给的：独占平台的人拿到的**恰好**是池子的利用率（份额为 1）；谁都超不过它

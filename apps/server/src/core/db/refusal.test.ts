@@ -26,6 +26,7 @@ const { initDb, run } = await import('./index.js');
 initDb();
 const usage = await import('./usage.js');
 const users = await import('./users.js');
+const pricing = await import('./pricing.js');
 
 let pass = 0;
 let fail = 0;
@@ -52,6 +53,14 @@ const SPEND = {
   inputTokens: 1_000, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 100,
   costUsd: 0, durationMs: 1_000, numTurns: 1,
 };
+// A turn is worth listing because it cost something, and `record` prices from the table — so
+// the table has to answer, or every figure below is zero and proves nothing
+pricing.add({
+  model: '*', currency: 'USD',
+  priceInput: 3_000_000, priceCacheRead: 300_000, priceCacheWrite: 3_750_000,
+  priceOutput: 15_000_000,
+  effectiveFrom: '1970-01-01T00:00:00.000Z',
+});
 
 const WINDOW = { from: '2026-08-23T14:00:00.000Z', to: '2026-08-23T19:00:00.000Z' };
 const NEXT = { from: '2026-08-23T19:00:00.000Z', to: '2026-08-24T00:00:00.000Z' };
@@ -80,7 +89,7 @@ console.log('\n=== One row per person per window, however many attempts ===');
 {
   for (let i = 0; i < 5; i++) refuse(alice, WINDOW.from, '2026-08-23T15:00:00.000Z');
   ok('five attempts leave one row', usage.refusedCount(WINDOW) === 1, String(usage.refusedCount(WINDOW)));
-  ok('and nothing is billed for it', usage.totalsAllInRange(WINDOW).billableTokens === 0);
+  ok('and nothing is billed for it', usage.totalsAllInRange(WINDOW).costSettled === 0);
 }
 
 console.log('\n=== A second person is a second row ===');
@@ -147,16 +156,18 @@ console.log('\n=== The console\'s list of who was active accounts for the period
   usage.record({ userId: bob, agent: 'claude', status: 'error' });
   backdate(bob, '2026-08-23T21:00:00.000Z');
   const rows = usage.allUsersInRange(NEXT);
-  ok('the spender is listed', rows.some((u) => u.username === 'alice' && u.billableTokens > 0),
-    JSON.stringify(rows.map((u) => [u.username, u.billableTokens])));
+  ok('the spender is listed', rows.some((u) => u.username === 'alice' && u.costSettled > 0),
+    JSON.stringify(rows.map((u) => [u.username, u.costSettled])));
   /*
-   * The bug this pins: `billable_tokens` is both an output alias and a real column, so an
-   * aggregate that names it bare lets SQLite read some arbitrary row of the group — and a
-   * spender whose group also holds zero rows came back as zero, or vanished entirely.
+   * The bug this pins: a name that is both an output alias and a real column lets SQLite read
+   * some arbitrary row of the group, so a spender whose group also holds zero rows came back
+   * as zero, or vanished entirely. It is why the per-currency sums are aliased `money_USD`
+   * rather than `cost_micro` — SQLite matches column names case-insensitively, and the
+   * obvious spelling collides with the column being summed.
    */
   ok('and zero rows alongside do not swallow their spend',
-    rows.find((u) => u.username === 'alice')?.billableTokens === usage.totalsAllInRange(NEXT).billableTokens,
-    JSON.stringify(rows.map((u) => [u.username, u.billableTokens])));
+    rows.find((u) => u.username === 'alice')?.costSettled === usage.totalsAllInRange(NEXT).costSettled,
+    JSON.stringify(rows.map((u) => [u.username, u.costSettled])));
   /*
    * Somebody whose only turns were refused belongs here as a row of zeroes. This list accounts
    * for a period rather than ranking it: the console prints a total above these rows, and that
@@ -164,12 +175,12 @@ console.log('\n=== The console\'s list of who was active accounts for the period
    */
   const bobRow = rows.find((u) => u.username === 'bob');
   ok('somebody with only a refusal is a row of zeroes, not a gap',
-    bobRow !== undefined && bobRow.billableTokens === 0, JSON.stringify(bobRow));
+    bobRow !== undefined && bobRow.costSettled === 0, JSON.stringify(bobRow));
   ok('and their turns are counted, which is why the row has to be there',
     (bobRow?.turns ?? 0) > 0, String(bobRow?.turns));
   ok('the rows account for the period',
-    rows.reduce((n, u) => n + u.billableTokens, 0) === usage.totalsAllInRange(NEXT).billableTokens,
-    String(rows.reduce((n, u) => n + u.billableTokens, 0)));
+    rows.reduce((n, u) => n + u.costSettled, 0) === usage.totalsAllInRange(NEXT).costSettled,
+    String(rows.reduce((n, u) => n + u.costSettled, 0)));
 }
 
 fs.rmSync(box, { recursive: true, force: true });

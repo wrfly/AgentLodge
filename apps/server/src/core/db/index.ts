@@ -135,7 +135,7 @@ function hasTables(d: DatabaseSync): boolean {
  * restoring the database with the image — `cli/backup-db.ts` is what makes that copy. Prefer
  * an additive step whenever one will do.
  */
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -159,8 +159,8 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
    * rows into an empty table, and left seedDefaults() looking at a table that was no longer
    * empty — so it returned without seeding, and the install came up with three DeepSeek
    * prices, no Claude prices and no '*' catch-all. Nothing failed: costMicro simply returned
-   * 0 for every Claude model, and billable() fell through to the flat weights, which is the
-   * accounting this table exists to replace.
+   * 0 for every Claude model — and quota is money, so that traffic drew nothing against
+   * anybody's ceiling either.
    */
   if (opts.fresh) {
     d.exec(`pragma user_version = ${SCHEMA_VERSION}`);
@@ -759,6 +759,144 @@ function migrate(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
     // schema.sql indexes it, and schema.sql runs *after* this on an existing file — but the
     // index has to survive a file that reaches here with the column already added
     d.exec('create index if not exists idx_usage_cost_currency on usage_records(cost_currency)');
+  }
+
+  if (from < 19) {
+    /*
+     * A ceiling is an amount of money, and there is no second kind.
+     *
+     * Quota used to be counted in "billable tokens" — the four token counts, weighted — which
+     * was a way to make an expensive model draw more of an allowance than a cheap one without
+     * putting money on the gate's path. It stopped working when two vendors began billing in
+     * two currencies: a token count cannot carry a price, and every way of making it try
+     * either flattened the models it was meant to separate or moved everybody's ceiling when
+     * an exchange rate did. The thing that number was approximating is the bill, so the bill
+     * is what the gate counts now.
+     *
+     * Two columns go: `usage_records.billable_tokens`, which nothing computes any more, and
+     * `user_quotas.limit_kind`, which named a fork that has one side left. The global default
+     * a new account starts with is converted and renamed along with them.
+     *
+     * The ceilings themselves have to be **re-expressed**, not just relabelled. Left alone, a
+     * window limit of 20,000,000 — twenty million tokens — would be read as twenty million
+     * micro-units, which is twenty of whatever the settlement currency is, and an account
+     * would go from a comfortable allowance to one a single turn could exhaust. They are
+     * converted at the catch-all's input price, which is what a billable token was defined as
+     * meaning: one input token at the standard rate. Every conversion is printed, because it
+     * is an approximation of somebody's intent and they should check it.
+     */
+    if (columns(d, 'user_quotas').has('limit_kind')) {
+      const [unit] = d
+        .prepare(`select price_input from model_pricing
+                   where model = '*' and provider_id is null
+                   order by effective_from desc limit 1`)
+        .all() as Array<{ price_input: number }>;
+      /*
+       * Micro-units of money per token, at the catch-all rate. A table with no catch-all
+       * cannot price anything at all, so there is nothing to convert against — the ceilings
+       * are cleared rather than turned into a number with no meaning, which is the safe
+       * direction: an account with no ceiling is not refused.
+       */
+      const perToken = unit ? unit.price_input / 1_000_000 : 0;
+
+      const rows = d
+        .prepare(`select q.user_id, us.username, q.limit_kind, q.window_limit, q.week_limit, q.month_limit
+                    from user_quotas q left join users us on us.id = q.user_id
+                   where q.window_limit is not null or q.week_limit is not null or q.month_limit is not null`)
+        .all() as Array<{
+          user_id: string; username: string | null; limit_kind: string;
+          window_limit: number | null; week_limit: number | null; month_limit: number | null;
+        }>;
+
+      for (const r of rows) {
+        // A row already counted in money keeps its numbers; only the token ones are converted
+        if (r.limit_kind === 'cost') continue;
+        const to = (v: number | null): number | null =>
+          v === null ? null : perToken > 0 ? Math.round(v * perToken) : null;
+        const next = { window: to(r.window_limit), week: to(r.week_limit), month: to(r.month_limit) };
+        d.prepare('update user_quotas set window_limit = ?, week_limit = ?, month_limit = ? where user_id = ?')
+          .run(next.window, next.week, next.month, r.user_id);
+        const say = (before: number | null, after: number | null) =>
+          before === null ? '—' : `${before.toLocaleString()} → ${after === null ? 'unlimited' : (after / 1_000_000).toFixed(2)}`;
+        console.log(
+          `[db] ${r.username ?? r.user_id} ceilings re-expressed in money: ` +
+            `5h ${say(r.window_limit, next.window)}, week ${say(r.week_limit, next.week)}, ` +
+            `month ${say(r.month_limit, next.month)}. Check them in the console.`,
+        );
+      }
+
+      /*
+       * An invite's preset is the same number for a new account's monthly ceiling, so it is
+       * the same conversion. The column keeps its name — renaming it is a second rebuild for
+       * no behaviour — and schema.sql says what it holds.
+       */
+      if (perToken > 0) {
+        d.prepare('update invite_codes set preset_token_limit = cast(preset_token_limit * ? as integer) where preset_token_limit is not null')
+          .run(perToken);
+      }
+
+      /*
+       * And the global default a new account starts with. Renamed as well as converted:
+       * `quota.defaultTokenLimit` under a value in money is a trap for whoever reads it
+       * next, and the console's field is labelled from the key's spec.
+       */
+      const def = d
+        .prepare("select value from settings where key = 'quota.defaultTokenLimit'")
+        .get() as { value: string } | undefined;
+      if (def) {
+        d.prepare("delete from settings where key = 'quota.defaultTokenLimit'").run();
+        const n = Number(def.value);
+        if (Number.isFinite(n) && n > 0 && perToken > 0) {
+          d.prepare(
+            `insert into settings (key, value, updated_at) values ('quota.defaultLimit', ?, ?)
+             on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+          ).run(String(Math.round(n * perToken)), new Date().toISOString());
+          console.log(
+            `[db] default quota for new users re-expressed in money: ${(n * perToken / 1_000_000).toFixed(2)}`,
+          );
+        }
+      }
+
+      /*
+       * Rebuilt rather than `alter table drop column`: SQLite implements the drop by deleting
+       * a span of the stored CREATE TABLE text, from the column's name to the next one, which
+       * takes the following column's comment with it. Measured, in migration 17.
+       */
+      d.exec(`
+        create table user_quotas_new (
+          user_id      text primary key references users(id) on delete cascade,
+          window_limit integer,
+          week_limit   integer,
+          month_limit  integer,
+          hard_stop    integer not null default 1,
+          boost_scope  text,
+          boost_amount integer,
+          boost_until  text,
+          warned_period text,
+          updated_at   text not null,
+          updated_by   text
+        );
+        insert into user_quotas_new
+          (user_id, window_limit, week_limit, month_limit, hard_stop,
+           boost_scope, boost_amount, boost_until, warned_period, updated_at, updated_by)
+        select
+           user_id, window_limit, week_limit, month_limit, hard_stop,
+           boost_scope, boost_amount, boost_until, warned_period, updated_at, updated_by
+        from user_quotas;
+        drop table user_quotas;
+        alter table user_quotas_new rename to user_quotas;
+      `);
+    }
+
+    /*
+     * The token count itself. Nothing reads it, and a column nothing writes and something
+     * still reads is how a retired idea comes back — migration 17 says the same thing about
+     * `reset_at`. `usage_records` is the large table, so this one is a plain drop: it has no
+     * comment after it to lose, being the last of the cost columns.
+     */
+    if (columns(d, 'usage_records').has('billable_tokens')) {
+      d.exec('alter table usage_records drop column billable_tokens');
+    }
   }
 
   d.exec(`pragma user_version = ${SCHEMA_VERSION}`);

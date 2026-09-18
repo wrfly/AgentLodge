@@ -77,12 +77,10 @@ export interface DeferredTurn {
  * beginning and ending at the same instants for everybody. See core/db/period.ts.
  */
 export type QuotaScope = 'window' | 'week' | 'month';
-export type LimitKind = 'tokens' | 'cost';
-
 /** One of the platform's windows, as it applies to one user */
 export interface QuotaWindow {
   scope: QuotaScope;
-  /** The ceiling, top-up included, in the unit `limitKind` names. null means unlimited. */
+  /** The ceiling, top-up included, in micro-units of the settlement currency. null means unlimited. */
   limit: number | null;
   /** How much of that ceiling came from a top-up */
   boost: number;
@@ -111,7 +109,6 @@ export interface ThreadSummary {
 }
 
 export interface QuotaStatus {
-  limitKind: LimitKind;
   currency: string;
   hardStop: boolean;
   /** All three, always present; an unlimited one has a null limit */
@@ -126,9 +123,9 @@ export interface QuotaStatus {
    * What one of this user's own turns typically costs, in the unit above — the median of
    * their recent ones, or null if they have not spent anything yet.
    *
-   * So that a remaining allowance can be said in turns rather than in tokens. The same
-   * 1.2M billable tokens is two turns for one person and forty for another, and which of
-   * those they are is not something they can work out from the number.
+   * So that a remaining allowance can be said in turns rather than in money. The same
+   * $12 is two turns for one person and forty for another, and which of those they are is
+   * not something they can work out from the number.
    */
   typicalTurn: number | null;
 }

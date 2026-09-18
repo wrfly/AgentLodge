@@ -14,7 +14,14 @@
 import { useEffect, useState } from 'react';
 import { Gauge, Wallet } from 'lucide-react';
 import clsx from 'clsx';
-import { admin, type AdminUser, fmtMoney, type QuotaScope } from '../../lib/api';
+import {
+  admin,
+  type AdminUser,
+  fmtMoney,
+  microToUnits,
+  type QuotaScope,
+  unitsToMicro,
+} from '../../lib/api';
 import {
   Banner,
   Button,
@@ -26,9 +33,6 @@ import {
   Spinner,
   Toggle,
   fmtDate,
-  fmtTokens,
-  mToTokens,
-  tokensToM,
 } from '../../components/ui';
 import { useT } from '../../lib/i18n';
 import { WithUnit } from './shared';
@@ -43,8 +47,7 @@ import { WithUnit } from './shared';
  */
 function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
   const t = useT();
-  const byCost = user.quota.limitKind === 'cost';
-  const [amount, setAmount] = useState(byCost ? '10' : '5');
+  const [amount, setAmount] = useState('10');
   const [scope, setScope] = useState<QuotaScope>('window');
   const [busy, setBusy] = useState(false);
 
@@ -53,7 +56,7 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
     try {
       await admin.topup(user.id, {
         // Typed in millions on the token side, like every other allowance field
-        ...(byCost ? { amount: Number(amount) } : { tokens: mToTokens(amount) }),
+        amount: Number(amount),
         scope,
       });
       onDone();
@@ -76,12 +79,8 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
           </Field>
         </div>
         <div className="w-28">
-          <Field label={t(byCost ? 'Amount' : 'Extra allowance')}>
-            {byCost ? (
-              <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
-            ) : (
-              <WithUnit className="block" unit="M" value={amount} onChange={setAmount} />
-            )}
+          <Field label={t('Amount')}>
+            <WithUnit className="block" unit={user.quota.currency} value={amount} onChange={setAmount} />
           </Field>
         </div>
         <div className="pb-3.5">
@@ -98,23 +97,22 @@ function TopupPanel({ user, onDone }: { user: AdminUser; onDone: () => void }) {
   );
 }
 
-/** Digits and one decimal point: the unit is millions, so 0.5 has to be typeable */
+/** Digits and one decimal point: money has a fractional part, so 0.5 has to be typeable */
 const clean = (v: string): string => v.replace(/[^\d.]/g, '');
 
 function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) {
   const t = useT();
   const [editing, setEditing] = useState(false);
   const [topup, setTopup] = useState(false);
-  // Typed in millions; the API takes the quota's own unit
-  const asM = (v: number | null) => (v === null ? '' : tokensToM(v));
-  const [limitWindow, setLimitWindow] = useState(asM(user.quota.window));
-  const [limitWeek, setLimitWeek] = useState(asM(user.quota.week));
-  const [limitMonth, setLimitMonth] = useState(asM(user.quota.month));
+  // Typed in whole units of money; the API takes the micro-units everything is stored in
+  const asUnits = (v: number | null) => (v === null ? '' : microToUnits(v));
+  const [limitWindow, setLimitWindow] = useState(asUnits(user.quota.window));
+  const [limitWeek, setLimitWeek] = useState(asUnits(user.quota.week));
+  const [limitMonth, setLimitMonth] = useState(asUnits(user.quota.month));
   const [hardStop, setHardStop] = useState(user.quota.hardStop);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const byCost = user.quota.limitKind === 'cost';
   // The list shows the 5-hour window: it is the one that bites first, and usage.period is
   // measured over exactly that window on the server
   /*
@@ -122,17 +120,17 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
    * drawn has to be one number. It is the same figure the gate compares, converted at the
    * rates the console configures — which is why the bar and a refusal cannot disagree.
    */
-  const used = byCost ? user.usage.period.costSettled : user.usage.period.billableTokens;
+  const used = user.usage.period.costSettled;
   // The effective ceiling, not the configured one: a live top-up raises what the gate lets
   // through, and a bar drawn against the raw number reads past 100% while it still does
   const cap = user.quota.windowCeiling;
   const pct = cap ? Math.min(used / cap, 1) : 0;
-  const show = (v: number) => (byCost ? fmtMoney(v, user.quota.currency) : fmtTokens(v));
+  const show = (v: number) => fmtMoney(v, user.quota.currency);
 
   const save = async () => {
     setBusy(true);
     try {
-      const ceiling = (v: string) => (v.trim() === '' ? null : mToTokens(v));
+      const ceiling = (v: string) => (v.trim() === '' ? null : unitsToMicro(v));
       await admin.updateUser(user.id, {
         window: ceiling(limitWindow),
         week: ceiling(limitWeek),
@@ -282,17 +280,32 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
               the same instants for every user — so there is no period to choose. */}
           <div className="w-32">
             <Field label={t('Per 5 hours')} hint={t('empty = unlimited')}>
-              <WithUnit className="block" unit="M" value={limitWindow} onChange={(v) => setLimitWindow(clean(v))} />
+              <WithUnit
+                className="block"
+                unit={user.quota.currency}
+                value={limitWindow}
+                onChange={(v) => setLimitWindow(clean(v))}
+              />
             </Field>
           </div>
           <div className="w-32">
             <Field label={t('Per week')} hint={t('empty = unlimited')}>
-              <WithUnit className="block" unit="M" value={limitWeek} onChange={(v) => setLimitWeek(clean(v))} />
+              <WithUnit
+                className="block"
+                unit={user.quota.currency}
+                value={limitWeek}
+                onChange={(v) => setLimitWeek(clean(v))}
+              />
             </Field>
           </div>
           <div className="w-32">
             <Field label={t('Per month')} hint={t('empty = unlimited')}>
-              <WithUnit className="block" unit="M" value={limitMonth} onChange={(v) => setLimitMonth(clean(v))} />
+              <WithUnit
+                className="block"
+                unit={user.quota.currency}
+                value={limitMonth}
+                onChange={(v) => setLimitMonth(clean(v))}
+              />
             </Field>
           </div>
           <div className="pb-4">

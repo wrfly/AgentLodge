@@ -2,7 +2,6 @@ import clsx from 'clsx';
 import { useQuota } from '../store/quota';
 import { navigate } from '../lib/route';
 import { useT } from '../lib/i18n';
-import { fmtTokens } from './ui';
 import { fmtMoney } from '../lib/api';
 import type { QuotaWindow } from '../lib/protocol';
 
@@ -17,8 +16,7 @@ export function QuotaBar() {
   const quota = useQuota((s) => s.quota);
   if (!quota) return null;
 
-  const byCost = quota.limitKind === 'cost';
-  const show = (v: number) => (byCost ? fmtMoney(v, quota.currency) : fmtTokens(v));
+  const show = (v: number) => fmtMoney(v, quota.currency);
   const scopeName: Record<QuotaWindow['scope'], string> = {
     window: t('5 h'),
     week: t('week'),

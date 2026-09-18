@@ -41,6 +41,7 @@ const sessions = await import('../../../core/db/sessions.js');
 const settings = await import('../../../core/db/settings.js');
 const usage = await import('../../../core/db/usage.js');
 const providers = await import('../../../core/db/providers.js');
+const pricing = await import('../../../core/db/pricing.js');
 const { signAccessToken } = await import('../../../core/auth/tokens.js');
 const { installLocale } = await import('../../../core/i18n/locale.js');
 const { attachUser } = await import('../../../core/auth/guard.js');
@@ -101,6 +102,18 @@ const spend = (
     usage: { inputTokens: tokens, cacheReadTokens: 0, cacheCreationTokens: 0,
              outputTokens: 0, costUsd: 0, durationMs: 1, numTurns: 1 },
   });
+
+/*
+ * The leaderboard ranks by money, so the fixture has to have some — `record` prices from the
+ * table, and with nothing in it every row costs zero and "heaviest first" ranks an arbitrary
+ * order. One catch-all, so the ranking follows the token counts below and stays readable.
+ */
+pricing.add({
+  model: '*', currency: 'USD',
+  priceInput: 3_000_000, priceCacheRead: 300_000, priceCacheWrite: 3_750_000,
+  priceOutput: 15_000_000,
+  effectiveFrom: '1970-01-01T00:00:00.000Z',
+});
 
 spend(alice.user.id, ark.id, 'opus', 1_000, 'a1');
 spend(bob.user.id, ark.id, 'sonnet', 400, 'b1');

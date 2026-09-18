@@ -23,7 +23,6 @@ import {
   Spinner,
   Stat,
   fmtDate,
-  fmtTokens
 } from '../../components/ui';
 import { TokenCells, TokenHeaders, TokenSplit } from '../../components/TokenSplit';
 import { useT } from '../../lib/i18n';
@@ -56,8 +55,8 @@ export function Overview() {
         <Stat label={t('Users')} value={String(data.users.total)} sub={t('{n} active', { n: data.users.active })} />
         <Stat
           label={t('Billed all time')}
-          value={fmtTokens(data.allTime.billableTokens)}
-          sub={fmtCost(data.allTime.cost, data.currency)}
+          value={fmtCost(data.allTime.cost, data.currency)}
+          sub={t('{n} turns', { n: data.allTime.turns })}
         />
         <Stat
           label={t('Upstream balance')}
@@ -162,7 +161,7 @@ function PlatformUsageCard() {
   // Already padded with empty buckets by the server, which is the only place that knows
   // which timezone its own bucket keys were cut in
   const slots = data?.series ?? [];
-  const max = Math.max(...slots.map((d) => d.billableTokens), 1);
+  const max = Math.max(...slots.map((d) => d.costSettled), 1);
   // An hourly stamp reads `2026-09-10 14:00`, a daily one `2026-09-10`
   const short = (stamp: string) =>
     data?.seriesUnit === 'hour' ? stamp.slice(11, 16) : stamp.slice(5);
@@ -189,13 +188,11 @@ function PlatformUsageCard() {
         <>
           <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="font-mono text-[17px] tabular-nums">
-              {data.totals.billableTokens.toLocaleString()}
-            </span>
-            <span className="font-mono text-[13px] text-muted tabular-nums">
               {fmtCost(data.totals.cost, data.currency)}
             </span>
-            {/* Beside the billable figure, not under it: billable is these counts *weighted*,
-                so the three do not add up to it and are not offered as if they did. */}
+            {/* Beside the money, not under it: the three counts are priced at four
+                different rates, so they do not add up to it and are not offered as if
+                they did. */}
             <TokenSplit totals={data.totals} />
             <span className="text-[12px] text-faint">
               {t('{n} turns', { n: data.totals.turns })}
@@ -210,12 +207,12 @@ function PlatformUsageCard() {
                 {slots.map((d) => (
                   <div
                     key={d.t}
-                    title={`${d.t}: ${d.billableTokens.toLocaleString()}`}
+                    title={`${d.t}: ${fmtCost(d.cost, data.currency)}`}
                     className={clsx(
                       'flex-1 rounded-t-sm',
-                      d.billableTokens > 0 ? 'bg-accent/70 hover:bg-accent' : 'bg-line',
+                      d.costSettled > 0 ? 'bg-accent/70 hover:bg-accent' : 'bg-line',
                     )}
-                    style={{ height: d.billableTokens ? `${Math.max((d.billableTokens / max) * 100, 3)}%` : '2%' }}
+                    style={{ height: d.costSettled ? `${Math.max((d.costSettled / max) * 100, 3)}%` : '2%' }}
                   />
                 ))}
               </div>
@@ -246,7 +243,6 @@ function PlatformUsageCard() {
                   <th className="pb-1.5 font-medium">{t('Upstream')}</th>
                   <th className="pb-1.5 font-medium">{t('Credential')}</th>
                   <TokenHeaders />
-                  <th className="pb-1.5 text-right font-medium">{t('Billable tokens')}</th>
                   <th className="pb-1.5 text-right font-medium">{t('Cost')}</th>
                 </tr>
               </thead>
@@ -284,9 +280,6 @@ function PlatformUsageCard() {
                         </td>
                         <td className="py-1.5 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
                         <TokenCells totals={r} />
-                        <td className="py-1.5 text-right font-mono tabular-nums">
-                          {fmtTokens(r.billableTokens)}
-                        </td>
                         <td className="py-1.5 text-right font-mono tabular-nums text-muted">
                           {fmtCost(r.cost, data.currency)}
                         </td>
@@ -303,9 +296,6 @@ function PlatformUsageCard() {
                               {m.model || t('(default)')}
                             </td>
                             <TokenCells totals={m} className="text-[12px]" />
-                            <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
-                              {fmtTokens(m.billableTokens)}
-                            </td>
                             <td className="py-1 text-right font-mono text-[12px] tabular-nums text-muted">
                               {fmtCost(m.cost, data.currency)}
                             </td>
@@ -383,10 +373,7 @@ function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () =>
   return (
     <Card title={t('This 5-hour window')}>
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <span className="font-mono text-[22px] tabular-nums">{fmtTokens(w.totals.billableTokens)}</span>
-        <span className="font-mono text-[14px] text-muted tabular-nums">
-          {fmtCost(w.totals.cost, data.currency)}
-        </span>
+        <span className="font-mono text-[22px] tabular-nums">{fmtCost(w.totals.cost, data.currency)}</span>
         <TokenSplit totals={w.totals} />
         <span className="text-[12.5px] text-faint">{t('{n} turns', { n: w.totals.turns })}</span>
         <span className="ml-auto text-[12.5px] text-muted">

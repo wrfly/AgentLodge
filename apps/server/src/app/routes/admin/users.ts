@@ -43,8 +43,7 @@ export function register(app: FastifyInstance): void {
            * was still letting them through.
            */
           windowCeiling: quota.effectiveCeiling(q, 'window', now),
-          limitKind: q.limitKind,
-          // So a cost-limited row is labelled in the money it is actually counted in
+          // The money the ceilings and the spend beside them are counted in
           currency: q.currency,
           hardStop: q.hardStop,
         },
@@ -122,12 +121,11 @@ export function register(app: FastifyInstance): void {
     const body = (req.body ?? {}) as {
       status?: usersRepo.UserStatus;
       role?: usersRepo.Role;
-      /** The three ceilings, in the unit limitKind names. null clears one. */
+      /** The three ceilings, in micro-units of the settlement currency. null clears one. */
       window?: number | null;
       week?: number | null;
       month?: number | null;
       hardStop?: boolean;
-      limitKind?: 'tokens' | 'cost';
     };
     const user = usersRepo.findById(id);
     if (!user) return reply.code(404).send({ error: tr(req, 'No such user') });
@@ -148,7 +146,7 @@ export function register(app: FastifyInstance): void {
 
     if (body.status) usersRepo.setStatus(id, body.status);
     if (body.role) usersRepo.setRole(id, body.role);
-    const quotaKeys = ['window', 'week', 'month', 'hardStop', 'limitKind'] as const;
+    const quotaKeys = ['window', 'week', 'month', 'hardStop'] as const;
     if (quotaKeys.some((k) => body[k] !== undefined)) {
       const patch: usersRepo.QuotaPatch = {};
       for (const k of quotaKeys) {
@@ -199,9 +197,8 @@ export function register(app: FastifyInstance): void {
     if (!usersRepo.findById(id)) return reply.code(404).send({ error: tr(req, 'No such user') });
 
     const body = (req.body ?? {}) as {
-      /** An amount in whole units of money; either this or tokens */
+      /** An amount in whole units of the settlement currency */
       amount?: number;
-      tokens?: number;
       /** Which window it lifts. Defaults to the 5-hour one, the one that bites first. */
       scope?: usersRepo.QuotaScope;
       note?: string;
@@ -209,16 +206,12 @@ export function register(app: FastifyInstance): void {
 
     const scope: usersRepo.QuotaScope =
       body.scope === 'week' || body.scope === 'month' ? body.scope : 'window';
-    const byCost = body.amount !== undefined;
-    const amount = byCost ? Math.round(Number(body.amount) * pricing.MICRO) : Number(body.tokens);
+    // One unit now, so there is nothing to disagree about: an amount, in the settlement currency
+    const amount = Math.round(Number(body.amount) * pricing.MICRO);
     if (!Number.isFinite(amount) || amount <= 0)
-      return reply.code(400).send({ error: tr(req, 'Give either an amount or a token limit') });
+      return reply.code(400).send({ error: tr(req, 'Give an amount above zero') });
 
     const current = usersRepo.getQuota(id);
-    if ((byCost ? 'cost' : 'tokens') !== current.limitKind)
-      return reply
-        .code(400)
-        .send({ error: tr(req, 'This user is billed the other way; change the quota first') });
 
     /*
      * A top-up on a window with no ceiling is discarded: `limit` is `ceiling + boost` only
@@ -239,7 +232,7 @@ export function register(app: FastifyInstance): void {
       action: 'admin.user.topup',
       targetType: 'user',
       targetId: id,
-      detail: { scope, amount, byCost, note: body.note },
+      detail: { scope, amount, currency: usersRepo.getQuota(id).currency, note: body.note },
       ip: req.ip,
     });
     return { ok: true, quota: quota.status(id) };

@@ -16,13 +16,13 @@ import {
   Select,
   Spinner,
   Toggle,
-  tokensToM
 } from '../../components/ui';
 import { useT } from '../../lib/i18n';
 import { CredentialsCard } from './Credentials';
 import { ProvidersCard } from './Providers';
 import { ModelsCard } from './Models';
 import { AuditProxyCard } from './AuditProxy';
+import { microToUnits } from '../../lib/api';
 import { WithUnit } from './shared';
 import { GateCard } from './Gate';
 import { PricingCard } from './Pricing';
@@ -309,7 +309,7 @@ export function SettingsTab() {
                     <WithUnit
                       className="block"
                       unit={s.unit ?? ''}
-                      value={draft[s.key] ?? (s.value ? tokensToM(Number(s.value)) : '')}
+                      value={draft[s.key] ?? (s.value ? microToUnits(Number(s.value)) : '')}
                       onChange={(v) => setDraft((d) => ({ ...d, [s.key]: v }))}
                     />
                   ) : (

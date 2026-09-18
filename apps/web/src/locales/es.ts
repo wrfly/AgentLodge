@@ -162,7 +162,7 @@ export const es: Record<string, string> = {
   'Create an account': 'Crear una cuenta',
   'Already have an account?': '¿Ya tienes cuenta?',
   'Invite is valid': 'La invitación es válida',
-  'quota {n} tokens/month': 'cuota {n} tokens/mes',
+  'quota {amount}/month': 'cuota {amount}/mes',
   'This invite code is bound to that address': 'Este código de invitación está ligado a esa dirección',
   '2–24 characters': '2–24 caracteres',
   'Invite code': 'Código de invitación',
@@ -187,7 +187,7 @@ export const es: Record<string, string> = {
   'created {when}': 'creada {when}',
   'last used {when}': 'último uso {when}',
   'never used': 'nunca usada',
-  '{calls} calls · {tokens} billable tokens': '{calls} llamadas · {tokens} tokens facturables',
+  '{calls} calls · {cost}': '{calls} llamadas · {cost}',
   Revoke: 'Revocar',
   Setup: 'Configuración',
   'The key you just created is already filled in below.': 'La clave que acabas de crear ya está puesta abajo.',
@@ -222,7 +222,6 @@ export const es: Record<string, string> = {
   'By agent and model': 'Por agente y modelo',
   Turns: 'Turnos',
   Calls: 'Llamadas',
-  'Billable tokens': 'Tokens facturables',
   '(default)': '(por defecto)',
   'Heaviest conversations': 'Conversaciones más pesadas',
   Users: 'Usuarios',
@@ -372,8 +371,6 @@ export const es: Record<string, string> = {
   '1 = Monday … 7 = Sunday': '1 = lunes … 7 = domingo',
   'Reset hour': 'Hora de reinicio',
   '0–23, server time.': '0–23, hora del servidor',
-  'Cache-hit weight': 'Peso de acierto de caché',
-  'Output weight': 'Peso de la salida',
   'Agents offered': 'Agentes ofrecidos',
   'Anthropic Messages native (official / DeepSeek compatibility layer / your own gateway)': 'Anthropic Messages nativo (oficial / capa de compatibilidad de DeepSeek / tu propia pasarela)',
   'OpenAI Chat compatible (Ollama / LM Studio / third party)': 'Compatible con OpenAI Chat (Ollama / LM Studio / terceros)',
@@ -414,7 +411,7 @@ export const es: Record<string, string> = {
   'Empty if the relay needs no login.': 'Vacío si el relé no pide usuario',
   'SMTP password': 'Contraseña SMTP',
   'Refresh the model list hourly': 'Actualizar la lista de modelos cada hora',
-  'Millions of billable tokens per period; empty is unlimited.': 'Millones de tokens facturables por periodo; vacío es ilimitado',
+  'A monthly ceiling for a new account, in the settlement currency; empty is unlimited.': 'Límite mensual de una cuenta nueva, en la moneda de liquidación; vacío es ilimitado',
   'Quota used up — ask an administrator': 'Cuota agotada — contacta con un administrador',
   '{scope} quota used up ({used} / {limit}) — ask an administrator': 'Cuota {scope} agotada ({used} / {limit}) — contacta con un administrador',
   '5 h': '5 h',
@@ -564,9 +561,9 @@ export const es: Record<string, string> = {
   'Out': 'Salida',
   'Cost': 'Coste',
 
-  // Billing currency and the fallback weights
+  // Billing currency
   'Currency': 'Moneda',
-  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Los tokens facturables son lo que costó el turno, expresado en tokens de entrada a la tarifa estándar: un modelo más caro consume más de la misma cuota',
+  'What each turn cost, at the price the upstream charges for that model — so a costlier model draws more of the same quota': 'Lo que costó cada turno, a la tarifa que el proveedor cobra por ese modelo: un modelo más caro consume más de la misma cuota',
 
   // Admin: the price table
   'Price table': 'Tabla de precios',
@@ -657,6 +654,5 @@ export const es: Record<string, string> = {
   'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'En qué se cuentan los límites por importe. Los precios se mantienen en la moneda que publica cada proveedor; solo se convierten cuando un límite necesita un único número.',
   'Exchange rates': 'Tipos de cambio',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, moneda → cuántas unidades de liquidación vale una unidad, por ejemplo {"USD": 6.75} al liquidar en CNY. Solo se usa donde un límite obliga a un único número.',
-  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'Lo que cuenta un límite por tokens. El dinero se tarifica aparte y por moneda; solo estos pesos deciden la cuota.',
   'Cache written': 'Caché escrito',
 };

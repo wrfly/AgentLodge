@@ -37,6 +37,7 @@ const convRepo = await import('../core/db/conversations.js');
 const usage = await import('../core/db/usage.js');
 const repo = await import('../core/db/deferred.js');
 const quota = await import('../core/quota.js');
+const pricing = await import('../core/db/pricing.js');
 const deferred = await import('./deferred.js');
 
 let pass = 0;
@@ -58,8 +59,20 @@ const SPEND = {
   inputTokens: 1_000_000, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0,
   costUsd: 0, durationMs: 1_000, numTurns: 1,
 };
+/*
+ * A million input tokens at $1/MTok is exactly 1_000_000 micro-units, so a ceiling below
+ * reads as "this many turns" and the arithmetic in every assertion stays visible. `record`
+ * prices from the table, and an unpriced model is recorded as free — which would leave every
+ * ceiling here unreachable.
+ */
+pricing.add({
+  model: '*', currency: 'USD',
+  priceInput: 1_000_000, priceCacheRead: 100_000, priceCacheWrite: 1_250_000,
+  priceOutput: 5_000_000,
+  effectiveFrom: '1970-01-01T00:00:00.000Z',
+});
 
-/** Burn `turns` million billable tokens, which is `turns` million of a tokens ceiling */
+/** Spend `turns` million micro-units — one million per turn, by the row above */
 function burn(userId: string, turns: number): void {
   for (let i = 0; i < turns; i++) {
     usage.record({
@@ -73,7 +86,7 @@ function burn(userId: string, turns: number): void {
 }
 
 const alice = mk('alice');
-users.setQuota(alice, { limitKind: 'tokens', window: 2_000_000, hardStop: true });
+users.setQuota(alice, { window: 2_000_000, hardStop: true });
 const conv = convRepo.create({ userId: alice, agent: 'claude', title: 'held' });
 
 /* ---------------- clearsAt: the latest window over, not the first ---------------- */

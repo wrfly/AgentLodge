@@ -4,8 +4,8 @@ import { getNumber, getString } from './settings.js';
 
 export type Role = 'user' | 'admin';
 export type UserStatus = 'active' | 'suspended';
-export type { LimitKind, QuotaScope } from '../protocol.js';
-import type { LimitKind, QuotaScope } from '../protocol.js';
+export type { QuotaScope } from '../protocol.js';
+import type { QuotaScope } from '../protocol.js';
 
 export interface User {
   id: string;
@@ -22,11 +22,9 @@ export interface User {
 
 export interface Quota {
   userId: string;
-  /** Limit by billable tokens, or by money in micro-units */
-  limitKind: LimitKind;
   currency: string;
   /**
-   * The three ceilings, in the unit `limitKind` names. null means that window is unlimited.
+   * The three ceilings, in micro-units of `currency`. null means that window is unlimited.
    *
    * The windows are the platform's — one 5-hour window, one week, one month, the same
    * instants for everybody. See core/db/period.ts for why they cannot be per-user.
@@ -59,7 +57,6 @@ interface UserRow {
 
 interface QuotaRow {
   user_id: string;
-  limit_kind?: string | null;
   window_limit?: number | null;
   week_limit?: number | null;
   month_limit?: number | null;
@@ -92,7 +89,6 @@ const CURRENCY = (): string => getString('billing.currency', 'USD');
 
 const toQuota = (r: QuotaRow): Quota => ({
   userId: r.user_id,
-  limitKind: r.limit_kind === 'cost' ? 'cost' : 'tokens',
   currency: CURRENCY(),
   window: r.window_limit ?? null,
   week: r.week_limit ?? null,
@@ -153,7 +149,8 @@ export interface CreateUserInput {
   passwordHash: string;
   role: Role;
   inviteCodeId?: string;
-  tokenLimit?: number | null;
+  /** A monthly ceiling to start with, in micro-units of the settlement currency */
+  monthLimit?: number | null;
 }
 
 export function create(input: CreateUserInput): User {
@@ -175,10 +172,10 @@ export function create(input: CreateUserInput): User {
   // other two windows start unlimited: a deployment that only cares about the month should
   // not have the other two invented for it.
   const month =
-    input.tokenLimit !== undefined ? input.tokenLimit : (getNumber('quota.defaultTokenLimit') ?? null);
+    input.monthLimit !== undefined ? input.monthLimit : (getNumber('quota.defaultLimit') ?? null);
   run(
-    `insert into user_quotas (user_id, limit_kind, month_limit, hard_stop, updated_at)
-     values (?, 'tokens', ?, 1, ?)`,
+    `insert into user_quotas (user_id, month_limit, hard_stop, updated_at)
+     values (?, ?, 1, ?)`,
     id,
     month,
     now,
@@ -216,17 +213,16 @@ export function getQuota(userId: string): Quota {
 
   // A user created before this table had a row for them
   const now = nowIso();
-  const month = getNumber('quota.defaultTokenLimit') ?? null;
+  const month = getNumber('quota.defaultLimit') ?? null;
   run(
-    `insert into user_quotas (user_id, limit_kind, month_limit, hard_stop, updated_at)
-     values (?, 'tokens', ?, 1, ?)`,
+    `insert into user_quotas (user_id, month_limit, hard_stop, updated_at)
+     values (?, ?, 1, ?)`,
     userId,
     month,
     now,
   );
   return {
     userId,
-    limitKind: 'tokens',
     currency: CURRENCY(),
     window: null,
     week: null,
@@ -237,7 +233,6 @@ export function getQuota(userId: string): Quota {
 }
 
 export interface QuotaPatch {
-  limitKind?: LimitKind;
   /** null clears a ceiling, which means that window stops being limited */
   window?: number | null;
   week?: number | null;
@@ -289,7 +284,6 @@ export function setQuota(userId: string, patch: QuotaPatch, updatedBy?: string):
   const current = getQuota(userId);
   const next: Quota = {
     ...current,
-    limitKind: patch.limitKind ?? current.limitKind,
     // undefined leaves a ceiling alone; null clears it
     window: patch.window === undefined ? current.window : patch.window,
     week: patch.week === undefined ? current.week : patch.week,
@@ -300,10 +294,9 @@ export function setQuota(userId: string, patch: QuotaPatch, updatedBy?: string):
   };
   run(
     `update user_quotas set
-       limit_kind = ?, window_limit = ?, week_limit = ?, month_limit = ?,
+       window_limit = ?, week_limit = ?, month_limit = ?,
        hard_stop = ?, updated_at = ?, updated_by = ?
      where user_id = ?`,
-    next.limitKind,
     next.window,
     next.week,
     next.month,

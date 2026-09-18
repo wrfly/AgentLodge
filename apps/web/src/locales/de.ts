@@ -162,7 +162,7 @@ export const de: Record<string, string> = {
   'Create an account': 'Konto erstellen',
   'Already have an account?': 'Sie haben schon ein Konto?',
   'Invite is valid': 'Einladung ist gültig',
-  'quota {n} tokens/month': 'Kontingent {n} Token/Monat',
+  'quota {amount}/month': 'Kontingent {amount}/Monat',
   'This invite code is bound to that address': 'Dieser Einladungscode ist an diese Adresse gebunden',
   '2–24 characters': '2–24 Zeichen',
   'Invite code': 'Einladungscode',
@@ -187,7 +187,7 @@ export const de: Record<string, string> = {
   'created {when}': 'erstellt {when}',
   'last used {when}': 'zuletzt benutzt {when}',
   'never used': 'nie benutzt',
-  '{calls} calls · {tokens} billable tokens': '{calls} Aufrufe · {tokens} abrechenbare Token',
+  '{calls} calls · {cost}': '{calls} Aufrufe · {cost}',
   Revoke: 'Widerrufen',
   Setup: 'Einrichtung',
   'The key you just created is already filled in below.': 'Der eben erstellte Schlüssel ist unten bereits eingetragen.',
@@ -222,7 +222,6 @@ export const de: Record<string, string> = {
   'By agent and model': 'Nach Agent und Modell',
   Turns: 'Züge',
   Calls: 'Aufrufe',
-  'Billable tokens': 'Abrechenbare Token',
   '(default)': '(Standard)',
   'Heaviest conversations': 'Aufwendigste Unterhaltungen',
   Users: 'Benutzer',
@@ -372,8 +371,6 @@ export const de: Record<string, string> = {
   '1 = Monday … 7 = Sunday': '1 = Montag … 7 = Sonntag',
   'Reset hour': 'Uhrzeit des Zurücksetzens',
   '0–23, server time.': '0–23, Serverzeit',
-  'Cache-hit weight': 'Gewicht für Cache-Treffer',
-  'Output weight': 'Ausgabegewicht',
   'Agents offered': 'Angebotene Agenten',
   'Anthropic Messages native (official / DeepSeek compatibility layer / your own gateway)': 'Anthropic Messages nativ (offiziell / DeepSeek-Kompatibilitätsschicht / eigenes Gateway)',
   'OpenAI Chat compatible (Ollama / LM Studio / third party)': 'OpenAI-Chat-kompatibel (Ollama / LM Studio / Dritte)',
@@ -414,7 +411,7 @@ export const de: Record<string, string> = {
   'Empty if the relay needs no login.': 'Leer, wenn das Relay keinen Login verlangt',
   'SMTP password': 'SMTP-Passwort',
   'Refresh the model list hourly': 'Modellliste stündlich aktualisieren',
-  'Millions of billable tokens per period; empty is unlimited.': 'Millionen abrechenbarer Token pro Periode; leer heißt unbegrenzt',
+  'A monthly ceiling for a new account, in the settlement currency; empty is unlimited.': 'Monatsgrenze für ein neues Konto, in der Abrechnungswährung; leer heißt unbegrenzt',
   'Quota used up — ask an administrator': 'Kontingent aufgebraucht — wenden Sie sich an einen Administrator',
   '{scope} quota used up ({used} / {limit}) — ask an administrator': 'Kontingent {scope} aufgebraucht ({used} / {limit}) — wenden Sie sich an einen Administrator',
   '5 h': '5 Std.',
@@ -564,9 +561,9 @@ export const de: Record<string, string> = {
   'Out': 'Ausgabe',
   'Cost': 'Kosten',
 
-  // Billing currency and the fallback weights
+  // Billing currency
   'Currency': 'Währung',
-  'Billable tokens are what a turn cost, counted in input tokens at the standard rate — so a costlier model draws more of the same quota': 'Abrechenbare Token sind die tatsächlichen Kosten eines Zuges, ausgedrückt in Eingabetoken zum Standardtarif — ein teureres Modell verbraucht mehr desselben Kontingents',
+  'What each turn cost, at the price the upstream charges for that model — so a costlier model draws more of the same quota': 'Was jeder Zug gekostet hat, zum Preis, den der Anbieter für dieses Modell verlangt — ein teureres Modell verbraucht mehr desselben Kontingents',
 
   // Admin: the price table
   'Price table': 'Preistabelle',
@@ -657,6 +654,5 @@ export const de: Record<string, string> = {
   'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'Worin kostenbasierte Obergrenzen gezählt werden. Preise bleiben in der Währung, die der jeweilige Anbieter veröffentlicht; umgerechnet wird nur, wenn eine Grenze eine einzelne Zahl braucht.',
   'Exchange rates': 'Wechselkurse',
   'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, Währung → wie viele Einheiten der Abrechnungswährung eine Einheit wert ist, z. B. {"USD": 6.75} bei Abrechnung in CNY. Nur dort verwendet, wo eine Grenze eine einzelne Zahl erzwingt.',
-  'What a token ceiling counts. Money is priced separately and per currency; these weights decide quota, and only these.': 'Was eine Token-Obergrenze zählt. Geld wird separat und je Währung bepreist; über die Quote entscheiden allein diese Gewichte.',
   'Cache written': 'Cache geschrieben',
 };
