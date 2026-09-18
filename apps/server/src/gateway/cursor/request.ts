@@ -101,11 +101,17 @@ export function flatten(messages: ChatMessage[]): { prompt: string; system: stri
 }
 
 /**
- * Cursor's model names carry their variant in the slug, and the wire wants it separated.
+ * Reading a model's variant off the end of its slug.
  *
- * `claude-opus-5-thinking-high` is the model `claude-opus-5` asked for with thinking on at
- * high effort, and that is how the CLI sends it. A suffix this table does not know is left on
- * the name, where an unknown model is a clearer failure than a silently different one.
+ * **The fallback, not the answer.** `claude-opus-5-thinking-high` is the model
+ * `claude-opus-5` with thinking on at high effort, and which parameters a slug stands for is
+ * something Cursor states in its own catalogue — see catalog.ts, which is what resolves a
+ * model when the catalogue can be reached. This is what stands in when it cannot: right for
+ * the common slugs, and wrong in two known ways (`-max` may or may not mean max mode, and
+ * `-fast` is part of the name on some models) that only the table can settle.
+ *
+ * A suffix this table does not know is left on the name, where an unknown model is a clearer
+ * failure than a silently different one.
  */
 const VARIANTS: readonly [string, string, string][] = [
   ['-thinking-xhigh', 'thinking', 'true'],
@@ -120,7 +126,7 @@ const VARIANTS: readonly [string, string, string][] = [
   ['-low', 'effort', 'low'],
 ];
 
-/** The `-max` suffix is not a parameter but a mode, and it is the one that costs more */
+/** `-max` is the one suffix that may name a mode rather than an effort, and it costs more */
 const MAX_SUFFIX = '-max';
 
 export function splitModel(slug: string): { id: string; parameters: Message[]; max: boolean } {
@@ -149,8 +155,12 @@ export function splitModel(slug: string): { id: string; parameters: Message[]; m
 }
 
 export interface BuildOptions {
-  /** What the upstream calls this model; the name has already been resolved by the models table */
-  model: string;
+  /**
+   * The model, already resolved into what the wire carries — see catalog.ts. Resolved by the
+   * caller rather than here because it takes a request to Cursor to do properly, and this
+   * function is pure.
+   */
+  model: { id: string; parameters: Message[]; max: boolean };
   /**
    * Groups this turn with the ones before it for Cursor's own accounting. The gateway's
    * conversation id where there is one — an api key's requests have none, and a uuid per
@@ -173,7 +183,7 @@ export function buildRunRequest(body: ChatRequest, opts: BuildOptions): { reques
    */
   const delegate = definitions.length > 0;
   const conversationId = opts.conversationId || crypto.randomUUID();
-  const model = splitModel(opts.model);
+  const model = opts.model;
 
   return {
     delegate,

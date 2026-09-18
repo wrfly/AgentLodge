@@ -28,7 +28,8 @@ import { BidiStream } from './bidi.js';
 import { decode, type Message } from './codec.js';
 import { endOfStream } from './connect.js';
 import { clientHeaders, CURSOR_AGENT_API, CURSOR_API, fetchCursorModels } from './index.js';
-import { buildRunRequest, splitModel, type ChatRequest } from './request.js';
+import { resolveModel } from './catalog.js';
+import { buildRunRequest, type ChatRequest } from './request.js';
 import { AgentSession } from './session.js';
 import { BUNDLE_VERSION } from './schema.generated.js';
 import { ChatStream } from './stream.js';
@@ -99,13 +100,27 @@ async function pickModel(): Promise<string> {
 async function stream(): Promise<void> {
   const model = await pickModel();
   const tools = flag('tools') ? TOOLS : undefined;
-  const { request, delegate } = buildRunRequest({ messages: [{ role: 'user', content: prompt }], tools }, { model });
-  const split = splitModel(model);
-
-  console.log(`· cursor-agent ${BUNDLE_VERSION}, model ${split.id}${split.parameters.length ? ` (${split.parameters.map((p) => `${p['id']}=${p['value']}`).join(', ')})` : ''}${split.max ? ' max' : ''}`);
-  console.log(`· ${delegate ? 'agent' : 'asked'} turn, ${tools?.length ?? 0} tools declared\n`);
-
   const token = await accessToken(key, base);
+
+  /*
+   * The resolution is half of what this probe is for. A slug names a variant of a model, and
+   * `from` says whether Cursor's own catalogue was asked or whether the suffixes were read —
+   * a model sent as a guess is the difference between an effort level and a silent default.
+   */
+  const resolved = await resolveModel(model, {
+    secret: key,
+    baseUrl: base,
+    headers: (requestId) => clientHeaders(token, requestId),
+  });
+  const { request, delegate } = buildRunRequest(
+    { messages: [{ role: 'user', content: prompt }], tools },
+    { model: resolved },
+  );
+
+  const shown = resolved.parameters.map((p) => `${p['id']}=${p['value']}`).join(', ');
+  console.log(`· cursor-agent ${BUNDLE_VERSION}`);
+  console.log(`· ${model} → model_id ${resolved.id}${shown ? ` (${shown})` : ''}${resolved.max ? ' max_mode' : ''}, from the ${resolved.from}`);
+  console.log(`· ${delegate ? 'agent' : 'asked'} turn, ${tools?.length ?? 0} tools declared\n`);
   const controller = new AbortController();
   const session = new AgentSession({
     apiBase: base,
@@ -173,8 +188,13 @@ async function stream(): Promise<void> {
 /** Every frame, decoded, with nothing interpreted */
 async function raw(): Promise<void> {
   const model = await pickModel();
-  const { request } = buildRunRequest({ messages: [{ role: 'user', content: prompt }] }, { model });
   const token = await accessToken(key, base);
+  const resolved = await resolveModel(model, {
+    secret: key,
+    baseUrl: base,
+    headers: (requestId) => clientHeaders(token, requestId),
+  });
+  const { request } = buildRunRequest({ messages: [{ role: 'user', content: prompt }] }, { model: resolved });
   const controller = new AbortController();
   const stream = new BidiStream({
     apiBase: base,

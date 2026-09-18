@@ -478,7 +478,7 @@ Cursor 在等工具结果时把 turn 挂着，而网关对外的协议在工具�
 |---|---|---|
 | 凭据 | Cursor API key → `/auth/exchange_user_api_key` 换访问令牌 | 令牌几小时就过期，key 是人能创建和吊销的那个。令牌只在内存里，401 时强制重换一次 |
 | schema | 从 CLI bundle 里提取，提取结果进版本库 | 字段号挪了是**静默**的：请求照样被接受，只是意思变了。所以产物提交上来，diff 就是报警 |
-| 模型名 | `claude-opus-5-thinking-high` 拆成 `model_id` + `parameters` | slug 里带 variant，线上要分开。`-max` 是 mode 不是 parameter，而且它更贵，所以只有 slug 里写了才开 |
+| 模型名 | 拿 slug 去 `AvailableModels` 的 variant 表里查，查出 `model_id` + `parameters` + `max_mode` | `claude-opus-5-thinking-high` **不是模型名**，是模型 `claude-opus-5` 的一个 variant，这三样只有那张表说得准。按后缀猜（`cursor/request.ts` 的 `splitModel`）只在查不到时兜底：`-max` 看着像 `-low/-medium/-high/-xhigh` 那一档的第五档，但它是不是同时开 max_mode 是另一个字段、另一个价钱；`-fast` 在有的模型上是 parameter，在有的模型上就是名字的一部分（`cursor-grok-4.6-high-fast` vs `composer-2.5-fast`）。表按凭据缓存 5 分钟，查不到不让 turn 失败 |
 | 出错的 code | Connect 的 code 翻成 HTTP status | `resource_exhausted` 变成 429，闸门才会真的退让；一律 502 的话 AIMD 和客户端重试都失效 |
 | thinking | 丢掉 | Cursor 单独一条 channel 发（这点比聊天 RPC 好），但 Chat Completions 没有这个字段。掺进 `content` 更糟：推理会以答案的口气混在答案里，还没有边界 |
 | 一次一个工具调用 | 交出去一个就挂起等 | 接回来时要能把结果对上，一个 id 一个答案最省事。模型想同时叫两个，就被问两次 |

@@ -90,8 +90,13 @@ protobuf，schema 没公开过，是从 `cursor-agent` 自己的 bundle 里读�
 
 配置：kind 选 `cursor`，Base URL 留空（要经过前面的中转才填），凭据填一个在 cursor.com 上创建
 的 **Cursor API key**。网关拿它换访问令牌（`/auth/exchange_user_api_key`），令牌不落盘，过期
-自己换。模型清单可以「从上游拉取」，问的是 Cursor 的 `AvailableModels`；模型名用 Cursor 自己的
-那套（`composer-2.5-fast`、`claude-opus-5-thinking-high`），slug 末尾的 variant 网关会拆开发。
+自己换。
+
+模型清单点「从上游拉取」，问的是 Cursor 的 `AvailableModels`，拉回来的是**每个可选的 slug**
+而不是每个模型名 —— 因为在 Cursor 这边模型是按 variant 选的：`claude-opus-5-thinking-high`
+不是一个模型名，是模型 `claude-opus-5` 的一个 variant。网关发请求前会拿 slug 去那张表里查出
+该发什么（模型 + 参数 + 是否 max mode），所以**直接填 Cursor 列出来的 slug 就行**，别自己拼。
+表按凭据缓存 5 分钟；万一查不到，网关会退回按后缀猜，模型可能跟你想要的差一档但请求不会失败。
 
 配之前要知道的几件事：
 

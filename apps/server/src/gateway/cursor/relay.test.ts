@@ -48,26 +48,96 @@ const ended = (usage: Record<string, number>): Uint8Array => frame({ interaction
 
 /* ---------------- The upstream ---------------- */
 
+/**
+ * The catalogue, in the shape a real account answers with.
+ *
+ * Taken from a live `AvailableModels`: a model is a base name plus a table of variants, and a
+ * slug like `claude-opus-5-thinking-high` selects one of them. The names and the shape are
+ * real; `cursor-model` is the row this test's provider offers.
+ */
+const CATALOG: Message = {
+  models: [
+    {
+      name: 'cursor-model',
+      variants: [
+        { variant_string_representation: 'cursor-model', is_default_non_max_config: true, parameter_values: [] },
+      ],
+    },
+    {
+      name: 'claude-opus-5',
+      legacy_slugs: ['claude-opus-4-6'],
+      variants: [
+        {
+          variant_string_representation: 'claude-opus-5-high',
+          is_default_non_max_config: true,
+          parameter_values: [{ id: 'effort', value: 'high' }],
+        },
+        {
+          variant_string_representation: 'claude-opus-5-thinking-high',
+          parameter_values: [{ id: 'thinking', value: 'true' }, { id: 'effort', value: 'high' }],
+        },
+        {
+          // The one a suffix reading gets wrong: `-max` is an effort here, and max mode is
+          // its own field that this variant happens not to set
+          variant_string_representation: 'claude-opus-5-thinking-max',
+          parameter_values: [{ id: 'thinking', value: 'true' }, { id: 'effort', value: 'max' }],
+        },
+      ],
+    },
+    {
+      name: 'composer-2.5-fast',
+      variants: [{ variant_string_representation: 'composer-2.5-fast', parameter_values: [] }],
+    },
+  ],
+};
+
 /** What the client has said so far, in order */
 let said: Message[] = [];
+/** How many times the catalogue was asked for, which should not be once per turn */
+let modelCalls = 0;
 /** What the upstream does each time the client says something */
 let script: (message: Message, push: (bytes: Uint8Array) => void) => void = () => {};
 let seen: { runSSE?: string; append?: string; auth?: string; clientType?: string; requestId?: string } = {};
 let exchanges = 0;
 
-/** The open RunSSE response, and anything written before it was open */
+/**
+ * The open RunSSE response, and anything written before it was open.
+ *
+ * The two calls race by design — the bridge posts the first message and opens the stream
+ * without awaiting either first — so the script can produce frames before there is anywhere
+ * to put them. They are held, and `closing` remembers that the stream was finished while it
+ * was still queued: leaving that response open instead holds a gate slot for the rest of the
+ * run, which starves every later scenario.
+ */
 let open: http.ServerResponse | undefined;
 let queued: Uint8Array[] = [];
+let closing = false;
 
 function push(bytes: Uint8Array): void {
   if (open) open.write(Buffer.from(bytes));
   else queued.push(bytes);
 }
 
+/** Flush what was held and close the response if the script already asked to */
+function attach(res: http.ServerResponse): void {
+  open = res;
+  for (const bytes of queued) res.write(Buffer.from(bytes));
+  queued = [];
+  if (closing) closeStream();
+}
+
+function closeStream(): void {
+  closing = true;
+  if (!open) return;
+  open.end();
+  open = undefined;
+  closing = false;
+}
+
+/** The ordinary ending: a clean trailer, then the stream closed */
 function endStream(): void {
   push(trailer());
-  open?.end();
-  open = undefined;
+  closeStream();
 }
 
 const cursor = http.createServer((req, res) => {
@@ -107,21 +177,14 @@ const cursor = http.createServer((req, res) => {
         return;
       }
       res.writeHead(200, { 'content-type': 'application/connect+proto' });
-      open = res;
-      for (const bytes of queued) res.write(Buffer.from(bytes));
-      queued = [];
+      attach(res);
       return;
     }
 
     if (req.url === '/aiserver.v1.AiService/AvailableModels') {
+      modelCalls++;
       res.writeHead(200, { 'content-type': 'application/proto' });
-      res.end(
-        Buffer.from(
-          encode('aiserver.v1.AvailableModelsResponse', {
-            models: [{ name: 'composer-2.5-fast' }, { name: 'claude-opus-5-thinking-high' }],
-          }),
-        ),
-      );
+      res.end(Buffer.from(encode('aiserver.v1.AvailableModelsResponse', CATALOG)));
       return;
     }
 
@@ -135,6 +198,7 @@ const cursorUrl = `http://127.0.0.1:${(cursor.address() as { port: number }).por
 function reset(next: typeof script): void {
   said = [];
   queued = [];
+  closing = false;
   open?.end();
   open = undefined;
   seen = { ...seen, requestId: undefined };
@@ -150,6 +214,8 @@ const usage = await import('../../core/db/usage.js');
 const { signRuntimeToken } = await import('../../core/runtime-token.js');
 const { buildGateway } = await import('../index.js');
 const { fetchCursorModels } = await import('./index.js');
+const catalog = await import('./catalog.js');
+const { splitModel } = await import('./request.js');
 const turns = await import('./turns.js');
 
 let pass = 0;
@@ -429,13 +495,77 @@ async function run(): Promise<void> {
     ok('the instructions travelled as the system prompt', runRequest()['custom_system_prompt'] === 'be brief', String(runRequest()['custom_system_prompt']));
   }
 
+  console.log('\n=== A slug is resolved through the catalogue, not off the end of itself ===');
+  {
+    catalog.forget();
+    modelCalls = 0;
+    const options = {
+      secret: 'cursor-api-key-cursor',
+      baseUrl: cursorUrl,
+      headers: (requestId: string) => ({ 'x-request-id': requestId }),
+    };
+
+    const thinking = await catalog.resolveModel('claude-opus-5-thinking-high', options);
+    ok('a variant resolves to its base model', thinking.id === 'claude-opus-5', JSON.stringify(thinking));
+    ok('carrying the parameters the table gives it', JSON.stringify(thinking.parameters) === '[{"id":"thinking","value":"true"},{"id":"effort","value":"high"}]', JSON.stringify(thinking.parameters));
+    ok('and it is a fact rather than a guess', thinking.from === 'catalog');
+
+    // The case the suffix reading gets wrong: `-max` is an effort level on this model, and
+    // max mode is a separate field the variant does not set
+    const max = await catalog.resolveModel('claude-opus-5-thinking-max', options);
+    ok('`-max` is whatever the table says it is', max.max === false && max.id === 'claude-opus-5', JSON.stringify(max));
+    ok('which the suffix reading gets wrong on its own', splitModel('claude-opus-5-thinking-max').max === true);
+
+    const legacy = await catalog.resolveModel('claude-opus-4-6', options);
+    ok('a name the model used to have still resolves', legacy.id === 'claude-opus-5', JSON.stringify(legacy));
+
+    const fast = await catalog.resolveModel('composer-2.5-fast', options);
+    ok('a suffix that is part of the name is left alone', fast.id === 'composer-2.5-fast' && fast.parameters.length === 0, JSON.stringify(fast));
+
+    ok('the catalogue is asked once and held', modelCalls === 1, String(modelCalls));
+
+    const unknown = await catalog.resolveModel('some-model-cursor-never-heard-of-high', options);
+    ok('a slug it has never heard of falls back to the suffixes', unknown.from === 'suffix', JSON.stringify(unknown));
+    ok('and keeps what that can work out', unknown.id === 'some-model-cursor-never-heard-of', JSON.stringify(unknown));
+  }
+
+  console.log('\n=== The model list is every slug the account can choose ===');
+  {
+    catalog.forget();
+    const out = await fetchCursorModels('cursor-api-key-cursor', cursorUrl);
+    ok(
+      'the variants are listed, not just the base names',
+      out.models.includes('claude-opus-5-thinking-high') && out.models.includes('claude-opus-5'),
+      JSON.stringify(out),
+    );
+    ok('a legacy name is offered too', out.models.includes('claude-opus-4-6'), JSON.stringify(out.models));
+  }
+
+  console.log('\n=== A turn resolves its model before sending it ===');
+  {
+    catalog.forget();
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(text('resolved'));
+      out(ended({ input_tokens: 1, output_tokens: 1 }));
+      endStream();
+    });
+    await asClaude({ messages: [{ role: 'user', content: 'go' }] });
+    const requested = runRequest()['requested_model'] as Message;
+    ok('the model that went out is the resolved one', requested?.['model_id'] === 'cursor-model', JSON.stringify(requested));
+  }
+  /*
+   * Last, because it leaves the provider in cooldown. A `resource_exhausted` refusal reaches
+   * the client as a 429, which is the point — the gate reads the status and halves the
+   * concurrency it will allow. Any gated scenario after this one would be queueing behind
+   * that backoff rather than testing what it set out to.
+   */
   console.log('\n=== What Cursor refuses, the client is told ===');
   {
     reset((message, out) => {
       if (!message['run_request']) return;
       out(trailer({ error: { code: 'resource_exhausted', message: 'you have run out of fast requests' } }));
-      open?.end();
-      open = undefined;
+      closeStream();
     });
 
     const res = await asClaude({ messages: [{ role: 'user', content: 'again' }] });
@@ -446,18 +576,14 @@ async function run(): Promise<void> {
     ok('and the turn is not closed as a finished answer', !res.body.includes('message_stop'), res.body);
   }
 
-  console.log('\n=== The model list is the one the account can use ===');
-  {
-    const out = await fetchCursorModels('cursor-api-key-cursor', cursorUrl);
-    ok('it comes back from the upstream', JSON.stringify(out.models) === '["composer-2.5-fast","claude-opus-5-thinking-high"]', JSON.stringify(out));
-  }
 }
 
 try {
   await run();
 } finally {
   turns.clear();
-  open?.end();
+  catalog.forget();
+  closeStream();
   cursor.close();
   manager.close();
   fs.rmSync(box, { recursive: true, force: true });

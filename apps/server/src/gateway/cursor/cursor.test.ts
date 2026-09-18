@@ -37,6 +37,9 @@ const RUN_REQUEST = 'agent.v1.AgentRunRequest';
 
 const roundTrip = (type: string, body: Message): Message => decode(type, encode(type, body));
 
+/** A model already resolved, which is what buildRunRequest takes — see catalog.ts */
+const asModel = (id: string, parameters: Message[] = [], max = false) => ({ id, parameters, max });
+
 /** One server message, as Cursor would put it on the wire */
 const frame = (body: Message): Uint8Array => envelope(encode(SERVER, body));
 
@@ -85,7 +88,7 @@ console.log('\n=== The codec walks a run request back out of its own bytes ===')
 {
   const { request } = buildRunRequest(
     { messages: [{ role: 'user', content: 'hello' }] },
-    { model: 'claude-4.5-sonnet', conversationId: 'conv-1' },
+    { model: asModel('claude-4.5-sonnet'), conversationId: 'conv-1' },
   );
   const back = roundTrip(CLIENT, request);
   const run = back['run_request'] as Message;
@@ -184,7 +187,7 @@ console.log("\n=== A caller's tools decide whether the turn can call tools at al
     messages: [{ role: 'user', content: 'hi' }],
     tools: [{ function: { name: 'Read', description: 'read a file', parameters: { type: 'object' } } }],
   };
-  const agentic = buildRunRequest(withTools, { model: 'm' });
+  const agentic = buildRunRequest(withTools, { model: asModel('m') });
   const run = roundTrip(CLIENT, agentic.request)['run_request'] as Message;
   const message = ((run['action'] as Message)['user_message_action'] as Message)['user_message'] as Message;
   ok('a caller with tools gets an agent turn', message['mode'] === 1, String(message['mode']));
@@ -195,7 +198,7 @@ console.log("\n=== A caller's tools decide whether the turn can call tools at al
   ok('its schema travels as text as well as a Value', tools[0]?.['input_schema_json'] === '{"type":"object"}');
   ok('and is attributed to this gateway', tools[0]?.['provider_identifier'] === 'agentlodge');
 
-  const plain = buildRunRequest({ messages: [{ role: 'user', content: 'hi' }] }, { model: 'm' });
+  const plain = buildRunRequest({ messages: [{ role: 'user', content: 'hi' }] }, { model: asModel('m') });
   const asked = roundTrip(CLIENT, plain.request)['run_request'] as Message;
   const askedMessage = ((asked['action'] as Message)['user_message_action'] as Message)['user_message'] as Message;
   ok('a caller with none gets an asked turn instead', askedMessage['mode'] === 2, String(askedMessage['mode']));

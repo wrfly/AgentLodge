@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { accessToken, CursorAuthError } from './auth.js';
 import type { Egress } from './bidi.js';
-import { decode, encode } from './codec.js';
+import { listModels, resolveModel, type CatalogOptions } from './catalog.js';
 import { AgentSession, type AgentEvent } from './session.js';
 import { buildRunRequest, toolResults, type ChatRequest } from './request.js';
 import { ChatStream } from './stream.js';
@@ -156,8 +156,21 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
     return jsonError(e instanceof CursorAuthError ? 401 : 502, (e as Error).message);
   }
 
+  /*
+   * The model, as Cursor's own catalogue describes it. A slug names a variant rather than a
+   * model — see catalog.ts — so this is a lookup, cached per credential, that falls back to
+   * reading the suffixes when it cannot be done.
+   */
+  const model = await resolveModel(opts.model, {
+    secret: opts.secret,
+    baseUrl: base,
+    headers: (requestId) => clientHeaders(token, requestId),
+    egress: (url) => route(url),
+    signal: opts.signal,
+  });
+
   const { request, delegate } = buildRunRequest(opts.body, {
-    model: opts.model,
+    model,
     conversationId: opts.conversationId,
   });
 
@@ -327,8 +340,10 @@ function jsonError(status: number, message: string): Response {
 /**
  * What models this account can use.
  *
- * A unary Connect call — `application/proto`, the bare message, no envelopes — which is the
- * one shape on this protocol that is not framed.
+ * Every slug rather than every model name: on this upstream a model is chosen by its variant
+ * (`claude-opus-5-thinking-high`), so a list of bare names would hide the choice that matters.
+ * See catalog.ts, which holds the answer for the length of its TTL and is the same table the
+ * relay resolves a request's model through.
  */
 export async function fetchCursorModels(
   secret: string,
@@ -336,41 +351,11 @@ export async function fetchCursorModels(
   egress: Egress = direct,
 ): Promise<{ models: string[]; error?: string }> {
   const base = (baseUrl || CURSOR_API).replace(/\/+$/, '');
-  const out = egress(`${base}${MODELS_RPC}`);
-  if (!out) return { models: [], error: 'This provider has no audit proxy configured, so the request was refused' };
-
-  try {
-    const token = await accessToken(secret, base);
-    const res = await fetch(out.url, {
-      method: 'POST',
-      headers: {
-        ...clientHeaders(token, crypto.randomUUID()),
-        'content-type': 'application/proto',
-        ...out.headers,
-      },
-      body: encode('aiserver.v1.AvailableModelsRequest', { is_nightly: false }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) {
-      const detail = (await res.text().catch(() => '')).slice(0, 200);
-      return { models: [], error: `Cursor returned ${res.status}${detail ? `: ${detail}` : ''}` };
-    }
-    const body = decode('aiserver.v1.AvailableModelsResponse', new Uint8Array(await res.arrayBuffer()));
-    /*
-     * Two lists, and the structured one is the better answer: `model_names` is the flat legacy
-     * field, while `models[]` carries what each name actually is. Falling back to the flat one
-     * keeps this working if the structured field goes away.
-     */
-    const detailed = Array.isArray(body['models']) ? (body['models'] as Array<Record<string, unknown>>) : [];
-    const names = detailed
-      .map((m) => m['name'])
-      .filter((n): n is string => typeof n === 'string' && n.length > 0);
-    const flat = Array.isArray(body['model_names'])
-      ? (body['model_names'] as unknown[]).filter((n): n is string => typeof n === 'string')
-      : [];
-    const models = names.length ? names : flat;
-    return models.length ? { models } : { models: [], error: 'Cursor returned an empty model list' };
-  } catch (e) {
-    return { models: [], error: `Could not reach Cursor: ${(e as Error).message}` };
-  }
+  const options: CatalogOptions = {
+    secret,
+    baseUrl: base,
+    headers: (requestId) => clientHeaders('', requestId),
+    egress,
+  };
+  return listModels(options);
 }

@@ -199,10 +199,15 @@ const ROOTS = [
   'aiserver.v1.BidiAppendRequest',
   'aiserver.v1.BidiAppendResponse',
 
-  // The model list
+  /*
+   * The model list — and the variant table inside it, which is how a slug becomes a request.
+   * `claude-opus-5-thinking-high` is not a model name: it is one variant of `claude-opus-5`,
+   * and only this table says which parameters that variant stands for.
+   */
   'aiserver.v1.AvailableModelsRequest',
   'aiserver.v1.AvailableModelsResponse',
   'aiserver.v1.AvailableModelsResponse.AvailableModel',
+  'aiserver.v1.AvailableModelsResponse.ModelVariantConfig',
 
   /*
    * `google.protobuf.Value`, because the MCP arm carries a tool's arguments as one rather than
