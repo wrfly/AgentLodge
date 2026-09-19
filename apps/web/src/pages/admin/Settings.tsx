@@ -18,14 +18,10 @@ import {
   Toggle,
 } from '../../components/ui';
 import { useT } from '../../lib/i18n';
-import { CredentialsCard } from './Credentials';
-import { ProvidersCard } from './Providers';
-import { ModelsCard } from './Models';
 import { AuditProxyCard } from './AuditProxy';
 import { microToUnits } from '../../lib/api';
 import { WithUnit } from './shared';
 import { GateCard } from './Gate';
-import { PricingCard } from './Pricing';
 
 /* ---------------- System settings ---------------- */
 
@@ -237,14 +233,9 @@ export function SettingsTab() {
         </div>
       )}
 
-      {/* Upstreams, the audit proxy and the gate used to live under Overview.
-          Overview should be statistics only, so everything editable moved here. */}
+      {/* Agents, the audit proxy and the gate. Credentials, upstreams, the catalogue and
+          the price table live on Model setup — they are the routing table, not this page. */}
       <AgentsCard />
-      <CredentialsCard />
-      <ProvidersCard />
-      <ModelsCard />
-      {/* Next to the models it prices, and above the gate: quota reads it */}
-      <PricingCard />
       <AuditProxyCard />
       <GateCard />
 

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { config } from '../core/config.js';
 import * as models from '../core/db/models.js';
 import * as providers from '../core/db/providers.js';
+import { CURSOR_AGENT_API, RUN_SSE_RPC } from './cursor/index.js';
 import type { Wire } from './usage-parser.js';
 
 /**
@@ -34,18 +35,44 @@ export interface Resolved {
 }
 
 /**
+ * The name to look up, when the harness and the conversation disagree.
+ *
+ * Claude Code only accepts Anthropic ids as `--model`, so a turn that picked Cursor's
+ * `composer-2.5` still arrives as whatever Default the CLI would have sent. The
+ * conversation holds the real choice; the body is what the harness could say.
+ */
+export function requestedModel(bodyModel?: string, conversationModel?: string): string | undefined {
+  const conv = conversationModel?.trim();
+  if (conv) return conv;
+  const body = bodyModel?.trim();
+  return body || undefined;
+}
+
+/**
  * Which row serves this request.
  *
- * An exact name is routed by its row. Anything else — no model at all, an alias the CLI
- * expands on its own, a name nobody configured — falls back to the first enabled row,
- * forwarded with the name the client sent. That fallback is what keeps a deployment
- * working when a CLI asks for `sonnet` and the model list is written in full names.
+ * An exact name is routed by its row. A Claude Code window suffix (`claude-opus-5[1m]`)
+ * is the same row as the stem, forwarded as written so the upstream still sees the window.
+ * Anything else — no model at all, an alias the CLI expands on its own, a name nobody
+ * configured — falls back to the first enabled row, forwarded with the name the client
+ * sent. That fallback is what keeps a deployment working when a CLI asks for `sonnet`
+ * and the model list is written in full names.
  */
 function route(model?: string): { model?: models.Model; rename: boolean } | undefined {
   const name = (model ?? '').trim();
   if (name) {
     const [match] = models.candidates(name);
     if (match) return { model: match, rename: Boolean(match.upstreamName) };
+    /*
+     * `claude-opus-5[1m]` and `claude-haiku-4-5-20251001` are the rows `claude-opus-5` and
+     * `claude-haiku-4-5`. Matching the stem finds the provider; `rename` stays off so the
+     * suffix is still what goes out — Cursor's catalogue reads the window and the date.
+     */
+    const stem = models.stemOf(name);
+    if (stem && stem !== name) {
+      const [loose] = models.candidates(stem);
+      if (loose) return { model: loose, rename: false };
+    }
   }
   const [fallback] = models.candidates(models.names()[0] ?? '');
   return fallback ? { model: fallback, rename: false } : undefined;
@@ -71,6 +98,28 @@ export async function resolveUpstream(
   // An upstream that only speaks chat: requests from both CLIs need translating
   if (p.kind === 'openai-chat') {
     return { url: `${base}/chat/completions`, wire: 'chat', translate: wire !== 'chat', apiKey, provider: p, upstreamModel };
+  }
+
+  /*
+   * Cursor speaks neither wire: Connect-RPC with protobuf bodies, over a schema of its own
+   * (gateway/cursor/). It is declared as `chat` here all the same, and that is the point —
+   * the bridge turns one turn into a Chat Completions stream, so the translation both CLIs
+   * already rely on carries the rest, and nothing downstream needs a Cursor branch.
+   *
+   * The address is where the request really goes, which is what the audit gate asks about.
+   * A turn is several calls across two hosts and the bridge asks the gate about each one as it
+   * makes it; this names the one that carries the turn, which is the agent host unless the
+   * provider points both at a relay of its own.
+   */
+  if (p.kind === 'cursor') {
+    return {
+      url: `${(base || CURSOR_AGENT_API).replace(/\/+$/, '')}${RUN_SSE_RPC}`,
+      wire: 'chat',
+      translate: wire !== 'chat',
+      apiKey,
+      provider: p,
+      upstreamModel,
+    };
   }
 
   // The mock upstream and the local agent never use HTTP; the URL is a placeholder

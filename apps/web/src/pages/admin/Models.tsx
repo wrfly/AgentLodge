@@ -21,12 +21,12 @@ import {
 import { useT } from '../../lib/i18n';
 
 /**
- * The hourly model refresh, at the foot of the upstream card.
+ * The hourly model refresh, at the foot of the models card.
  *
- * It is one global setting rather than a field on each provider, because only the active
- * one is refreshed — the picker draws from that one, and polling upstreams nobody is using
- * is traffic and key exposure for nothing. It lives here rather than in the generic settings
- * list so it sits next to the list it overwrites.
+ * It is one global setting rather than a field on each provider: the picker is the union of
+ * every upstream, so the hourly pass asks all of them. It lives here rather than in the
+ * generic settings list so it sits next to the list it fills, and next to the button that
+ * does the same thing by hand.
  */
 function AutoRefreshModels() {
   const t = useT();
@@ -58,7 +58,7 @@ function AutoRefreshModels() {
         <div className="min-w-0 flex-1">
           <div className="text-[13px]">{t('Refresh the model list hourly')}</div>
           <div className="mt-0.5 text-[11.5px] leading-relaxed text-faint">
-            {t('Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the manual "Pull from the upstream" button still works.')}
+            {t('Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the "Pull from all upstreams" button still works.')}
           </div>
         </div>
         <Toggle checked={on} disabled={busy} onChange={(v) => void toggle(v)} />
@@ -107,18 +107,25 @@ export function ModelsCard() {
     }
   };
 
-  const pull = async (providerId: string) => {
+  const pullable = providers.filter((p) => p.kind !== 'mock' && p.kind !== 'local-agent');
+
+  const pull = async () => {
     setBusy(true);
     setErr(null);
     setNote(null);
     try {
-      const r = await admin.pullModels(providerId);
+      const r = await admin.pullModels();
       setRows(r.models);
-      setNote(
+      const failed = (r.providers ?? []).filter((p) => p.error);
+      const bits = [
         r.added > 0
           ? t('{n} added', { n: r.added })
-          : t('nothing new — the upstream offers {n}', { n: r.offered.length }),
-      );
+          : failed.length === 0
+            ? t('nothing new')
+            : null,
+        ...failed.map((p) => t('{name}: {error}', { name: p.name, error: p.error ?? '' })),
+      ].filter(Boolean);
+      setNote(bits.join(' · '));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -147,6 +154,14 @@ export function ModelsCard() {
     <Card
       title={t('Models')}
       description={t('What users can pick. One name on two upstreams is two rows, lowest priority first.')}
+      actions={
+        pullable.length > 0 ? (
+          <Button disabled={busy} onClick={() => void pull()}>
+            <RefreshCw size={13} className={clsx(busy && 'animate-spin')} />
+            {t('Pull from all upstreams')}
+          </Button>
+        ) : undefined
+      }
     >
       {err && <Banner tone="error">{err}</Banner>}
 
@@ -155,7 +170,11 @@ export function ModelsCard() {
       ) : (
         <>
           {rows.length === 0 ? (
-            <div className="text-[12px] text-faint">{t('Nothing here yet.')}</div>
+            <div className="text-[12px] text-faint">
+              {pullable.length
+                ? t('Nothing here yet. Pull from all upstreams to fill the list.')
+                : t('Nothing here yet.')}
+            </div>
           ) : (
             /* A table, because every column but the first is a number to compare down the
                column. What the vendor publishes about a name is in lib/model-facts. */
@@ -263,12 +282,6 @@ export function ModelsCard() {
           ) : (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Button variant="ghost" onClick={() => startEdit()}>{t('+ Add model')}</Button>
-              {providers.map((p) => (
-                <Button key={p.id} variant="ghost" disabled={busy} onClick={() => void pull(p.id)}>
-                  <RefreshCw size={13} className={clsx(busy && 'animate-spin')} />
-                  {t('Pull from {name}', { name: p.name })}
-                </Button>
-              ))}
               {note && <span className="text-[11.5px] text-muted">{note}</span>}
             </div>
           )}

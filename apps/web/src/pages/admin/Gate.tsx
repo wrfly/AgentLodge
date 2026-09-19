@@ -76,7 +76,7 @@ export function GateCard() {
       description={
         gate.enabled
           ? t('Every agent request upstream goes through it: per-call accounting, a hard quota gate, and a rate limit per upstream')
-          : t('No model is configured, so agents fall back to their own configuration and usage can only be counted per turn')
+          : t('No model is configured, so conversations cannot start. Add an upstream and pull its models — the host CLI login is not used.')
       }
       actions={
         <div className="flex items-center gap-1.5">

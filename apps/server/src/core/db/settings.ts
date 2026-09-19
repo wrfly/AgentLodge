@@ -525,7 +525,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     // sitting in a generic list of unrelated settings, is a switch nobody finds.
     hidden: true,
     default: 'false',
-    hint: 'Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the manual "Pull from the upstream" button still works.',
+    hint: 'Asks every upstream what models it has, once an hour, and adds the names that are missing. Nothing is removed or reordered, and a model turned off stays off. Either way the "Pull from all upstreams" button still works.',
   },
   {
     /*

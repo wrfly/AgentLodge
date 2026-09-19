@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { currentSeq, dropChannel, liveStartSeq, subscribe } from '../../core/events.js';
 import { defaultAgent, isAgentId, isEnabledAgent } from '../agents/registry.js';
 import * as convRepo from '../../core/db/conversations.js';
@@ -17,6 +17,20 @@ import * as workspace from '../workspace.js';
 import { tr } from '../../core/i18n/locale.js';
 
 const guard = { preHandler: requireUser };
+
+function replyTurnError(
+  reply: FastifyReply,
+  req: FastifyRequest,
+  err: unknown,
+) {
+  if (err instanceof turns.QuotaExceededError) {
+    return reply.code(402).send({ error: err.message, quota: err.status });
+  }
+  if (err instanceof turns.NoUpstreamError) {
+    return reply.code(503).send({ error: tr(req, err.message) });
+  }
+  return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+}
 
 export function registerConversationRoutes(app: FastifyInstance): void {
   app.get('/api/conversations', guard, async (req) => {
@@ -150,6 +164,9 @@ export function registerConversationRoutes(app: FastifyInstance): void {
         }
         return reply.code(402).send({ error: err.message, quota: err.status });
       }
+      if (err instanceof turns.NoUpstreamError) {
+        return reply.code(503).send({ error: tr(req, err.message) });
+      }
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
   });
@@ -213,10 +230,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
         throw err;
       }
     } catch (err) {
-      if (err instanceof turns.QuotaExceededError) {
-        return reply.code(402).send({ error: err.message, quota: err.status });
-      }
-      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+      return replyTurnError(reply, req, err);
     }
   });
 
@@ -274,10 +288,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
         throw err;
       }
     } catch (err) {
-      if (err instanceof turns.QuotaExceededError) {
-        return reply.code(402).send({ error: err.message, quota: err.status });
-      }
-      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+      return replyTurnError(reply, req, err);
     }
   });
 
@@ -365,10 +376,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
        * three of them in the list for good.
        */
       convRepo.remove(child.id, req.user!.id);
-      if (err instanceof turns.QuotaExceededError) {
-        return reply.code(402).send({ error: err.message, quota: err.status });
-      }
-      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+      return replyTurnError(reply, req, err);
     }
   });
 

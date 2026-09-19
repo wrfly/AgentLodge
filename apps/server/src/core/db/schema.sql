@@ -408,6 +408,20 @@ create table if not exists audit_logs (
 create index if not exists idx_audit_created on audit_logs(created_at desc);
 create index if not exists idx_audit_actor on audit_logs(actor_id, created_at desc);
 
+-- Cursor conversation checkpoints. The agent keeps history on its side and hands this
+-- end opaque bytes; the next turn of the same conversation sends them back. Without a
+-- row here a gateway restart — or any API-key request that cannot find the in-process
+-- lane — resends the whole transcript as fresh input. See gateway/cursor/conversation.ts.
+create table if not exists cursor_lanes (
+  lane       text primary key,
+  state      blob not null,
+  blobs      text not null,        -- JSON: { id: base64 }
+  messages   text not null,        -- JSON: { role, text }[]
+  system     text not null,
+  updated_at integer not null
+);
+create index if not exists idx_cursor_lanes_updated on cursor_lanes(updated_at);
+
 -- One picture of how a person works, written from their conversation summaries.
 -- Kept because it costs a request to make; regenerated when they ask for it.
 create table if not exists user_portraits (

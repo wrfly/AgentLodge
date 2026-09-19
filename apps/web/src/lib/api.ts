@@ -662,6 +662,13 @@ export interface BalanceResult {
     totalBalance: string;
     grantedBalance: string;
     toppedUpBalance: string;
+    used?: string;
+    limit?: string;
+    source?: 'deepseek' | 'cursor';
+    label?: string;
+    planName?: string;
+    resetsAt?: string;
+    billedHere?: boolean;
   }>;
   fetchedAt: string;
   error?: string;
@@ -683,7 +690,8 @@ export interface AdminOverview {
   };
   currency: string;
   allTime: UsageTotals;
-  balance: BalanceResult | null;
+  /** Present when an older server still embedded the upstream query; the card loads `/api/admin/balance` itself */
+  balance?: BalanceResult | null;
   agents: AgentInfo[];
 }
 
@@ -956,6 +964,12 @@ export interface StartedLogin {
   authorizeUrl: string;
   credentialId: string;
   kind: string;
+  /**
+   * How this sign-in finishes: `code` wants the code the redirect page shows pasted
+   * back, `poll` has nothing to bring back and is completed by asking until it stops
+   * answering `pending`. Absent from an older credential manager, which only had `code`.
+   */
+  completion?: 'code' | 'poll';
   expiresAt: number;
 }
 
@@ -1153,11 +1167,16 @@ export const admin = {
     request<Model>(`/api/admin/models/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteModel: (id: string) =>
     request<{ ok: boolean }>(`/api/admin/models/${id}`, { method: 'DELETE' }),
-  /** Ask one upstream what it offers and add whatever is missing */
-  pullModels: (providerId: string) =>
-    request<{ added: number; offered: string[]; models: Model[] }>('/api/admin/models/pull', {
+  /** Ask every upstream that can answer a list, or one of them, and add whatever is missing */
+  pullModels: (providerId?: string) =>
+    request<{
+      added: number;
+      offered?: string[];
+      models: Model[];
+      providers?: Array<{ id: string; name: string; added: number; offered: string[]; error?: string }>;
+    }>('/api/admin/models/pull', {
       method: 'POST',
-      body: JSON.stringify({ providerId }),
+      body: JSON.stringify(providerId ? { providerId } : {}),
     }),
   createProvider: (input: ProviderInput) =>
     request<Provider>('/api/admin/providers', { method: 'POST', body: JSON.stringify(input) }),
@@ -1212,8 +1231,9 @@ export const admin = {
       body: JSON.stringify(input),
     }),
   /** Step two: the code the page showed after authorising */
-  finishCredentialLogin: (input: { loginId: string; code: string }) =>
-    request<{ credential: Credential }>('/api/admin/credentials/login/finish', {
+  /** `credential` is absent while a poll sign-in is still waiting to be approved. */
+  finishCredentialLogin: (input: { loginId: string; code: string; completion?: 'code' | 'poll' }) =>
+    request<{ status?: string; credential?: Credential }>('/api/admin/credentials/login/finish', {
       method: 'POST',
       body: JSON.stringify(input),
     }),

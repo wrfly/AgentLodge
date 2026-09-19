@@ -44,6 +44,7 @@ const (
 	// also selects the refresher in provs.
 	kindClaude = providerClaude
 	kindCodex  = providerCodex
+	kindCursor = providerCursor
 )
 
 // Where a credential came from. Shown in the console, because "this one is a
@@ -67,7 +68,7 @@ type credential struct {
 	APIKey string `json:"apiKey,omitempty"`
 	// kindKeyFile — a path, never a value
 	Path string `json:"path,omitempty"`
-	// kindClaude / kindCodex
+	// kindClaude / kindCodex / kindCursor
 	Token *tokenPair `json:"token,omitempty"`
 
 	CreatedAt int64 `json:"createdAt"`
@@ -152,9 +153,16 @@ func (c *credential) summary() map[string]any {
 		if len(c.Token.Scopes) > 0 {
 			out["scopes"] = c.Token.Scopes
 		}
-		// A subscription with no refresh token can serve its current access
-		// token and nothing after it — worth saying before it expires.
-		out["renewable"] = c.Token.RefreshToken != ""
+		// A subscription with nothing to renew from can serve its current access
+		// token and nothing after it — worth saying before it expires. Cursor
+		// renews from the API key it stores rather than from a refresh token,
+		// so asking about the refresh token would call it renewable when it is
+		// not, and the console would say so right up until it stopped working.
+		if c.Kind == kindCursor {
+			out["renewable"] = c.Token.APIKey != ""
+		} else {
+			out["renewable"] = c.Token.RefreshToken != ""
+		}
 	}
 	return out
 }
@@ -180,10 +188,10 @@ func validID(id string) error {
 
 func validKind(kind string) error {
 	switch kind {
-	case kindAPIKey, kindKeyFile, kindClaude, kindCodex:
+	case kindAPIKey, kindKeyFile, kindClaude, kindCodex, kindCursor:
 		return nil
 	}
-	return fmt.Errorf("unknown kind %q: want one of %s, %s, %s, %s", kind, kindAPIKey, kindKeyFile, kindClaude, kindCodex)
+	return fmt.Errorf("unknown kind %q: want one of %s, %s, %s, %s, %s", kind, kindAPIKey, kindKeyFile, kindClaude, kindCodex, kindCursor)
 }
 
 // list returns every credential's summary, ordered by id so the console does

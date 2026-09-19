@@ -129,9 +129,15 @@ export function CredentialsCard() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
                     <span className="truncate text-[13px] font-medium">{c.id}</span>
-                    <span className="shrink-0 text-[11px] text-faint">{c.kind}</span>
+                    {c.kind !== c.id && (
+                      <span className="shrink-0 text-[11px] text-faint">{c.kind}</span>
+                    )}
                     {c.renewable === false && (
-                      <span className="shrink-0 text-[11px] text-danger">{t('cannot be renewed — sign in again')}</span>
+                      <span className={clsx('shrink-0 text-[11px]', !c.expiresAt || c.expiresAt <= Date.now() ? 'text-danger' : 'text-faint')}>
+                        {!c.expiresAt || c.expiresAt <= Date.now()
+                          ? t('cannot be renewed — sign in again')
+                          : t('usable until expiry — then sign in again')}
+                      </span>
                     )}
                   </div>
                   <div className="truncate font-mono text-[11px] text-faint">
@@ -189,6 +195,11 @@ type PanelProps = {
  *
  * The link is not opened for the administrator: it goes to an account, and which browser
  * profile that happens in is theirs to decide.
+ *
+ * Two shapes of second step. Claude and Codex show a code on the page the redirect lands
+ * on, which is pasted back here. Cursor has nothing to paste: the approval happens in the
+ * browser and this end asks the credential manager until it stops answering "not yet", so
+ * for that one the panel waits rather than offering a box.
  */
 function SignInPanel({ busy, run, onCancel }: PanelProps) {
   const t = useT();
@@ -212,6 +223,44 @@ function SignInPanel({ busy, run, onCancel }: PanelProps) {
     }
   };
 
+  const waiting = started?.completion === 'poll';
+
+  /*
+   * Ask until it is approved, or until the sign-in expires. Two seconds is the whole
+   * cost of the wait being over and nobody noticing; the credential manager makes one
+   * upstream call per ask and holds nothing open in between.
+   */
+  useEffect(() => {
+    if (!started || !waiting) return;
+    let live = true;
+    const timer = setInterval(() => {
+      void (async () => {
+        if (!live) return;
+        if (Date.now() > started.expiresAt) {
+          setErr(t('This sign-in expired before it was approved. Start it again.'));
+          clearInterval(timer);
+          return;
+        }
+        try {
+          const res = await admin.finishCredentialLogin({ loginId: started.loginId, code: '', completion: 'poll' });
+          if (!live || !res.credential) return;
+          clearInterval(timer);
+          // run() is what refreshes the list and closes the panel, so the completed
+          // sign-in goes through it rather than around it
+          await run(async () => res);
+        } catch (e) {
+          if (!live) return;
+          clearInterval(timer);
+          setErr(e instanceof Error ? e.message : String(e));
+        }
+      })();
+    }, 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [started, waiting, run, t]);
+
   return (
     <div className="mt-2 space-y-2 rounded-lg border border-line p-2.5">
       {err && <Banner tone="error">{err}</Banner>}
@@ -221,6 +270,7 @@ function SignInPanel({ busy, run, onCancel }: PanelProps) {
             <Select value={kind} onChange={(e) => { setKind(e.target.value); setId(e.target.value); }}>
               <option value="claude">Claude (claude.ai)</option>
               <option value="codex">Codex (ChatGPT)</option>
+              <option value="cursor">Cursor</option>
             </Select>
           </Field>
           <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>
@@ -237,7 +287,9 @@ function SignInPanel({ busy, run, onCancel }: PanelProps) {
       ) : (
         <>
           <div className="text-[12px] leading-relaxed text-faint">
-            {t('Open this link, authorise there, and paste back the code the page shows.')}
+            {waiting
+              ? t('Open this link and authorise there. This page finishes on its own.')
+              : t('Open this link, authorise there, and paste back the code the page shows.')}
           </div>
           <div className="flex items-center gap-2">
             <a
@@ -257,24 +309,33 @@ function SignInPanel({ busy, run, onCancel }: PanelProps) {
               <Copy size={13} />
             </button>
           </div>
-          <Field label={t('Code')}>
-            <Input
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="abc123#state"
-              spellCheck={false}
-              className="font-mono text-[12.5px]"
-            />
-          </Field>
-          <div className="flex gap-2">
-            <Button
-              disabled={busy || !code.trim()}
-              onClick={() => void run(() => admin.finishCredentialLogin({ loginId: started.loginId, code: code.trim() }))}
-            >
-              {t('Finish')}
-            </Button>
-            <Button variant="ghost" onClick={onCancel}>{t('Cancel')}</Button>
-          </div>
+          {waiting ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-faint">{t('Waiting for you to approve…')}</span>
+              <Button variant="ghost" onClick={onCancel}>{t('Cancel')}</Button>
+            </div>
+          ) : (
+            <>
+              <Field label={t('Code')}>
+                <Input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="abc123#state"
+                  spellCheck={false}
+                  className="font-mono text-[12.5px]"
+                />
+              </Field>
+              <div className="flex gap-2">
+                <Button
+                  disabled={busy || !code.trim()}
+                  onClick={() => void run(() => admin.finishCredentialLogin({ loginId: started.loginId, code: code.trim() }))}
+                >
+                  {t('Finish')}
+                </Button>
+                <Button variant="ghost" onClick={onCancel}>{t('Cancel')}</Button>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
@@ -440,6 +501,7 @@ function ImportPanel({ busy, run, onCancel }: PanelProps) {
         <Select value={kind} onChange={(e) => { setKind(e.target.value); setId(e.target.value); }}>
           <option value="claude">Claude (claude.ai)</option>
           <option value="codex">Codex (ChatGPT)</option>
+          <option value="cursor">Cursor (cursor-agent login)</option>
         </Select>
       </Field>
       <Field label={t('Name')} hint={t('What a provider points at. Letters, digits, dash, underscore, dot.')}>

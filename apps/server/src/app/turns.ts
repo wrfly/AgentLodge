@@ -132,6 +132,16 @@ function isResumeLost(result: TurnResult): boolean {
   );
 }
 
+/**
+ * Claude Code refused `--model` before sending. A session started that way is unusable:
+ * `--resume` loads the rejected id again even after we stop passing it on the command line.
+ */
+function isUnknownModel(result: TurnResult): boolean {
+  if (result.aborted || !result.error) return false;
+  const e = result.error.toLowerCase();
+  return e.includes('selected model') && e.includes('may not exist');
+}
+
 /** A note in front of the answer after starting over, or it just looks as though the agent lost its memory */
 function withResumeLostNotice(blocks: MessageBlock[]): MessageBlock[] {
   const notice: MessageBlock = {
@@ -166,6 +176,22 @@ export class QuotaExceededError extends Error {
     readonly status: quota.QuotaStatus,
   ) {
     super(message);
+  }
+}
+
+/**
+ * A turn with nowhere to send it.
+ *
+ * The English text is also the i18n key. Thrown rather than spawning the CLI, because
+ * spawning it without a gateway ticket used to inherit the operator's `~/.claude` login.
+ */
+export const NO_UPSTREAM_MESSAGE =
+  'No model is configured; this service does not use the host CLI login. Add an upstream and pull its models.';
+
+export class NoUpstreamError extends Error {
+  constructor() {
+    super(NO_UPSTREAM_MESSAGE);
+    this.name = 'NoUpstreamError';
   }
 }
 
@@ -266,6 +292,9 @@ export async function startTurn(
 
   const adapter = getAdapter(conv.agent);
   if (!adapter) throw new Error(`Unknown agent: ${conv.agent}`);
+  // Refuse rather than inherit the host CLI login. The CLI is a harness; the account is
+  // whatever the console pointed a model row at.
+  if (!gatewayEnabled()) throw new NoUpstreamError();
 
   const turnId = crypto.randomUUID();
   const cwd = workspaceDir(userId, conversationId);
@@ -275,21 +304,16 @@ export async function startTurn(
   await memory.snapshot(userId, 'agent');
   await memory.linkInto(cwd, userId);
 
-  // A ticket is only signed when the gateway is enabled; with no active upstream the CLI
-  // uses its own configuration
-  const viaGateway = gatewayEnabled();
-  const runtimeToken = viaGateway
-    ? await signRuntimeToken(
-        {
-          sub: userId,
-          cid: conversationId,
-          tid: turnId,
-          agent: conv.agent,
-          thinking: conv.thinking,
-        },
-        config.runtimeTokenTtlMs,
-      )
-    : undefined;
+  const runtimeToken = await signRuntimeToken(
+    {
+      sub: userId,
+      cid: conversationId,
+      tid: turnId,
+      agent: conv.agent,
+      thinking: conv.thinking,
+    },
+    config.runtimeTokenTtlMs,
+  );
 
   /*
    * Container mode: make sure this user's container is up and convert host paths to
@@ -384,7 +408,9 @@ export async function startTurn(
    * separated is the conversation, and a file is a fact about the work, not about who was
    * told what.
    */
-  const sessionId = conv.agentSessionId;
+  const last = convRepo.lastAssistantMessage(conversationId, userId);
+  const sessionPoisoned = Boolean(last?.error && /selected model/i.test(last.error));
+  const sessionId = sessionPoisoned ? undefined : conv.agentSessionId;
   let current = startRun(sessionId);
   const running: RunningTurn = {
     abort: () => current.abort(),
@@ -394,13 +420,13 @@ export async function startTurn(
       // and resuming again would produce the same error forever, wedging the conversation.
       // Drop the session id and start over: the CLI's context resets to nothing, but the
       // conversation can continue.
-      if (!isResumeLost(first) || !sessionId) return first;
+      //
+      // Same for a session that was started with a Cursor slug as `--model`: Claude Code
+      // stores that id on the session, and `--resume` brings it back.
+      if ((!isResumeLost(first) && !isUnknownModel(first)) || !sessionId) return first;
       console.warn(
         `[turns] ${conv.agent} could not resume ${sessionId}; starting a new session: ${first.error}`,
       );
-      // This conversation's, not the family root's. A thread has a session of its own now,
-      // and clearing the root's would throw away the parent's history over a thread whose
-      // resume failed — the parent would come back next turn with no transcript at all.
       convRepo.update(conversationId, userId, { agentSessionId: '' });
       current = startRun(undefined);
       const second = await current.done;
@@ -424,22 +450,7 @@ export async function startTurn(
         aborted: result.aborted || undefined,
       });
 
-      // Through the gateway, usage was already recorded per upstream call, and recording it
-      // again here would bill twice. The CLI's own turn total is the fallback for when the
-      // gateway is not in the path.
-      if (!viaGateway) {
-        usageRepo.record({
-          userId,
-          conversationId,
-          turnId,
-          agent: conv.agent,
-          model: conv.model,
-          effort: conv.effort,
-          usage: result.usage,
-          source: 'cli',
-          status: result.aborted ? 'aborted' : result.error ? 'error' : 'completed',
-        });
-      }
+      // Usage is recorded per upstream call in the gateway. A second write here would bill twice.
 
       if (result.aborted) {
         publish(conversationId, { type: 'turn.aborted', turnId });

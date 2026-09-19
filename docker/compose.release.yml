@@ -252,6 +252,7 @@ services:
       # single-file bind mount pins the old inode for good
       - ${CLAUDE_CREDENTIALS_DIR:-${HOME}/.claude}:/input:ro
       - ${CODEX_CREDENTIALS_DIR:-${HOME}/.codex}:/input-codex:ro
+      - ${CURSOR_CREDENTIALS_DIR:-${HOME}/.cursor}:/input-cursor:ro
       # Key files that something else writes and rotates — a docker secret, a
       # secret-manager sidecar, another container. Read-only: this service reads them and
       # never writes back. Only secrets/, not the data directory around it.
@@ -268,6 +269,7 @@ services:
     environment:
       CLAUDE_CREDENTIALS_FILE: /input/.credentials.json
       CODEX_HOME: /input-codex
+      CURSOR_AUTH_FILE: /input-cursor/auth.json
       # Directories a key file may be read from, colon-separated like PATH. The data
       # directory's secrets/ is here because that is where a key file usually goes; add a
       # mount point and name it here to use another.

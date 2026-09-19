@@ -375,6 +375,148 @@ chat 协议则是最后一帧带 `usage`（③ 会在请求里发 `stream_option
 
 底层模型的 key **只进 ④**，不进 ③ —— ③ 连它用的是哪个模型都不需要知道。
 
+### 2.4.1 Cursor 订阅（`gateway/cursor/`）—— 一个不讲这两种协议的 ④
+
+Cursor 两条都不满足：它的客户端跟 `api2.cursor.sh` 说 Connect-RPC，body 是 protobuf，
+schema 没有公开的 `.proto`。于是这条上游是**唯一一条 ③ 自己说话的**，其余四种 kind 都是
+`fetch` 一个 JSON 出去。
+
+```
+claude → Messages ┐                                        ┌ AgentRunRequest（protobuf）
+                  ├→ translate.ts →  Chat Completions  →  ─┤   BidiAppend → api2.cursor.sh
+codex  → Responses┘                        ↑              └ RunSSE 帧流 ← agentn.…cursor.sh
+                                           └───────────────── cursor/stream.ts 再翻回 chat SSE
+```
+
+**为什么 pivot 选 Chat Completions**：③ 本来就把两个 CLI 都翻成它了，把桥接写在那一层上，
+两个 CLI 一起有，而且要写对的只有一处而不是两处。`resolveUpstream` 给 cursor 上游的 wire
+就是 `chat`，所以嗅探 usage、翻译回客户端协议、keep-alive 这些全都没有 cursor 分支。
+
+#### 走哪个 RPC：`agent.v1.AgentService`，也就是 CLI 自己那条
+
+一开始走的是 IDE 的聊天 RPC（`aiserver.v1.ChatService/StreamUnifiedChat`）—— 桥接确实更简单，
+一问一答，客户端自己拿着工具。**但它没了**：2026.09 以后 CLI bundle 里不再带
+`StreamUnifiedChatRequest` / `Response`，连 `ChatService` 都不在了。schema 是从 bundle 里读出来的，
+读不到就没法在 Cursor 下次发版时保持正确，所以这条路只能放弃。
+
+换过去之后反倒有两件事变好了，都是网关在意的：
+
+- **token 数是真的。** 每个 turn 结束时 `turn_ended` 带 input / output / cache read / cache write /
+  reasoning。聊天 RPC 一个都不报，所以这条上游过去是**按字符估**的 —— 配额闸门、用量报表、
+  由它们算出来的价格，全是估算。
+- **两个方向的工具都是原生的。** 调用方的工具作为 MCP 定义发出去，模型当工具调，而不是靠 prompt
+  哄它吐 JSON；Cursor 那一侧的循环（读这个文件、跑这条命令）则交回给调用方执行。
+
+代价是：一个 turn 是一场对话，而网关对外的两种协议都在工具调用处**结束一次响应**。
+下面几小节就是这个代价怎么付的。
+
+#### 双向流，用的是两个单向请求（`cursor/bidi.ts`）
+
+`Run` 是 bidi streaming：客户端在服务端往回推的同时还要继续发（工具结果、blob、心跳）。
+这需要 HTTP/2 request streaming —— `fetch` 表达不了，前面挂审计代理时也活不下来。
+
+Cursor 自己的客户端里就有出路，因为它在企业代理后面遇到同样的问题：同一个 turn 可以用两个
+普通请求驱动，靠一个 id 关联起来。
+
+| 调用 | 形态 | 去哪 |
+|---|---|---|
+| `aiserver.v1.BidiService/BidiAppend` | unary，一次一条 `AgentClientMessage`，带递增 seqno | API host |
+| `agent.v1.AgentService/RunSSE` | server-streaming，请求体只有那个 id，回来是整个 turn | **agent host** |
+
+id 是这边生成的 uuid，两个请求的 `x-request-id` 都是它 —— Cursor 自己的客户端就是从这个头里读的。
+两个调用都只是「POST 一个 protobuf」，所以审计代理、egress 闸门、abort 信号全都跟别的上游一样有效。
+
+> ⚠️ **这条上游要出两个域名。** 一个 turn 分两个调用：消息发到 `api2.cursor.sh`（HTTP/1.1 即可），回来的流从 agent host（默认 `agentn.us.api5.cursor.sh`）读。**agent host 只讲 HTTP/2** —— Node 的 `fetch` 走 HTTP/1.1，连上去会直接 `fetch failed`，所以 RunSSE 走 `node:http2`。有 egress allowlist 的部署两个域名都要放。上游填了 Base URL 的话两个都走那一个地址。审计代理默认出网也是 HTTP/1.1，前面挂代理时要开 `PROXY_HTTP2=1`，否则代理会把同样的 HTTP/1.1 打到 agent host 上，一样过不去。
+
+#### 这段是对着真客户端校准过的
+
+`--endpoint` 可以把 `cursor-agent` 指到本地，于是拿它自己的登录打一次 turn、用**本仓库的 schema**
+解出来，就能回答「读 bundle 读不出来」的那几个问题。把 `GetServerConfig` 的 `http2_config` 回成
+`FORCE_BIDI_DISABLED`，真客户端就会走 BidiAppend + RunSSE 而不是 HTTP/2 双向流 ——
+它自己就支持这条路，这点本身就是这个设计的第一个确认。
+
+那次校准对着的是本地假端点，假端点讲 HTTP/1.1；**真实的 agent host 不讲 HTTP/1.1**。请求形状
+仍然是那一次对齐的，运输层 RunSSE 必须是 HTTP/2。
+
+抓到的和改掉的：
+
+| 事 | 真客户端 | 这边原来 |
+|---|---|---|
+| append 的载荷 | **`data`，hex 字符串** | `data_binary`。bundle 里二进制那条挂在 `bidi_append_binary_encoding` 开关后面而且是关的，所以 hex 才是确定能被接受的那条 |
+| id | 两个：`x-request-id`（每条流一个）和 `x-original-request-id`（整个 turn 一个，等于 `run_id`）。重试时前者变后者不变 | 只有一个，`run_id` 另外随机 |
+| header | `user-agent: connect-es/1.6.1`、`x-cursor-streaming: true`，没有 checksum，没有 os/arch | 发了一个按凭据算的 `x-cursor-checksum` —— 等于替这个进程编了一台机器的身份 |
+| 单条消息的 prompt | 就是那句话 | 前面挂了 `User: ` |
+
+请求结构 13 个字段里 10 个一致，剩下 3 个是故意的：`mode` 我们在调用方没带工具时发 ASK 而不是
+AGENT，`exclude_workspace_context` 发 false（`true` 会被服务端以 "Workspace context exclusion is
+not allowed" 拒掉，turn 在第一个 token 之前以 502 结束；没有工作区的那部分由 session.ts 应答），
+`max_mode` 按模型表显式写出（proto3 默认值，服务端读到的是一回事）。
+
+还没对齐的两个，都判断成可以不发：`x-blob-encryption-key`（blob 在这边只是原样存取的字节，没有
+要加密的东西）和 `connect-content-encoding: gzip`（不压也是合法的）。
+
+`cursor:probe` 是对着真服务端打一轮的工具。模型清单和 turn 都已经出过网：清单走 API host 的
+HTTP/1.1，turn 的 RunSSE 必须走 HTTP/2。
+
+#### 一个 turn 会反过来要三样东西（`cursor/session.ts`）
+
+Cursor 的 agent 协议不是一问一答：turn 进行中服务端会朝客户端要东西，要不到就停在那儿。
+
+| 要什么 | 怎么答 |
+|---|---|
+| 会话状态（`kv_server_message`） | 服务端把自己的状态以 blob 形式存在客户端。turn 期间放内存里，要的时候还回去。**不是可选的** —— 要的 blob 没回去，turn 就停 |
+| 工作区上下文（`request_context_args`） | 什么系统、什么 shell、哪个目录。这里直接答 |
+| 工具执行（`*_args`） | 交给**调用方**跑 —— 这个进程没有工作区，也不该跑模型写的命令 |
+
+#### 工具，两个方向（`cursor/exec-bridge.ts`、`cursor/mcp.ts`）
+
+**调用方的工具 → Cursor**：进 `mcp_tools`（name / description / JSON schema）。`ExecServerMessage`
+里其余都是 Cursor 自己那套固定工具，调用方的工具不在那个目录里、也永远不会在；MCP 那一支是唯一能
+带任意名字和 schema 的。
+
+出去的时候**加 `client__` 前缀**：Cursor 的 model provider 那边已经注册了叫 `Read`、`Write`、
+`WebFetch`、`WebSearch` 的工具，重名会让它 400 掉整个请求（表现成 `ERROR_PROVIDER_ERROR`，
+看起来像桥接写错了而不是撞名）—— 而 Claude Code 的内置工具正好就是这几个名字。回到调用方之前改回来。
+
+**Cursor 的工具 → 调用方**：`pi_read_args` → `Read`、`shell_stream_args` → `Bash`、
+`pi_edit_args` → `Edit`…… 名字是 Claude Code 内置工具的名字，故意的：它在自己的 checkout 里、
+按自己的权限提示执行，回来的纯文本再翻成 agent 在等的那个 protobuf result。
+
+所以**只有调用方自己带了工具**时才会往回交 —— 它这时才有循环可以跑、有办法回答。没带工具的请求
+发出去的是 `ASK` 模式的 turn；万一还是来了 exec 请求，用 `ExecClientControlMessage.throw` 顶掉。
+桥不了的（`ls_args`、`grep_args`，结果是目录树和 per-file 匹配表，纯文本变不出来）也是 throw：
+**不答不是让 turn 失败，是让它停住**，客户端还在等，而且没有任何话说明为什么。
+
+#### 跨请求的 turn（`cursor/turns.ts`）
+
+Cursor 在等工具结果时把 turn 挂着，而网关对外的协议在工具调用处就把响应结束了、结果在**下一个**
+请求里来。于是挂起的 turn 按它在等的那个 tool call id 存起来，下一个带着这个 id 的请求接回同一场对话。
+
+丢了不致命 —— 找不到就从 transcript 重开一轮，那也是别的上游每次都在做的事 —— 但会丢掉 agent 服务端
+那边的上下文，再花一次套餐里的请求。
+
+两个上限，都是刻意的：一个 parked turn 是一条活过了原请求的 HTTP 流，**在并发闸门的账外**。
+
+- **TTL 10 分钟**：客户端拿了工具调用就再也不回来（崩了、用户 ctrl-c），否则这条流挂到进程重启
+- **总数 64**：所有上游合计，超了从最老的开始踢
+
+#### 其余定下来的事
+
+| 事 | 怎么做的 | 为什么 |
+|---|---|---|
+| 凭据 | Cursor API key → `/auth/exchange_user_api_key` 换访问令牌 | 令牌几小时就过期，key 是人能创建和吊销的那个。令牌只在内存里，401 时强制重换一次 |
+| schema | 从 CLI bundle 里提取，提取结果进版本库 | 字段号挪了是**静默**的：请求照样被接受，只是意思变了。所以产物提交上来，diff 就是报警 |
+| 模型名 | 拿 slug 去 `AvailableModels` 的 variant 表里查，查出 `model_id` + `parameters` + `max_mode` | `claude-opus-5-thinking-high` **不是模型名**，是模型 `claude-opus-5` 的一个 variant，这三样只有那张表说得准。Claude Code 的名字对不上这张表时也要落到一个能发的模型上：短名 `opus`/`sonnet`/`haiku`/`fable` 和带日期的 Anthropic id（`claude-haiku-4-5-20251001`）取这个账号里该家族最新的那个，而不是 Cursor 自己的 `opus-latest`（那是 4.8）。按后缀猜（`cursor/request.ts` 的 `splitModel`）只在查不到时兜底：`-max` 看着像 `-low/-medium/-high/-xhigh` 那一档的第五档，但它是不是同时开 max_mode 是另一个字段、另一个价钱；`-fast` 在有的模型上是 parameter，在有的模型上就是名字的一部分（`cursor-grok-4.6-high-fast` vs `composer-2.5-fast`）。表按凭据缓存 5 分钟，查不到不让 turn 失败 |
+| 出错的 code | Connect 的 code 翻成 HTTP status | `resource_exhausted` 变成 429，闸门才会真的退让；一律 502 的话 AIMD 和客户端重试都失效 |
+| thinking | 丢掉 | Cursor 单独一条 channel 发（这点比聊天 RPC 好），但 Chat Completions 没有这个字段。掺进 `content` 更糟：推理会以答案的口气混在答案里，还没有边界 |
+| 一次一个工具调用 | 交出去一个就挂起等 | 接回来时要能把结果对上，一个 id 一个答案最省事。模型想同时叫两个，就被问两次 |
+
+计量上有两处折叠，因为 Chat Completions 能放数字的地方比 Cursor 报的数字少：
+
+- **cache write 按普通 input 记。** 这条线上没有它的字段，而它本来就是「顺便被存下来的 input」。
+- **reasoning 报但不加进总数。** `output_tokens` 到底有没有把它算进去，这边看不出来；同一批 token
+  收两次钱是两个错误里更糟的那个。所以带思考的模型在这里可能**少记**。
+
 ### 2.5 审计代理（`trace-proxy/`）—— 位置 A，默认关
 
 零依赖的透明转发代理，字节不改（只改 `Host`/协议要求的部分），落盘请求头体、SSE 逐事件、
@@ -1683,7 +1825,7 @@ agent-net  agent 容器 ↔ gateway
 | `/v1/messages/count_tokens` 支不支持 | 支持，网关单独实现了这个端点（不占并发 slot、不计费，但**必须鉴权** —— 它是拿真 key 往外转发的） |
 | `--resume` 跨容器重启可不可靠 | 可靠，前提是 `~/.claude` 落在持久卷上。所以整个 HOME 都挂出来了（§6.2），写入层随 `rm` 消失而会话记录不能 |
 | 上游真实限流阈值 | 3 是保守初值；AIMD 熔断器会自动适应，后台也能改。见 §7.4 |
-| 当前模型价格 | 价格表里是占位值，**部署后必须按上游官网单价核对一遍**（后台 → 系统设置 → 价格表） |
+| 当前模型价格 | 价格表里是占位值，**部署后必须按上游官网单价核对一遍**（后台 → 模型配置 → 价格表） |
 | 挂 `/etc/localtime` 能不能给容器换时区 | **不能，而且会骗过验证**。宿主机那是符号链接，绑上去覆盖的是镜像里的 `/usr/share/zoneinfo/Etc/UTC`：容器内 `date` 显示 +08 是对的，Node/ICU 仍按区名 `Etc/UTC` 查自己的数据，还是 UTC。用 `TZ` 环境变量 |
 | Claude Code 会不会主动写记忆 | **会**。没说「记住」，只在对话里提了偏好，它就写了两个 `type: feedback` 文件 + 索引，还把相对日期转成了绝对日期，并交叉引用 `[[...]]` |
 | 记忆能不能跨会话召回 | 能。换会话、换工作目录，照样读得到并照着执行 |

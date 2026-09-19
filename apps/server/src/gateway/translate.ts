@@ -9,9 +9,11 @@
  * talking to Anthropic, the local model believes it is talking to an OpenAI client.
  *
  * Covered: system, multi-turn messages, text blocks, images, tool definitions, tool_use,
- * tool_result, streaming deltas, usage.
- * Not covered: thinking blocks and prompt cache control, which the other side has no
- * concept of.
+ * tool_result, streaming deltas, usage — including Cursor's cache read/write counts mapped
+ * onto Anthropic's `cache_read_input_tokens` / `cache_creation_input_tokens`.
+ * Not covered: thinking blocks and prompt cache *control* (`cache_control` markers). Cursor
+ * caches a conversation checkpoint, not a prefix hash, so those markers have nothing to
+ * bind to and are dropped on the way in.
  */
 
 /* ---------------- Types ---------------- */
@@ -299,7 +301,37 @@ interface ChatChunk {
     };
     finish_reason?: string | null;
   }[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: ChatUsage;
+}
+
+interface ChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+}
+
+/**
+ * Chat Completions usage as Anthropic counts it.
+ *
+ * `prompt_tokens` is the whole prompt. Cache reads and writes, when this end has them, live
+ * in `prompt_tokens_details` and have to be split back out — otherwise Claude Code sees a
+ * cache-read of zero on a turn Cursor just billed as one.
+ */
+function anthropicUsageFromChat(u?: ChatUsage): {
+  input_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  output_tokens: number;
+} {
+  const cached = u?.prompt_tokens_details?.cached_tokens ?? 0;
+  const wrote = u?.prompt_tokens_details?.cache_write_tokens ?? 0;
+  const prompt = u?.prompt_tokens ?? 0;
+  return {
+    input_tokens: Math.max(0, prompt - cached - wrote),
+    cache_read_input_tokens: cached,
+    cache_creation_input_tokens: wrote,
+    output_tokens: u?.completion_tokens ?? 0,
+  };
 }
 
 /**
@@ -320,6 +352,7 @@ export class ChatToAnthropic {
   private toolBlocks = new Map<number, number>();
   private finish = 'end_turn';
   private outputTokens = 0;
+  private usage: ChatUsage | undefined;
   private model: string;
 
   constructor(model: string) {
@@ -359,8 +392,14 @@ export class ChatToAnthropic {
        * is reading Anthropic frames by now — so it becomes the one Anthropic frame that
        * means the same thing, carrying the upstream's own words, which is what the retry
        * path reads. Nothing after it is translated.
+       *
+       * Except the last frame of an ordinary answer, which has the same shape. An upstream
+       * honouring `stream_options.include_usage` — which every request built here asks for —
+       * ends with usage and an empty `choices`, and isErrorBody() cannot tell that from
+       * `{"choices":[],"error":…}` without looking at the usage. Untested, it closed a
+       * perfectly good answer with an error frame naming nothing.
        */
-      if (isErrorBody(c)) {
+      if (isErrorBody(c) && !c.usage) {
         this.failed = true;
         return out + this.ev('error', { type: 'error', error: { type: 'api_error', message: errorTextOf(c) } });
       }
@@ -446,7 +485,10 @@ export class ChatToAnthropic {
     }
 
     if (choice?.finish_reason) this.finish = STOP_REASON[choice.finish_reason] ?? 'end_turn';
-    if (c.usage?.completion_tokens) this.outputTokens = c.usage.completion_tokens;
+    if (c.usage) {
+      this.usage = c.usage;
+      if (c.usage.completion_tokens) this.outputTokens = c.usage.completion_tokens;
+    }
 
     return out;
   }
@@ -478,7 +520,13 @@ export class ChatToAnthropic {
     out += this.ev('message_delta', {
       type: 'message_delta',
       delta: { stop_reason: this.finish, stop_sequence: null },
-      usage: { output_tokens: this.outputTokens },
+      // Cursor only reports usage on the last chat chunk. Anthropic puts input/cache on
+      // message_start (which has already gone out with zeros) and output on message_delta;
+      // the SDK copies every field that arrives here onto the assembled Message, so this
+      // is where Claude Code actually learns the cache read happened.
+      usage: this.usage
+        ? anthropicUsageFromChat(this.usage)
+        : { output_tokens: this.outputTokens },
     });
     out += this.ev('message_stop', { type: 'message_stop' });
     return out;
@@ -490,7 +538,7 @@ export function chatResponseToAnthropic(text: string, model: string): string {
   let body: {
     model?: string;
     choices?: { message?: { content?: string; tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[] }; finish_reason?: string }[];
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    usage?: ChatUsage;
   };
   try {
     body = JSON.parse(text);
@@ -524,10 +572,84 @@ export function chatResponseToAnthropic(text: string, model: string): string {
     content,
     stop_reason: STOP_REASON[body.choices?.[0]?.finish_reason ?? 'stop'] ?? 'end_turn',
     stop_sequence: null,
-    usage: {
-      input_tokens: body.usage?.prompt_tokens ?? 0,
-      output_tokens: body.usage?.completion_tokens ?? 0,
-    },
+    usage: anthropicUsageFromChat(body.usage),
+  });
+}
+
+/**
+ * Fold a Chat Completions SSE stream into one JSON body.
+ *
+ * A non-streaming Messages client — Claude Code's `/model` probe is the one that
+ * showed up — POSTs without `stream: true` and then reads `usage.input_tokens` on
+ * the JSON Message. Cursor only answers in SSE, and relaying that as the body
+ * leaves usage nested under `message_start`, which throws
+ * `undefined is not an object (evaluating '_r.usage.input_tokens')`.
+ */
+export function chatStreamToResponse(text: string): string {
+  let content = '';
+  const tools = new Map<number, { id: string; name: string; arguments: string }>();
+  let finish: string | undefined;
+  let model: string | undefined;
+  let usage: ChatChunk['usage'];
+  let errorPayload: unknown;
+
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('data:')) continue;
+    const payload = t.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    let c: ChatChunk;
+    try {
+      c = JSON.parse(payload) as ChatChunk;
+    } catch {
+      continue;
+    }
+    if (isErrorBody(c) && !c.usage) {
+      errorPayload = c;
+      break;
+    }
+    model ??= c.model;
+    const choice = c.choices?.[0];
+    const delta = choice?.delta;
+    if (typeof delta?.content === 'string') content += delta.content;
+    for (const call of delta?.tool_calls ?? []) {
+      const idx = call.index ?? 0;
+      const entry = tools.get(idx) ?? { id: call.id ?? `toolu_${idx}`, name: '', arguments: '' };
+      if (call.id) entry.id = call.id;
+      if (call.function?.name) entry.name = call.function.name;
+      if (call.function?.arguments) entry.arguments += call.function.arguments;
+      tools.set(idx, entry);
+    }
+    if (choice?.finish_reason) finish = choice.finish_reason;
+    if (c.usage) usage = c.usage;
+  }
+
+  if (errorPayload) return JSON.stringify(errorPayload);
+
+  const tool_calls = [...tools.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, call]) => ({
+      id: call.id,
+      type: 'function' as const,
+      function: { name: call.name, arguments: call.arguments },
+    }));
+
+  return JSON.stringify({
+    id: 'chatcmpl_assembled',
+    object: 'chat.completion',
+    model,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: content || null,
+          ...(tool_calls.length ? { tool_calls } : {}),
+        },
+        finish_reason: finish ?? (tool_calls.length ? 'tool_calls' : 'stop'),
+      },
+    ],
+    usage: usage ?? { prompt_tokens: 0, completion_tokens: 0 },
   });
 }
 
@@ -672,8 +794,9 @@ export class ChatToResponses {
         continue; // Not valid JSON: skip this frame
       }
       // As on the Anthropic side: a refusal becomes the frame that means refusal, with the
-      // upstream's wording kept
-      if (isErrorBody(c)) {
+      // upstream's wording kept — and the usage frame that ends an ordinary answer wears
+      // the same shape, so it is told apart the same way
+      if (isErrorBody(c) && !c.usage) {
         this.failed = true;
         return out + this.ev('error', { type: 'error', code: 'upstream_error', message: errorTextOf(c) });
       }

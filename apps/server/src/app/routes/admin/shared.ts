@@ -101,6 +101,7 @@ export async function callGateway(
   path: string,
   authorization?: string,
   body?: unknown,
+  timeoutMs = 5_000,
 ): Promise<Record<string, unknown>> {
   const url = `${gatewayInternalUrl()}${path}`;
   try {
@@ -111,7 +112,7 @@ export async function callGateway(
         ...(body ? { 'content-type': 'application/json' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return { error: `the gateway returned ${res.status}`, unreachable: false };
     return (await res.json()) as Record<string, unknown>;

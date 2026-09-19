@@ -2,10 +2,9 @@ import readline from 'node:readline';
 import { config } from '../../core/config.js';
 import type { MessageBlock, ToolBlock, TurnUsage } from '../../core/protocol.js';
 import { probeBin } from './probe.js';
-import { claudeEnv } from './provider.js';
+import { claudeEnv, claudeCliModel, CLAUDE_HARNESS_MODEL } from './provider.js';
 import { launch, terminate } from './launch.js';
 import * as memory from '../memory.js';
-import { getString } from '../../core/db/settings.js';
 import * as models from '../../core/db/models.js';
 import type {
   AgentAdapter,
@@ -127,7 +126,7 @@ export function turnArgs(o: RunOptions): string[] {
      */
     o.readOnly ? 'Skill,Write,Edit,NotebookEdit,Bash' : 'Skill',
   ];
-  if (o.model) args.push('--model', o.model);
+  args.push('--model', claudeCliModel(o.model) ?? CLAUDE_HARNESS_MODEL);
   if (o.effort) args.push('--effort', o.effort);
   if (o.resumeSessionId) args.push('--resume', o.resumeSessionId);
   return args;
@@ -400,28 +399,13 @@ function runTurn(o: RunOptions): RunningTurn {
 }
 
 /**
- * Claude Code has no "list models" command, so this comes from configuration.
+ * What the picker offers: the models table, which is also what routing reads.
  *
- * The defaults are three aliases rather than concrete names, because aliases hold against
- * both the official API and third-party endpoints: pointed at DeepSeek, environment
- * variables such as ANTHROPIC_DEFAULT_OPUS_MODEL map them across. Override with
- * CLAUDE_MODELS, or type a name in the interface, when something exact is needed.
+ * A name that can be picked here is a name that has an upstream behind it. There is no
+ * fallback to the host CLI's aliases — those would look pickable while a turn is refused.
  */
 async function claudeModels(): Promise<ModelOption[]> {
-  // Order of preference: what an administrator configured, then the environment, then the
-  // built-in aliases. The list is the models table, which is also what routing reads — so
-  // a name that can be picked here is a name that has an upstream behind it.
-  const configured = models.names();
-  if (configured.length) return configured.map((id) => ({ id, label: id }));
-  if (config.claudeModels.length) {
-    return config.claudeModels.map((id) => ({ id, label: id }));
-  }
-  return [
-    { id: '', label: 'Default', hint: "The model the CLI is configured with" },
-    { id: 'opus', label: 'opus', hint: 'An alias the CLI maps to a real model' },
-    { id: 'sonnet', label: 'sonnet', hint: 'An alias' },
-    { id: 'haiku', label: 'haiku', hint: 'An alias' },
-  ];
+  return models.names().map((id) => ({ id, label: id }));
 }
 
 // claude --help: --effort <level> (low, medium, high, xhigh, max)

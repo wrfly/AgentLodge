@@ -1,6 +1,3 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
 import readline from 'node:readline';
 import { config } from '../../core/config.js';
 import type { MessageBlock, ToolBlock, TurnUsage } from '../../core/protocol.js';
@@ -335,33 +332,9 @@ function runTurn(o: RunOptions): RunningTurn {
   };
 }
 
-/** codex ships its own model list (model_catalog_json in config.toml); read it directly */
+/** What the picker offers: the models table, same as Claude — a name here has an upstream. */
 async function codexModels(): Promise<ModelOption[]> {
-  // As with claude: the configured models first, then the environment, then codex's own
-  // models.json
-  const configured = models.names();
-  if (configured.length) return configured.map((id) => ({ id, label: id }));
-  if (config.codexModels.length) {
-    return config.codexModels.map((id) => ({ id, label: id }));
-  }
-  const catalog = path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex'), 'models.json');
-  try {
-    const raw = JSON.parse(await fs.readFile(catalog, 'utf8')) as {
-      models?: Array<string | { id?: string; slug?: string; name?: string }>;
-    };
-    const ids = (raw.models ?? [])
-      .map((m) => (typeof m === 'string' ? m : (m.id ?? m.slug ?? m.name)))
-      .filter((v): v is string => Boolean(v));
-    if (ids.length) {
-      return [
-        { id: '', label: 'Default', hint: 'The model configured in config.toml' },
-        ...ids.map((id) => ({ id, label: id })),
-      ];
-    }
-  } catch {
-    /* No such file: fall back to the defaults */
-  }
-  return [{ id: '', label: 'Default', hint: 'The model configured in config.toml' }];
+  return models.names().map((id) => ({ id, label: id }));
 }
 
 // Measured: an invalid value comes back as `expected one of none, minimal, low, medium, high, xhigh, max`

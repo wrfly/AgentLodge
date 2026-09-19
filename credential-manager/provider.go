@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -226,6 +227,103 @@ func (c *codexProvider) refresh(ctx context.Context, pair *tokenPair) (*tokenPai
 }
 
 // ---------------------------------------------------------------------------
+// cursorProvider: a Cursor subscription, sourced from the auth.json that
+// `cursor-agent login` writes, renewed by handing back the API key stored
+// beside the tokens.
+//
+// Cursor has no refresh-token grant. Its CLI keeps three values — an access
+// token, a refresh token and an API key — and renews by posting the API key to
+// /auth/exchange_user_api_key, which answers with a fresh pair. So the API key
+// is the durable credential here, and the refresh token is carried only because
+// the file has one: nothing known accepts it.
+// ---------------------------------------------------------------------------
+
+type cursorProvider struct {
+	authFile string
+	apiBase  string
+	timeout  time.Duration
+}
+
+func (c *cursorProvider) name() string { return providerCursor }
+
+func (c *cursorProvider) load() (*tokenPair, error) {
+	raw, err := os.ReadFile(c.authFile)
+	if err != nil {
+		return nil, fmt.Errorf("%s does not exist; run `cursor-agent login` on the host", c.authFile)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("parse cursor auth.json: %w", err)
+	}
+	access := stringField(doc, "accessToken", "access_token")
+	apiKey := stringField(doc, "apiKey", "api_key")
+	// Either alone is enough to work with: an API key can mint an access token,
+	// and an access token serves until it expires.
+	if access == "" && apiKey == "" {
+		return nil, fmt.Errorf("no accessToken or apiKey in %s", c.authFile)
+	}
+	return &tokenPair{
+		AccessToken:  access,
+		RefreshToken: stringField(doc, "refreshToken", "refresh_token"),
+		APIKey:       apiKey,
+		ExpiresAt:    jwtExpiry(access),
+	}, nil
+}
+
+func (c *cursorProvider) refresh(ctx context.Context, pair *tokenPair) (*tokenPair, error) {
+	if pair.APIKey == "" {
+		return nil, fmt.Errorf("no cursor API key held, and Cursor has no refresh-token grant; sign in again")
+	}
+	endpoint := strings.TrimSuffix(c.apiBase, "/") + "/auth/exchange_user_api_key"
+	body, err := postJSONWith(ctx, endpoint, map[string]any{},
+		map[string]string{"Authorization": "Bearer " + pair.APIKey}, c.timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	var tr struct {
+		AccessToken  string `json:"accessToken"`
+		RefreshToken string `json:"refreshToken"`
+	}
+	if err := json.Unmarshal(body, &tr); err != nil {
+		return nil, fmt.Errorf("decode cursor exchange: %w", err)
+	}
+	if tr.AccessToken == "" {
+		return nil, fmt.Errorf("cursor exchange response missing accessToken")
+	}
+
+	next := *pair
+	next.AccessToken = tr.AccessToken
+	if tr.RefreshToken != "" {
+		next.RefreshToken = tr.RefreshToken
+	}
+	// This reply carries no expires_in; the access token states its own lifetime.
+	next.ExpiresAt = jwtExpiry(tr.AccessToken)
+	return &next, nil
+}
+
+// jwtExpiry reads `exp` out of a JWT payload, as unix ms. Zero when the value is
+// not a JWT or carries no exp, which expired() reads as "no stated lifetime"
+// rather than as "expired".
+func jwtExpiry(token string) int64 {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return 0
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return 0
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil || claims.Exp <= 0 {
+		return 0
+	}
+	return claims.Exp * 1000
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -259,6 +357,12 @@ func postForm(ctx context.Context, endpoint string, form url.Values, headers map
 // postJSON POSTs a JSON body and returns the response body, with the same
 // non-2xx-is-an-error rule as postForm.
 func postJSON(ctx context.Context, endpoint string, payload any, timeout time.Duration) ([]byte, error) {
+	return postJSONWith(ctx, endpoint, payload, nil, timeout)
+}
+
+// postJSONWith is postJSON with extra request headers, which is what Cursor's
+// exchange needs: it authenticates with a bearer token rather than a body field.
+func postJSONWith(ctx context.Context, endpoint string, payload any, headers map[string]string, timeout time.Duration) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -269,6 +373,9 @@ func postJSON(ctx context.Context, endpoint string, payload any, timeout time.Du
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)

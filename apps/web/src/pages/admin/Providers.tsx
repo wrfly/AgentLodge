@@ -169,7 +169,10 @@ function ProviderForm({
 }) {
   const t = useT();
   // The two built-in kinds never leave the machine, so no address and no credential
-  const needsEndpoint = draft.kind === 'anthropic-native' || draft.kind === 'openai-chat';
+  const needsEndpoint =
+    draft.kind === 'anthropic-native' || draft.kind === 'openai-chat' || draft.kind === 'cursor';
+  // Cursor has one address and the gateway knows it; the field is there for a proxy in front of it
+  const cursor = draft.kind === 'cursor';
 
   return (
     <div className="mt-2.5 space-y-2 border-t border-line pt-2.5">
@@ -189,18 +192,26 @@ function ProviderForm({
               pasted endpoint is taken off when it saves, but the hint should say so first. */}
           <Field
             label="Base URL"
-            hint={draft.kind === 'openai-chat'
-              ? t('The root, without /chat/completions — Ollama is http://127.0.0.1:11434/v1')
-              : t('The root, without /v1/messages')}
+            hint={cursor
+              ? t('Leave it empty for Cursor itself; fill it in only to route through something in front.')
+              : draft.kind === 'openai-chat'
+                ? t('The root, without /chat/completions — Ollama is http://127.0.0.1:11434/v1')
+                : t('The root, without /v1/messages')}
           >
-            <Input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://api.example.com" />
+            <Input
+              value={draft.baseUrl}
+              onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
+              placeholder={cursor ? 'https://api2.cursor.sh' : 'https://api.example.com'}
+            />
           </Field>
           <Field
             label={t('Credential')}
             hint={
               credentials.length === 0
                 ? t('None yet — add one under Upstream credentials above.')
-                : t('The gateway asks the credential manager for a token per request, so a subscription stays renewed and nothing usable is stored here.')
+                : cursor
+                  ? t('A Cursor API key, created on cursor.com. The gateway exchanges it for an access token per session and never stores one.')
+                  : t('The gateway asks the credential manager for a token per request, so a subscription stays renewed and nothing usable is stored here.')
             }
           >
             <Select value={draft.credential} onChange={(e) => setDraft({ ...draft, credential: e.target.value })}>

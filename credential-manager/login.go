@@ -6,7 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -29,14 +32,28 @@ import (
 // machine, short enough that an abandoned one is gone within the hour.
 const loginTTL = 15 * time.Minute
 
-// oauthLogin is the endpoint set for one kind's authorization-code flow.
+// errLoginPending says the operator has not finished approving yet. It is not a
+// failure: the caller asks again.
+var errLoginPending = errors.New("this sign-in has not been approved yet")
+
+// oauthLogin is the endpoint set for one kind's flow.
+//
+// Two shapes share it. The authorization-code one (claude, codex) sends the
+// operator to authorizeURL and takes back a pasted `code#state`, which is spent
+// at tokenURL. Cursor's has no code to paste: pollURL is set instead, and this
+// end asks that endpoint over and over until the approval lands. A non-empty
+// pollURL is what selects it.
 type oauthLogin struct {
 	authorizeURL string
 	redirectURI  string
 	clientID     string
 	tokenURL     string
 	scopes       []string
+	pollURL      string
 }
+
+// poll reports whether this kind completes by polling rather than by a paste.
+func (o oauthLogin) poll() bool { return o.pollURL != "" }
 
 // pendingLogin is one started, unfinished sign-in.
 type pendingLogin struct {
@@ -46,7 +63,9 @@ type pendingLogin struct {
 	Label    string
 	verifier string
 	state    string
-	started  time.Time
+	// uuid names this attempt to the poll endpoint; empty for a paste flow.
+	uuid    string
+	started time.Time
 }
 
 func randomURLSafe(n int) (string, error) {
@@ -84,6 +103,32 @@ func (a *manager) startLogin(kind, credID, label string) (*pendingLogin, string,
 
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	// Cursor's flow: the operator approves in the browser and the tokens are
+	// collected by polling, so there is no redirect to catch and nothing to
+	// paste. The uuid names this attempt; the verifier proves the poll belongs
+	// to whoever started it.
+	if cfg.poll() {
+		attempt, err := randomUUID()
+		if err != nil {
+			return nil, "", err
+		}
+		p := &pendingLogin{ID: id, Kind: kind, CredID: credID, Label: label, verifier: verifier, uuid: attempt, started: time.Now()}
+
+		q := url.Values{
+			"challenge":      {challenge},
+			"uuid":           {attempt},
+			"mode":           {"login"},
+			"redirectTarget": {"cli"},
+		}
+
+		a.lock()
+		defer a.unlock()
+		a.pruneLogins()
+		a.logins[id] = p
+
+		return p, cfg.authorizeURL + "?" + q.Encode(), nil
+	}
 
 	// The parameters in the order `claude login` writes them, so the page gets
 	// the request it is known to accept. url.Values would sort them.
@@ -141,6 +186,17 @@ func (a *manager) finishLogin(ctx context.Context, loginID, pasted string) (*cre
 		return nil, fmt.Errorf("this sign-in has expired or was already completed; start it again")
 	}
 
+	cfgFor := a.cfg.logins[p.Kind]
+	if cfgFor.poll() {
+		pair, err := pollForTokens(ctx, cfgFor, p.uuid, p.verifier, a.cfg.httpTimeout)
+		if err != nil {
+			// Still waiting is not a failure, and the sign-in stays open for the
+			// next call; anything else has already ended it.
+			return nil, err
+		}
+		return a.storeLogin(p, loginID, pair)
+	}
+
 	code, state, found := strings.Cut(strings.TrimSpace(pasted), "#")
 	code, state = strings.TrimSpace(code), strings.TrimSpace(state)
 	if code == "" {
@@ -153,12 +209,15 @@ func (a *manager) finishLogin(ctx context.Context, loginID, pasted string) (*cre
 		return nil, fmt.Errorf("this code belongs to a different sign-in")
 	}
 
-	cfg := a.cfg.logins[p.Kind]
-	pair, err := exchangeCode(ctx, cfg, code, p.verifier, p.state, a.cfg.httpTimeout)
+	pair, err := exchangeCode(ctx, cfgFor, code, p.verifier, p.state, a.cfg.httpTimeout)
 	if err != nil {
 		return nil, err
 	}
+	return a.storeLogin(p, loginID, pair)
+}
 
+// storeLogin keeps what a completed sign-in produced, whichever flow produced it.
+func (a *manager) storeLogin(p *pendingLogin, loginID string, pair *tokenPair) (*credential, error) {
 	c := &credential{ID: p.CredID, Kind: p.Kind, Label: p.Label, Source: sourceLogin, Token: pair}
 	// The sign-in itself succeeded: the code was exchanged and the refresh token
 	// is in memory. Failing here would tell the operator to start over with a
@@ -174,6 +233,82 @@ func (a *manager) finishLogin(ctx context.Context, loginID, pasted string) (*cre
 
 	logf("%s: signed in from the console as %s", p.Kind, c.ID)
 	return c, nil
+}
+
+// pollForTokens asks Cursor once whether the operator has approved yet.
+//
+// One attempt per call, driven by whoever is waiting, rather than a loop held
+// open here: the console is already asking repeatedly, and a request parked for
+// the CLI's full fifteen minutes would hold a connection for the whole of it.
+//
+//	404  not yet — the ordinary answer while the browser tab is still open
+//	200  the credentials, as {accessToken, refreshToken}
+//	403  refused, and the body says why when an organisation's device policy
+//	     is what refused it
+func pollForTokens(ctx context.Context, cfg oauthLogin, uuid, verifier string, timeout time.Duration) (*tokenPair, error) {
+	q := url.Values{"uuid": {uuid}, "verifier": {verifier}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.pollURL+"?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errLoginPending
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		var refusal struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(body, &refusal)
+		if refusal.Error == "sign_in_policy_violation" {
+			return nil, fmt.Errorf("signing in on this machine is restricted by your organisation's device policy")
+		}
+		return nil, fmt.Errorf("cursor refused the sign-in: %s", strings.TrimSpace(string(body)))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("sign-in poll returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var tr struct {
+		AccessToken  string `json:"accessToken"`
+		RefreshToken string `json:"refreshToken"`
+		APIKey       string `json:"apiKey"`
+	}
+	if err := json.Unmarshal(body, &tr); err != nil {
+		return nil, fmt.Errorf("decode sign-in poll: %w", err)
+	}
+	if tr.AccessToken == "" {
+		return nil, fmt.Errorf("sign-in poll answered without an access token")
+	}
+	return &tokenPair{
+		AccessToken:  tr.AccessToken,
+		RefreshToken: tr.RefreshToken,
+		APIKey:       tr.APIKey,
+		ExpiresAt:    jwtExpiry(tr.AccessToken),
+	}, nil
+}
+
+// randomUUID is a v4 uuid, which is what the poll endpoint names an attempt by.
+func randomUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 // exchangeCode trades the authorization code for a token pair.

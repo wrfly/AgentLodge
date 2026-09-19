@@ -1,4 +1,5 @@
 import * as providers from '../core/db/providers.js';
+import { fetchCursorModels } from './cursor/index.js';
 import { outboundHeaders } from './upstream.js';
 
 /**
@@ -34,6 +35,9 @@ export interface ModelsResult {
 function modelsUrl(p: providers.Provider): string | null {
   const base = p.baseUrl.replace(/\/+$/, '');
   if (p.kind === 'mock' || p.kind === 'local-agent') return null;
+  // Cursor answers this too, but over its own protocol rather than a GET; fetchModels
+  // hands it to the bridge before it reaches here
+  if (p.kind === 'cursor') return null;
   if (p.kind === 'openai-chat') return `${base}/models`;
   // anthropic-native. The base may carry a vendor's compatibility prefix (DeepSeek's
   // /anthropic); the models endpoint is on the root, so it is stripped the same way
@@ -56,6 +60,11 @@ export async function fetchModels(
   apiKey: string,
   egress: (upstreamUrl: string) => { url: string; headers: Record<string, string> } | null,
 ): Promise<ModelsResult> {
+  if (provider.kind === 'cursor') {
+    if (!apiKey) return { models: [], error: 'This provider has no API key configured' };
+    return fetchCursorModels(apiKey, provider.baseUrl, egress);
+  }
+
   const url = modelsUrl(provider);
   if (!url) {
     return { models: [], error: `"${providers.KIND_LABEL[provider.kind]}" answers no model list` };

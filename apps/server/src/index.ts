@@ -256,7 +256,7 @@ console.log(
         // and the variable is only its fallback, so printing the variable would announce a
         // number the gate is not running at on every deployment that has ever changed it
         `  concurrency limit ${gate.max()}${gate.pinned() ? ' (pinned)' : ''}` +
-        (gatewayEnabled() ? '' : '  ⚠️ no upstream provider is active; agents are not going through the gateway')
+        (gatewayEnabled() ? '' : '  ⚠️ no model is configured; conversations will be refused until one is')
       : '— (ROLE=app; the gateway is in another container)'),
 );
 console.log(`  data:            ${config.dataDir}`);

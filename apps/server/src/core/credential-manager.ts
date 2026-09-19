@@ -19,7 +19,7 @@ import { config } from './config.js';
 
 export interface CredentialSummary {
   id: string;
-  kind: 'api-key' | 'claude' | 'codex' | string;
+  kind: 'api-key' | 'key-file' | 'claude' | 'codex' | 'cursor' | string;
   label?: string;
   /** host-file | typed | login | import — where the value came from */
   source: string;
@@ -57,6 +57,15 @@ export interface StartedLogin {
   authorizeUrl: string;
   credentialId: string;
   kind: string;
+  /**
+   * How this sign-in finishes.
+   *
+   * `code` is the claude.ai shape: the operator brings back what the redirect page
+   * shows. `poll` is Cursor's: there is nothing to bring back, and finishLogin is
+   * called until it stops answering `pending`. Absent from an older manager, which
+   * only ever had the first.
+   */
+  completion?: 'code' | 'poll';
   expiresAt: number;
 }
 
@@ -192,9 +201,23 @@ export async function startLogin(input: { kind: string; id: string; label?: stri
   });
 }
 
-export async function finishLogin(input: { loginId: string; code: string }): Promise<CredentialSummary> {
-  const body = await request<{ credential: CredentialSummary }>('/login/finish', 'POST', input);
-  return body.credential;
+/**
+ * Complete a sign-in, or report that it is not complete yet.
+ *
+ * A poll-style sign-in answers `pending` for as long as the operator has not approved
+ * in the browser — which is an ordinary answer rather than a failure, so it comes back
+ * as a status and not as a thrown error.
+ */
+export async function finishLogin(
+  input: { loginId: string; code: string },
+): Promise<{ status: 'complete'; credential: CredentialSummary } | { status: 'pending' }> {
+  const body = await request<{ status?: string; credential?: CredentialSummary }>(
+    '/login/finish',
+    'POST',
+    input,
+  );
+  if (body.status === 'pending' || !body.credential) return { status: 'pending' };
+  return { status: 'complete', credential: body.credential };
 }
 
 /**
