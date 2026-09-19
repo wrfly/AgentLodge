@@ -575,14 +575,14 @@ export const zhHant: Record<string, string> = {
   'Cache read': '快取讀',
   'Cache write': '快取寫',
   'Time of day': '時段',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': '這張表裡有不只一種貨幣（{list}），而金額是直接相加的。在它們統一之前，所有總計都沒有意義。',
   'in effect now': '目前生效',
   'A price is a number written with a dot — 0.15, not 0,15': '價格要寫成用點的數字 —— 0.15,不是 0,15',
   'in use since {when}': '自 {when} 起生效',
   'superseded, kept for past bills': '已被取代,保留用於歷史帳單',
-  'catch-all, and the unit quota is counted in': '兜底列，也是計費 token 的單位',
+  'catch-all': '兜底',
+  'in use': '生效中',
   'Add a price': '新增價格',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '改價是加一列新的，所以過去的帳單保留當時的價格。整張表只能用一種幣別——金額是直接相加的。',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': '改價是加一行新的，過去的帳單保留當時的價格。各家按自己的幣種定價；報表按「系統設定 → 配額」裡的匯率折算。',
 
   // Quota card: every window, capped or not
   'This quota month': '本配額月',

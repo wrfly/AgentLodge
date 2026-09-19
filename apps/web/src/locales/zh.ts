@@ -601,14 +601,14 @@ export const zh: Record<string, string> = {
   'Cache read': '缓存读',
   'Cache write': '缓存写',
   'Time of day': '时段',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': '这张表里有不止一种货币（{list}），而金额是直接相加的。在它们统一之前，所有总计都没有意义。',
   'in effect now': '当前生效',
   'A price is a number written with a dot — 0.15, not 0,15': '价格要写成用点的数字 —— 0.15,不是 0,15',
   'in use since {when}': '自 {when} 起生效',
   'superseded, kept for past bills': '已被取代,保留用于历史账单',
-  'catch-all, and the unit quota is counted in': '兜底行，也是计费 token 的单位',
+  'catch-all': '兜底',
+  'in use': '生效中',
   'Add a price': '添加价格',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '改价是加一行新的，所以过去的账单保留当时的价格。整张表只能用一种币种——金额是直接相加的。',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': '改价是加一行新的，过去的账单保留当时的价格。各家按自己的币种定价；报表按「系统设置 → 配额」里的汇率折算。',
 
   // Quota card: every window, capped or not
   'This quota month': '本配额月',

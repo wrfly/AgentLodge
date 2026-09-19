@@ -601,14 +601,14 @@ export const ja: Record<string, string> = {
   'Cache read': 'キャッシュ読取',
   'Cache write': 'キャッシュ書込',
   'Time of day': '時間帯',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'この表に複数の通貨（{list}）が混在しており、金額はそのまま合算されます。統一するまで、どの合計も意味を持ちません。',
   'in effect now': '現在適用中',
   'A price is a number written with a dot — 0.15, not 0,15': '価格は小数点にピリオドを使った数字で入力してください（0,15 ではなく 0.15）',
   'in use since {when}': '{when} から適用',
   'superseded, kept for past bills': '置き換え済み。過去の請求のために残しています',
-  'catch-all, and the unit quota is counted in': 'フォールバック行。課金トークンの単位でもあります',
+  'catch-all': 'フォールバック',
+  'in use': '適用中',
   'Add a price': '価格を追加',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '価格変更は新しい行の追加なので、過去の請求は当時の価格のままです。表全体で通貨は一つ — 金額は合算されます。',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': '価格変更は新しい行の追加なので、過去の請求は当時の価格のままです。各ベンダーは自社の通貨で価格設定され、レポートは「システム設定 → クォータ」のレートで換算します。',
 
   // Quota card: every window, capped or not
   'This quota month': '今回のクォータ月',

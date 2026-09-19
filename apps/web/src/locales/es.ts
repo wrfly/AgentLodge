@@ -574,14 +574,14 @@ export const es: Record<string, string> = {
   'Cache read': 'Lectura de caché',
   'Cache write': 'Escritura de caché',
   'Time of day': 'Franja horaria',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'Esta tabla tiene más de una moneda ({list}) y los importes se suman. Hasta que coincidan, cualquier total carece de sentido.',
   'in effect now': 'vigente ahora',
   'A price is a number written with a dot — 0.15, not 0,15': 'Un precio es un número escrito con punto — 0.15, no 0,15',
   'in use since {when}': 'en uso desde {when}',
   'superseded, kept for past bills': 'sustituida, conservada para facturas anteriores',
-  'catch-all, and the unit quota is counted in': 'fila comodín, y la unidad de los tokens facturables',
+  'catch-all': 'por defecto',
+  'in use': 'en uso',
   'Add a price': 'Añadir un precio',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Un cambio de precio es una fila nueva, así que las facturas pasadas conservan su precio. Una sola moneda para toda la tabla: los importes se suman.',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': 'Un cambio de precio es una fila nueva, así que las facturas pasadas conservan el precio de su momento. Cada proveedor se tarifica en su propia moneda; los informes convierten al tipo de Ajustes → Cuota.',
 
   // Quota card: every window, capped or not
   'This quota month': 'Este mes de cuota',

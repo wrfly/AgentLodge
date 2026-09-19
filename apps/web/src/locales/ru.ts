@@ -601,14 +601,14 @@ export const ru: Record<string, string> = {
   'Cache read': 'Чтение кэша',
   'Cache write': 'Запись кэша',
   'Time of day': 'Время суток',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'В этой таблице больше одной валюты ({list}), а суммы складываются напрямую. Пока они не совпадут, любой итог бессмыслен.',
   'in effect now': 'действует сейчас',
   'A price is a number written with a dot — 0.15, not 0,15': 'Цена — это число с точкой: 0.15, а не 0,15',
   'in use since {when}': 'действует с {when}',
   'superseded, kept for past bills': 'заменена, сохранена для прошлых счетов',
-  'catch-all, and the unit quota is counted in': 'запасная строка, и единица тарифицируемых токенов',
+  'catch-all': 'по умолчанию',
+  'in use': 'действует',
   'Add a price': 'Добавить цену',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Изменение цены — это новая строка, поэтому прошлые счета сохраняют цену своего времени. Одна валюта на всю таблицу — суммы складываются.',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': 'Изменение цены — это новая строка, поэтому прошлые счета сохраняют цену своего времени. Каждый поставщик тарифицируется в своей валюте; отчёты пересчитываются по курсу из «Настройки → Квота».',
 
   // Quota card: every window, capped or not
   'This quota month': 'Текущий месяц квоты',
