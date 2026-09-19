@@ -661,11 +661,12 @@ console.log('\n=== Claude Code names that miss the variant table still resolve =
 
 console.log('\n=== A parked turn belongs to the user who started it ===');
 {
-  const dummy = () => ({
-    session: { close: async () => {}, submit: async () => {} },
+  const dummy = (): Omit<turns.ParkedTurn, 'parkedAt'> => ({
+    session: { close: async () => {}, submit: async () => {} } as unknown as turns.ParkedTurn['session'],
     events: (async function* () {})(),
     controller: new AbortController(),
     model: 'm',
+    callId: '',
   });
   turns.clear();
   turns.park({ ...dummy(), callId: 'c1', userId: 'alice' });

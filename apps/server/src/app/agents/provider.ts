@@ -2,7 +2,7 @@ import { config } from '../../core/config.js';
 import * as models from '../../core/db/models.js';
 import * as providers from '../../core/db/providers.js';
 import * as usageRepo from '../../core/db/usage.js';
-import { fetchCursorBalance } from '../../gateway/cursor/balance.js';
+import { fetchCursorBalance } from './cursor-balance.js';
 
 /**
  * Pointing an agent's upstream at the metering gateway.
