@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { Ban, Check, Copy, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
-import { fmtCost, me, type ApiKeyRow } from '../lib/api';
+import { me, money, type ApiKeyRow } from '../lib/api';
 import { Banner, Button, Card, Empty, Field, Input, Page, Spinner, fmtDate } from '../components/ui';
 import { useT } from '../lib/i18n';
 
@@ -16,6 +16,7 @@ export function ApiKeysPage() {
   const t = useT();
   const [keys, setKeys] = useState<ApiKeyRow[] | null>(null);
   const [baseUrl, setBaseUrl] = useState('');
+  const [currency, setCurrency] = useState('USD');
   const [install, setInstall] = useState<{ command: string; script: string } | null>(null);
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -30,6 +31,7 @@ export function ApiKeysPage() {
     try {
       const r = await me.apiKeys();
       setKeys(r.keys);
+      setCurrency(r.currency);
       // With PUBLIC_GATEWAY_URL unset, fall back to this origin — which is exactly
       // right for single-machine development
       setBaseUrl(r.baseUrl || window.location.origin);
@@ -184,10 +186,10 @@ export function ApiKeysPage() {
                         : t('never used')}
                     </span>
                     {k.usage && (
-                      <span>
+                      <span title={money(k.usage, currency).title}>
                         {t('{calls} calls · {cost}', {
                           calls: k.usage.calls,
-                          cost: fmtCost(k.usage.cost),
+                          cost: money(k.usage, currency).text,
                         })}
                       </span>
                     )}

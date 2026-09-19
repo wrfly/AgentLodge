@@ -574,14 +574,14 @@ export const es: Record<string, string> = {
   'Cache read': 'Lectura de caché',
   'Cache write': 'Escritura de caché',
   'Time of day': 'Franja horaria',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'Esta tabla tiene más de una moneda ({list}) y los importes se suman. Hasta que coincidan, cualquier total carece de sentido.',
   'in effect now': 'vigente ahora',
   'A price is a number written with a dot — 0.15, not 0,15': 'Un precio es un número escrito con punto — 0.15, no 0,15',
   'in use since {when}': 'en uso desde {when}',
   'superseded, kept for past bills': 'sustituida, conservada para facturas anteriores',
-  'catch-all, and the unit quota is counted in': 'fila comodín, y la unidad de los tokens facturables',
+  'catch-all': 'por defecto',
+  'in use': 'en uso',
   'Add a price': 'Añadir un precio',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Un cambio de precio es una fila nueva, así que las facturas pasadas conservan su precio. Una sola moneda para toda la tabla: los importes se suman.',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': 'Un cambio de precio es una fila nueva, así que las facturas pasadas conservan el precio de su momento. Cada proveedor se tarifica en su propia moneda; los informes convierten al tipo de Ajustes → Cuota.',
 
   // Quota card: every window, capped or not
   'This quota month': 'Este mes de cuota',
@@ -656,8 +656,8 @@ export const es: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': 'Moneda de liquidación',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'En qué se cuentan los límites por importe. Los precios se mantienen en la moneda que publica cada proveedor; solo se convierten cuando un límite necesita un único número.',
-  'Exchange rates': 'Tipos de cambio',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, moneda → cuántas unidades de liquidación vale una unidad, por ejemplo {"USD": 6.75} al liquidar en CNY. Solo se usa donde un límite obliga a un único número.',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': 'En qué se cuentan todos los informes y todos los límites. Los precios se quedan en la moneda que publica cada proveedor; a esto se convierten camino de la pantalla.',
+  'CNY per USD': 'CNY por USD',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': 'Cuántos yuanes vale un dólar, por ejemplo 7,1. El único tipo de cambio del sistema; convierte lo que cobra cada proveedor a la moneda de liquidación.',
   'Cache written': 'Caché escrito',
 };

@@ -376,13 +376,17 @@ export const SETTING_SPECS: SettingSpec[] = [
   },
   {
     /*
-     * The currency a single money figure is expressed in — a ceiling, a quota bar, a share.
+     * The currency every figure on every report is expressed in.
      *
-     * The price table is **not** one currency any more: each vendor is held at its own
-     * published list, because a converted price cannot be checked against an invoice and goes
-     * stale the day a rate moves. Reports keep the currencies apart and print both. This is
-     * only for the places where one number is unavoidable, and it decides which currency the
-     * ceilings are read in.
+     * The price table is **not** one currency: each vendor is held at its own published list,
+     * because a converted price cannot be checked against an invoice and goes stale the day a
+     * rate moves. What a turn cost is recorded in the money it was charged in. This is what
+     * all of that is converted to on the way to a screen — and what a ceiling is read in.
+     *
+     * Reports used to print every currency side by side, "¥12.34 + $5.67", on the argument
+     * that adding them invents a number nothing corresponds to. True, and unusable: nobody
+     * can tell at a glance whether that is more or less than last month. One currency, one
+     * rate, stated in the console, with the original amounts a hover away.
      */
     key: 'billing.currency',
     span: 2,
@@ -390,41 +394,35 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'quota',
     type: 'string',
     default: 'USD',
-    hint: 'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.',
+    hint: 'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.',
   },
   {
     /*
-     * The one place an exchange rate lives, because a ceiling is one number and spend can be
-     * in two currencies. Reports never touch it: they print every currency as it was spent.
+     * The one exchange rate, in the direction people say it out loud.
      *
-     * Applied from the moment it is set. Nothing stored is restated when it changes, so a
-     * corrected rate does not rewrite last month's bill — it only changes what the gate
-     * counts from here on.
+     * Two vendors, two currencies: Anthropic bills in dollars and DeepSeek in yuan, and one
+     * rate relates them whichever way round the settlement currency is set. It used to be a
+     * JSON object of currency → multiplier, which is more general than a two-currency
+     * deployment needs and gets the direction wrong in a way nobody notices: the entry for
+     * the settlement currency itself is dead, and a stale one sits there looking live.
+     *
+     * Applied from the moment it is set, to old figures as well as new. Nothing stored is
+     * rewritten — the conversion happens on the way out — so correcting a rate that was typed
+     * wrong fixes every report at once rather than leaving a month of bad numbers behind.
      */
-    key: 'billing.rates',
-    span: 4,
-    label: 'Exchange rates',
+    key: 'billing.cnyPerUsd',
+    span: 2,
+    label: 'CNY per USD',
     group: 'quota',
-    type: 'string',
-    default: '{}',
-    hint: 'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.',
+    type: 'number',
+    default: '7.1',
+    hint: 'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.',
     validate: (v: string) => {
       if (!v.trim()) return undefined;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(v);
-      } catch {
-        return 'has to be JSON, e.g. {"USD": 6.75}';
-      }
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        return 'has to be an object of currency → rate';
-      }
-      for (const [k, raw] of Object.entries(parsed as Record<string, unknown>)) {
-        if (!/^[A-Z]{3}$/.test(k)) return `"${k}" is not a three-letter currency code`;
-        const n = Number(raw);
-        if (!Number.isFinite(n) || n <= 0) return `the rate for ${k} has to be a positive number`;
-      }
-      return undefined;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) return 'has to be a positive number, e.g. 7.1';
+      // Not a bound on the market, a bound on typos: 0.71 and 71 are both one keystroke away
+      return n >= 0.01 && n <= 1000 ? undefined : 'that is not a plausible rate — check the decimal point';
     },
   },
   {
@@ -582,8 +580,21 @@ function load(): Map<string, string> {
   return cache;
 }
 
+/**
+ * Bumped on every local write, so a module with its own derived cache can tell whether this
+ * process has changed anything since it last looked.
+ *
+ * It says nothing about the *other* process — app and gateway share one database and neither
+ * sees the other's writes. A reader that has to notice those needs a time bound as well; this
+ * only removes the delay for writes made here, which is what a test, and an administrator
+ * watching the page they just saved, are both looking at.
+ */
+let generation = 0;
+export const settingsGeneration = (): number => generation;
+
 export function invalidate(): void {
   cache = null;
+  generation++;
 }
 
 /** The raw value, decrypted where needed. Order: database, environment, default. */

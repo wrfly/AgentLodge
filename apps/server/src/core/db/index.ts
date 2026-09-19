@@ -135,7 +135,7 @@ function hasTables(d: DatabaseSync): boolean {
  * restoring the database with the image — `cli/backup-db.ts` is what makes that copy. Prefer
  * an additive step whenever one will do.
  */
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 22;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -1066,6 +1066,169 @@ function migrateInTx(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         `delete from model_pricing
           where id in (${stale.map(() => '?').join(', ')})`,
       ).run(...stale.map((r) => r.id));
+    }
+  }
+
+  if (from < 21) {
+    /*
+     * One rate, in the direction people say it out loud.
+     *
+     * `billing.rates` was a JSON object of currency → how many settlement units one of it is
+     * worth. More general than a two-vendor deployment needs, and it invites two mistakes the
+     * shape cannot report: an entry for the settlement currency itself, which is dead code in
+     * `settle()`, and a rate written upside down, which looks perfectly plausible. The
+     * deployment this was written for carried `{"USD":6.75,"CNY":0.148148}` while settling in
+     * USD — the USD entry inert, the CNY one the reciprocal of the number anybody would say.
+     *
+     * So: one number, `billing.cnyPerUsd`, read as "how many yuan one dollar is worth".
+     * Whichever way the settlement currency points, that relates the two.
+     */
+    const rates = d
+      .prepare("select value from settings where key = 'billing.rates'")
+      .get() as { value: string } | undefined;
+    if (rates) {
+      const settlement =
+        (d.prepare("select value from settings where key = 'billing.currency'").get() as
+          { value: string } | undefined)?.value || 'USD';
+      let parsed: Record<string, unknown> = {};
+      try {
+        /*
+         * `?? {}` because `JSON.parse('null')` succeeds and returns null — past the catch,
+         * and the next line dereferences it. That throws inside the migration transaction, so
+         * the whole thing rolls back and `initDb()` fails: the server does not start, and
+         * every restart repeats it. A hand-edited row is enough to get there. Caught in
+         * review. The array case goes the same way, into an object with no USD or CNY key.
+         */
+        const raw = JSON.parse(rates.value) as unknown;
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+          parsed = raw as Record<string, unknown>;
+        }
+      } catch {
+        // A malformed setting carries no rate to keep; the default takes over
+      }
+      /*
+       * Read from whichever entry was the live one. Settling in USD, the CNY entry held
+       * "dollars per yuan" and the rate wanted is its reciprocal; settling in CNY, the USD
+       * entry already held yuan per dollar. The entry matching the settlement currency is
+       * ignored — `settle()` never read it either.
+       */
+      const usd = Number(parsed['USD']);
+      const cny = Number(parsed['CNY']);
+      let carried: number | null = null;
+      if (settlement === 'CNY' && Number.isFinite(usd) && usd > 0) carried = usd;
+      else if (settlement !== 'CNY' && Number.isFinite(cny) && cny > 0) carried = 1 / cny;
+
+      /*
+       * The old setting accepted any three-letter code, and this one holds a single CNY/USD
+       * rate — so anything else configured is about to stop being applied. Say which, because
+       * from here it is counted at par and the only clue is a total that looks low.
+       */
+      const dropped = Object.keys(parsed).filter(
+        (k) => /^[A-Z]{3}$/.test(k) && k !== 'USD' && k !== 'CNY',
+      );
+      if (dropped.length) {
+        console.log(
+          `[db] billing.rates also held ${dropped.join(', ')}; this deployment converts CNY and `
+            + 'USD only, so that spend is now counted at par. Price those models in one of the two.',
+        );
+      }
+
+      d.prepare("delete from settings where key = 'billing.rates'").run();
+      // Four places: 0.148148 inverts to 6.7500045, and nobody typed that. Checked *after*
+      // rounding — 0.00004 passes the test above and rounds to a flat zero, which would be
+      // written and logged as if it were the rate.
+      const rounded = carried === null ? 0 : Number(carried.toFixed(4));
+      if (rounded > 0) {
+        const value = String(rounded);
+        d.prepare(
+          `insert into settings (key, value, updated_at) values ('billing.cnyPerUsd', ?, ?)
+           on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+        ).run(value, new Date().toISOString());
+        console.log(`[db] exchange rate carried over as billing.cnyPerUsd = ${value}`);
+      } else {
+        console.log(
+          '[db] billing.rates held no usable rate between CNY and USD; billing.cnyPerUsd falls '
+            + 'back to its default. Check it in the console.',
+        );
+      }
+    }
+  }
+
+  if (from < 22) {
+    /*
+     * The catch-all, in the money the deployment settles in.
+     *
+     * `*` prices every model nobody has priced, and on the deployment this was written for it
+     * was still the ¥2/MTok row from when the whole seed was in yuan — while the deployment
+     * settles in USD. `ensureSeedRows()` could not fix it: it skips any model that already has
+     * a row, and `*` has one.
+     *
+     * It was survivable while reports printed each currency as it was charged, because such
+     * traffic showed up with a ¥ in front of it and an operator could see something was odd.
+     * Reports are one currency now, so the same traffic is converted at 6.75 and blends into
+     * the dollars invisibly — at roughly $0.30/MTok against the $5 the seed intends, which
+     * under-bills an unpriced model by a factor of seventeen and looks entirely normal.
+     *
+     * Corrected by **adding** a row, not rewriting one: `effective_from` is how this table
+     * keeps a bill costed at the price of its day, and rewriting would re-price usage that was
+     * already charged. Migration 13 says the same thing.
+     *
+     * Only a row still holding exactly what that seed wrote is corrected. An administrator who
+     * has put their own number in has answered this question, and a migration that overrode
+     * them would be a worse bug than the one it fixes — 13 and 15 both draw that line.
+     */
+    const settlement =
+      (d.prepare("select value from settings where key = 'billing.currency'").get() as
+        { value: string } | undefined)?.value || 'USD';
+    const [star] = d
+      .prepare(`select id, currency, price_input, price_cache_read, price_cache_write, price_output
+                  from model_pricing
+                 where model = '*' and provider_id is null
+                 order by effective_from desc limit 1`)
+      .all() as Array<{
+        id: number; currency: string; price_input: number;
+        price_cache_read: number; price_cache_write: number; price_output: number;
+      }>;
+
+    if (star && star.currency !== settlement.trim().toUpperCase()) {
+      // What the yuan-era seed wrote for '*' — the same four numbers as its `deepseek` row
+      const WROTE = { price_input: 2_000_000, price_cache_read: 200_000, price_cache_write: 2_000_000, price_output: 3_000_000 };
+      const untouched = (Object.keys(WROTE) as Array<keyof typeof WROTE>)
+        .every((k) => star[k] === WROTE[k]);
+
+      if (!untouched) {
+        console.log(
+          `[db] the '*' catch-all is priced in ${star.currency} and this deployment settles in `
+            + `${settlement}, but its numbers are not the ones the old seed wrote — so they are `
+            + 'somebody\'s decision and are left alone. Unpriced models are being converted at '
+            + 'the exchange rate; check the price table.',
+        );
+      } else if (settlement.trim().toUpperCase() !== 'USD') {
+        // The seed's catch-all is quoted in dollars; converting it here would need a rate and
+        // a date, and this process has the rate but no mandate to pick the date
+        console.log(
+          `[db] the '*' catch-all is in ${star.currency} and this deployment settles in `
+            + `${settlement}. The seed prices it at $5/$25 per MTok; enter that in your own `
+            + 'currency under Settings → Price table.',
+        );
+      } else {
+        const now = new Date().toISOString();
+        d.prepare(
+          `insert into model_pricing
+             (model, provider_id, currency, price_input, price_cache_read, price_cache_write,
+              price_output, effective_from, note, created_at)
+           values ('*', null, 'USD', 5000000, 500000, 6250000, 25000000, ?, ?, ?)`,
+        ).run(
+          now,
+          'The catch-all, used by any model without a price of its own. Re-priced in USD by '
+            + 'migration 22; the row above it is the yuan-era seed and still costs history.',
+          now,
+        );
+        console.log(
+          `[db] the '*' catch-all was ${star.currency} 2/MTok on a ${settlement} deployment; `
+            + 'added a USD row at $5/$25 per MTok, the seed\'s own. History keeps the old price.',
+        );
+      }
     }
   }
 

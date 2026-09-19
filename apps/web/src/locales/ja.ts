@@ -601,14 +601,14 @@ export const ja: Record<string, string> = {
   'Cache read': 'キャッシュ読取',
   'Cache write': 'キャッシュ書込',
   'Time of day': '時間帯',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'この表に複数の通貨（{list}）が混在しており、金額はそのまま合算されます。統一するまで、どの合計も意味を持ちません。',
   'in effect now': '現在適用中',
   'A price is a number written with a dot — 0.15, not 0,15': '価格は小数点にピリオドを使った数字で入力してください（0,15 ではなく 0.15）',
   'in use since {when}': '{when} から適用',
   'superseded, kept for past bills': '置き換え済み。過去の請求のために残しています',
-  'catch-all, and the unit quota is counted in': 'フォールバック行。課金トークンの単位でもあります',
+  'catch-all': 'フォールバック',
+  'in use': '適用中',
   'Add a price': '価格を追加',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '価格変更は新しい行の追加なので、過去の請求は当時の価格のままです。表全体で通貨は一つ — 金額は合算されます。',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': '価格変更は新しい行の追加なので、過去の請求は当時の価格のままです。各ベンダーは自社の通貨で価格設定され、レポートは「システム設定 → クォータ」のレートで換算します。',
 
   // Quota card: every window, capped or not
   'This quota month': '今回のクォータ月',
@@ -683,8 +683,8 @@ export const ja: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': '決済通貨',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '金額ベースの上限を数える通貨。価格表は各ベンダーが公表する通貨のままで、上限が単一の数値を要するときだけこれに換算されます。',
-  'Exchange rates': '為替レート',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON、通貨 → 1単位が決済通貨いくらに当たるか。例: CNY で決済するなら {"USD": 6.75}。上限が単一の数値を要する場合にのみ使われます。',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': 'すべてのレポートと上限を数える通貨。価格表は各ベンダーが公表する通貨のままで、画面に出す時にこれへ換算します。',
+  'CNY per USD': '1 USD あたりの CNY',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': '1 ドルが何元かの値、例えば 7.1。システム内で唯一の為替レートで、各ベンダーの請求額を決済通貨に換算します。',
   'Cache written': 'キャッシュ書き込み',
 };

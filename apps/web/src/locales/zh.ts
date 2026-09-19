@@ -601,14 +601,14 @@ export const zh: Record<string, string> = {
   'Cache read': '缓存读',
   'Cache write': '缓存写',
   'Time of day': '时段',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': '这张表里有不止一种货币（{list}），而金额是直接相加的。在它们统一之前，所有总计都没有意义。',
   'in effect now': '当前生效',
   'A price is a number written with a dot — 0.15, not 0,15': '价格要写成用点的数字 —— 0.15,不是 0,15',
   'in use since {when}': '自 {when} 起生效',
   'superseded, kept for past bills': '已被取代,保留用于历史账单',
-  'catch-all, and the unit quota is counted in': '兜底行，也是计费 token 的单位',
+  'catch-all': '兜底',
+  'in use': '生效中',
   'Add a price': '添加价格',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': '改价是加一行新的，所以过去的账单保留当时的价格。整张表只能用一种币种——金额是直接相加的。',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': '改价是加一行新的，过去的账单保留当时的价格。各家按自己的币种定价；报表按「系统设置 → 配额」里的汇率折算。',
 
   // Quota card: every window, capped or not
   'This quota month': '本配额月',
@@ -683,8 +683,8 @@ export const zh: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': '结算币种',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': '按金额限额时用哪种币计。价格表里各家保持厂商自己发布的币种，只有在限额需要一个数时才换算成它。',
-  'Exchange rates': '汇率',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON，币种 → 一单位折合多少结算币，例如结算用 CNY 时写 {"USD": 6.75}。只在限额必须折成一个数时使用。',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': '所有报表和额度都按这个币种计。价格表里各家保持厂商自己发布的币种，只在送到界面时换算成它。',
+  'CNY per USD': '1 美元 = 多少人民币',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': '一美元折合多少人民币，例如 7.1。全系统唯一的汇率，各家厂商收的钱都按它折成结算币种。',
   'Cache written': '缓存写入',
 };

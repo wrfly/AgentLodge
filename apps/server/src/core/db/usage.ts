@@ -1,5 +1,11 @@
 import { all, get, localDay, nowIso, run, tx } from './index.js';
-import { getString, quotaAnchor } from './settings.js';
+import {
+  getNumberFresh,
+  getString,
+  getStringFresh,
+  quotaAnchor,
+  settingsGeneration,
+} from './settings.js';
 import {
   periodEndAt,
   periodStartAt,
@@ -188,33 +194,84 @@ function repriceMark(value?: string): string {
 /* ---------------- Aggregates ---------------- */
 
 /**
- * Money, per currency, in micro-units.
+ * Money, per currency, in micro-units — what was actually charged, before any conversion.
  *
- * Never one number. Vendors price in their own currency — Anthropic in dollars, DeepSeek in
- * yuan — and the price table holds each at its own published list so an invoice can be
- * checked against it line by line. Adding those together would produce a figure nothing in
- * the world corresponds to, so they are kept apart all the way to the screen, and the
- * interface prints "¥12.34 + $5.67" rather than inventing a rate to hide one of them.
+ * Vendors price in their own currency: Anthropic in dollars, DeepSeek in yuan, and the price
+ * table holds each at its own published list so an invoice can be checked against it line by
+ * line. A turn is recorded in the money it was charged in and stays that way in the database.
+ *
+ * This is the raw form. `settle()` is what a report shows — one currency, at the one
+ * configured rate — and this map is what a reader can open to see where that figure came
+ * from. Reports used to print the map itself, "¥12.34 + $5.67", which is honest and
+ * unreadable: nobody can tell at a glance whether it is more than last month.
  *
  * A currency with nothing spent in it is absent rather than zero, so `Object.keys` is the
  * list of currencies actually used in whatever was asked about.
  */
 export type Money = Record<string, number>;
 
-/** The currency a single money figure — a ceiling, a quota bar — is expressed in */
-export const settlementCurrency = (): string => getString('billing.currency', 'USD');
+/**
+ * The currency every report, and every ceiling, is expressed in.
+ *
+ * Upper-cased because the setting is free text: `settlementRates()` compares it against
+ * currency codes, and a deployment that typed `cny` would have had its yuan spend divided by
+ * the rate and its dollars counted at par — every figure wrong, nothing logged.
+ */
+export const settlementCurrency = (): string => billing().currency;
+
+/** How many yuan one dollar is worth. The only exchange rate in the system. */
+export const cnyPerUsd = (): number => billing().rate;
+
+/**
+ * The currency and the rate, read past the settings cache, at most once a second.
+ *
+ * **Past the cache**, because the gateway is a second container over the same database and
+ * `settings.load()` is invalidated only by writes in its own process. An administrator
+ * correcting the rate in the console would have moved every report at once and left the gate
+ * — the thing that actually refuses turns — enforcing at the rate it booted with, until
+ * somebody restarted it. `settle()` promises the correction applies from the moment it is
+ * set; that has to be true of the gate too. Caught in review.
+ *
+ * **At most once a second**, because `settle()` runs once per row of every breakdown, and two
+ * uncached reads per row would put a few hundred SQLite round-trips behind one page. A second
+ * of staleness on an exchange rate is not a number anybody can perceive; a restart-shaped one
+ * is. The window is short enough that the two processes cannot disagree for long, and long
+ * enough that a report costs two reads rather than two per row.
+ *
+ * A write in *this* process skips the wait entirely — `settingsGeneration()` moves on every
+ * local save — so the console shows the new rate on the render after the one that saved it.
+ * The second is only ever the other container's delay.
+ */
+let billingAt = 0;
+let billingGen = -1;
+let billingCache = { currency: 'USD', rate: 7.1 };
+
+function billing(): { currency: string; rate: number } {
+  const now = Date.now();
+  const gen = settingsGeneration();
+  if (gen === billingGen && now - billingAt < 1_000) return billingCache;
+  billingGen = gen;
+  const currency = (getStringFresh('billing.currency') || 'USD').trim().toUpperCase();
+  const raw = getNumberFresh('billing.cnyPerUsd');
+  const rate = raw !== undefined && Number.isFinite(raw) && raw > 0 ? raw : 7.1;
+  billingCache = { currency, rate };
+  billingAt = now;
+  return billingCache;
+}
+
+
 
 /**
  * Collapse money into one number, in the settlement currency.
  *
- * Only for the places that genuinely cannot show two: a ceiling is one number, so comparing
- * spend against it is one number too. Everything that reports rather than enforces keeps the
- * `Money` map and prints both.
+ * Applied on the way out, to old figures as well as new — nothing stored is rewritten. So a
+ * rate typed wrong is corrected in one place and every report is right again, rather than
+ * leaving a month of bad numbers behind that only a script could fix. The cost of that is
+ * that "last month's total" is not a frozen number; with one rate that moves rarely and
+ * visibly, that is the better trade.
  *
- * The rates live in one setting because they are one decision with a date on it, and they
- * apply from the moment they are set — no stored figure is restated when a rate moves, so
- * history stays what it was. A currency with no rate is counted at par and said out loud,
- * which is wrong but visible; silently dropping it would let spend vanish from a ceiling.
+ * A currency the rate cannot reach is counted at par and said out loud — wrong, but visible.
+ * Silently dropping it would let spend vanish out of a total and out of a ceiling.
  */
 export function settle(m: Money): number {
   const to = settlementCurrency();
@@ -233,19 +290,26 @@ export function settle(m: Money): number {
   return Math.round(out);
 }
 
-/** `{"USD": 6.75}` when settling in CNY: how many settlement units one unit of that currency is */
+/**
+ * That one rate, as the multipliers `settle()` wants: currency → settlement units per unit.
+ *
+ * Two vendors and two currencies, so there is one number and two directions to read it in.
+ * It used to be a JSON object an operator typed by hand, which was more general than any
+ * deployment needed and invited the two mistakes this shape cannot make: an entry for the
+ * settlement currency itself, which is dead, and a rate written upside down.
+ *
+ * **It relates CNY and USD, and claims nothing about anything else.** Settling in a third
+ * currency returns no rates at all, so `settle()` counts both sides at par and says so —
+ * wrong, and visible. An earlier version returned the CNY multiplier for any settlement
+ * currency that was not exactly 'CNY', which converted yuan at the dollar rate and labelled
+ * the result €, silently, because a rate *was* defined. Caught in review.
+ */
 export function settlementRates(): Record<string, number> {
-  try {
-    const raw = JSON.parse(getString('billing.rates', '{}')) as Record<string, unknown>;
-    const out: Record<string, number> = {};
-    for (const [k, v] of Object.entries(raw)) {
-      const n = Number(v);
-      if (Number.isFinite(n) && n > 0) out[k] = n;
-    }
-    return out;
-  } catch {
-    return {};
-  }
+  const to = settlementCurrency();
+  const rate = cnyPerUsd();
+  if (to === 'CNY') return { USD: rate };
+  if (to === 'USD') return { CNY: 1 / rate };
+  return {};
 }
 
 const warned = new Set<string>();
@@ -253,8 +317,9 @@ function warnMissingRate(from: string, to: string): void {
   if (warned.has(from)) return;
   warned.add(from);
   console.warn(
-    `[usage] no billing.rates entry for ${from} → ${to}; it is being counted at par against ` +
-      'ceilings, which under-charges. Set one in the console.',
+    `[usage] no rate from ${from} to ${to}; it is being counted at par, which under-charges. ` +
+      'billing.cnyPerUsd relates CNY and USD only — price that model in one of them, or the ' +
+      'figures that include it are wrong.',
   );
 }
 
@@ -286,11 +351,12 @@ export interface Totals {
   /** Cost from the price table, in micro-units, per currency */
   cost: Money;
   /**
-   * The same money collapsed into the settlement currency at the configured rates.
+   * The same money collapsed into the settlement currency at the one configured rate.
    *
-   * Only meaningful where a single number is unavoidable — a quota bar, a ceiling, a share.
-   * Anything that reports rather than enforces should read `cost` and print every currency,
-   * because this one hides which money was actually spent and goes stale when a rate moves.
+   * **This is what a screen shows** — a report, a quota bar, a ceiling, a share, all of it.
+   * `cost` beside it is what was actually charged, and belongs in the hover that explains
+   * this figure rather than in place of it. The console has one helper, `money()`, that
+   * returns both, so no surface can render the converted number with no way to see behind it.
    */
   costSettled: number;
   turns: number;

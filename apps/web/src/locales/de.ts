@@ -574,14 +574,14 @@ export const de: Record<string, string> = {
   'Cache read': 'Cache-Lesen',
   'Cache write': 'Cache-Schreiben',
   'Time of day': 'Tageszeit',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'Diese Tabelle enthält mehr als eine Währung ({list}), und die Beträge werden addiert. Bis sie übereinstimmen, ist jede Summe bedeutungslos.',
   'in effect now': 'gilt gerade',
   'A price is a number written with a dot — 0.15, not 0,15': 'Ein Preis ist eine Zahl mit Punkt — 0.15, nicht 0,15',
   'in use since {when}': 'in Kraft seit {when}',
   'superseded, kept for past bills': 'ersetzt, für frühere Abrechnungen aufbewahrt',
-  'catch-all, and the unit quota is counted in': 'Auffangzeile, und die Einheit abrechenbarer Token',
+  'catch-all': 'Auffangregel',
+  'in use': 'in Kraft',
   'Add a price': 'Preis hinzufügen',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Eine Preisänderung ist eine neue Zeile, damit alte Rechnungen ihren Preis behalten. Eine Währung für die ganze Tabelle — die Beträge werden summiert.',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': 'Eine Preisänderung ist eine neue Zeile, alte Rechnungen behalten den Preis ihrer Zeit. Jeder Anbieter wird in seiner eigenen Währung bepreist; Berichte rechnen mit dem Kurs unter Einstellungen → Kontingent um.',
 
   // Quota card: every window, capped or not
   'This quota month': 'Dieser Kontingentmonat',
@@ -656,8 +656,8 @@ export const de: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': 'Abrechnungswährung',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'Worin kostenbasierte Obergrenzen gezählt werden. Preise bleiben in der Währung, die der jeweilige Anbieter veröffentlicht; umgerechnet wird nur, wenn eine Grenze eine einzelne Zahl braucht.',
-  'Exchange rates': 'Wechselkurse',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, Währung → wie viele Einheiten der Abrechnungswährung eine Einheit wert ist, z. B. {"USD": 6.75} bei Abrechnung in CNY. Nur dort verwendet, wo eine Grenze eine einzelne Zahl erzwingt.',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': 'Worin jeder Bericht und jedes Kontingent gezählt wird. Preise bleiben in der Währung des jeweiligen Anbieters; hierhin werden sie auf dem Weg zum Bildschirm umgerechnet.',
+  'CNY per USD': 'CNY je USD',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': 'Wie viele Yuan ein Dollar wert ist, z. B. 7,1. Der einzige Wechselkurs im System; er rechnet die Rechnungen der Anbieter in die Abrechnungswährung um.',
   'Cache written': 'Cache geschrieben',
 };

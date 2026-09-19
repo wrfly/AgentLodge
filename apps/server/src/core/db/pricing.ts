@@ -458,26 +458,37 @@ export function seedDefaults(): void {
 /**
  * A starting rate between the currencies the seed prices in, if there is none.
  *
- * It has to exist the moment a table holds two currencies: quota counts what a turn cost, and
- * without a rate a dollar of Opus and a yuan of DeepSeek are counted as the same money —
- * which under-charges the dollar side by most of its value and is only visible as a quota
- * that never bites.
+ * It has to exist the moment a table holds two currencies. Every figure on every report is
+ * converted through it, and so is every ceiling — without one, a dollar of Opus and a yuan of
+ * DeepSeek count as the same money, which under-states the yuan side by most of its value and
+ * shows up only as totals that look implausibly low.
  *
  * Derived from the vendors' own two lists rather than a market quote: DeepSeek publishes
  * flash at $0.15 and ¥1 per MTok for the same tokens, which is the rate it is willing to be
- * paid at. Both directions are written so the same map serves either settlement currency —
- * only the entry for a currency that is *not* the settlement one is ever read.
+ * paid at. One number, read as "how many yuan one dollar is worth", which is the direction
+ * anybody would say it out loud and the direction the console asks for.
  *
  * Never overwritten. A rate is a decision with a date on it, and an operator who has set one
  * has made that decision.
  */
 function ensureRates(): void {
-  const current = getString('billing.rates', '').trim();
-  if (current && current !== '{}') return;
-  setSetting('billing.rates', JSON.stringify({ USD: 6.75, CNY: Number((1 / 6.75).toFixed(6)) }));
+  /*
+   * The **stored row**, not the resolved value. `getString` falls through to the spec's
+   * default, and this setting has one — so asking it whether a rate is set is asking whether
+   * a default exists, which it always does, and this function returned early every time.
+   * Caught in review; the seed never ran and every install quietly billed at the spec's 7.1
+   * with none of the console notice below to say so.
+   *
+   * The old JSON version dodged this by comparing against its own default of '{}'. Reading
+   * the row is the version that does not need to know what the default happens to be.
+   */
+  if (get<{ value: string }>("select value from settings where key = 'billing.cnyPerUsd'")?.value) {
+    return;
+  }
+  setSetting('billing.cnyPerUsd', '6.75');
   console.log(
     '[pricing] no exchange rate was set and the table now prices in two currencies; ' +
-      'seeded USD↔CNY at 6.75 from the vendors\' own lists. Check it in the console.',
+      "seeded 6.75 CNY per USD from the vendors' own lists. Check it in the console.",
   );
 }
 

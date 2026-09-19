@@ -6,8 +6,8 @@ import { useChat } from '../store/chat';
 import { useAgents } from '../store/agents';
 import { AGENTS } from '../lib/route';
 import type { AgentId } from '../lib/protocol';
-import { api, fmtCost, type Money,
-  type UsageTotals } from '../lib/api';
+import { api, type Money, type UsageTotals } from '../lib/api';
+import { Money as MoneyFigure, MoneyCell } from './Money';
 import { Message } from './Message';
 import { Composer } from './Composer';
 import { FilesPanel } from './FilesPanel';
@@ -105,10 +105,15 @@ function SessionTotals() {
   const input = sum((r) => r.inputTokens);
   const cache = sum((r) => r.cacheReadTokens + r.cacheCreationTokens);
   const output = sum((r) => r.outputTokens);
-  // Per currency, like everywhere else money is shown: a conversation can touch two
-  // upstreams that bill in different money, and adding those is a number nothing matches
+  /*
+   * Both halves, because this header adds its own rows up rather than being handed a total.
+   * `cost` is what each vendor charged, kept apart; `costSettled` is the figure shown. Summed
+   * per row rather than settled once at the end — the two differ only by the rounding inside
+   * each row, and this way the header agrees with the table under it line by line.
+   */
   const cost: Money = {};
   for (const r of rows) for (const [c, v] of Object.entries(r.cost)) cost[c] = (cost[c] ?? 0) + v;
+  const costSettled = sum((r) => r.costSettled);
   const currency = data?.currency ?? 'USD';
 
   return (
@@ -124,7 +129,7 @@ function SessionTotals() {
         <span>↑{fmtTokens(input)}</span>
         <span>⛁{fmtTokens(cache)}</span>
         <span>↓{fmtTokens(output)}</span>
-        <span>{fmtCost(cost, currency)}</span>
+        <MoneyFigure totals={{ cost, costSettled }} currency={currency} />
       </button>
 
       {open && (
@@ -150,7 +155,7 @@ function SessionTotals() {
                     {fmtTokens(r.cacheReadTokens + r.cacheCreationTokens)}
                   </td>
                   <td className="py-1.5 text-right font-mono tabular-nums">{fmtTokens(r.outputTokens)}</td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">{fmtCost(r.cost, currency)}</td>
+                  <MoneyCell totals={r} currency={currency} className="py-1.5" />
                 </tr>
               ))}
             </tbody>

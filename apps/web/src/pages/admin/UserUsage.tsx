@@ -20,7 +20,6 @@ import { ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import {
   admin,
-  fmtCost,
   type PlatformPreset,
   type UserAgentUsage,
   type UsersUsage,
@@ -29,6 +28,7 @@ import { Banner, Button, Card, Empty, Spinner } from '../../components/ui';
 import { AgentModelTable } from '../../components/AgentModelTable';
 import { TokenCells, TokenHeaders, TokenSplit } from '../../components/TokenSplit';
 import { useT } from '../../lib/i18n';
+import { Money, MoneyCell } from '../../components/Money';
 import { PLATFORM_PRESETS } from './shared';
 
 /**
@@ -127,9 +127,7 @@ export function UserUsage() {
       ) : (
         <>
           <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="font-mono text-[17px] tabular-nums">
-              {fmtCost(data.totals.cost, data.currency)}
-            </span>
+            <Money totals={data.totals} currency={data.currency} className="text-[17px]" />
             <TokenSplit totals={data.totals} />
             <span className="text-[12px] text-faint">
               {t('{n} turns', { n: data.totals.turns })} · {t(data.range.label)}
@@ -182,9 +180,7 @@ export function UserUsage() {
                           {/* Tokens and money both: two models differ by a factor of ten per
                               token, so a column of counts on its own does not say where the
                               budget went */}
-                          <td className="py-1.5 text-right font-mono tabular-nums text-muted">
-                            {fmtCost(u.cost, data.currency)}
-                          </td>
+                          <MoneyCell totals={u} currency={data.currency} className="py-1.5 text-muted" />
                         </tr>
                         {shown && (
                           <tr className="border-b border-line bg-bubble/40">

@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import clsx from 'clsx';
-import { fmtCost,
-  fmtMoney, me, type QuotaScope, type RangePreset, type SeriesPoint, type UsageReport } from '../lib/api';
+import {
+  fmtMoney,
+  me,
+  money,
+  type QuotaScope,
+  type RangePreset,
+  type SeriesPoint,
+  type UsageReport,
+} from '../lib/api';
 import { navigate } from '../lib/route';
 import {
   Banner,
@@ -19,6 +26,7 @@ import {
 import { AgentModelTable } from '../components/AgentModelTable';
 import { useQuota } from '../store/quota';
 import { useT } from '../lib/i18n';
+import { Money, MoneyCell, statMoney } from '../components/Money';
 
 const PRESETS: Array<{ id: RangePreset; label: string }> = [
   // First, because it is the window that refuses first
@@ -93,7 +101,7 @@ function Chart({
               </div>
               <div className="font-mono text-muted">
                 {t('{cost} · {turns} turns · {calls} calls', {
-                  cost: fmtCost(d.cost, currency),
+                  cost: money(d, currency).text,
                   turns: d.turns,
                   calls: d.calls,
                 })}
@@ -303,17 +311,17 @@ export function UsagePage() {
                 same figure printed twice in every tile. */}
             <Stat
               label={t('Today')}
-              value={fmtCost(data.quick.today.cost, data.quota.currency)}
+              {...statMoney(data.quick.today, data.quota.currency)}
               sub={t('{n} turns', { n: data.quick.today.turns })}
             />
             <Stat
               label={t('This month')}
-              value={fmtCost(data.quick.month.cost, data.quota.currency)}
+              {...statMoney(data.quick.month, data.quota.currency)}
               sub={t('{n} turns', { n: data.quick.month.turns })}
             />
             <Stat
               label={t('All time')}
-              value={fmtCost(data.quick.allTime.cost, data.quota.currency)}
+              {...statMoney(data.quick.allTime, data.quota.currency)}
               sub={t('{n} turns', { n: data.quick.allTime.turns })}
             />
           </div>
@@ -371,9 +379,11 @@ export function UsagePage() {
 
             <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-line pt-3">
               <span className="text-[13px] font-medium">{t(data.range.label)}</span>
-              <span className="font-mono text-[17px] font-semibold text-accent tabular-nums">
-                {fmtCost(data.totals.cost, data.quota.currency)}
-              </span>
+              <Money
+                totals={data.totals}
+                currency={data.quota.currency}
+                className="text-[17px] font-semibold text-accent"
+              />
               {/* Cache is read plus creation, the same split the table below and the chat
                   header use. It used to quote the read alone, so the two cards on this page
                   named the same thing with different numbers and neither mentioned the
@@ -441,9 +451,7 @@ export function UsagePage() {
                           <td className="py-2 font-mono text-[12px] text-muted">{r.kind || '—'}</td>
                           <td className="py-2 font-mono text-[12px] text-muted">{r.credentialId || '—'}</td>
                           <td className="py-2 text-right tabular-nums">{r.turns}</td>
-                          <td className="py-2 text-right font-mono tabular-nums">
-                            {fmtCost(r.cost, data.quota.currency)}
-                          </td>
+                          <MoneyCell totals={r} currency={data.quota.currency} className="py-2" />
                         </tr>
                       );
                     })}
@@ -479,9 +487,11 @@ export function UsagePage() {
                   >
                     <span className="w-12 shrink-0 font-mono text-[11px] text-faint">{c.agent}</span>
                     <span className="min-w-0 flex-1 truncate text-[13px]">{c.title}</span>
-                    <span className="shrink-0 font-mono text-[12px] text-muted tabular-nums">
-                      {fmtCost(c.cost, data.quota.currency)}
-                    </span>
+                    <Money
+                      totals={c}
+                      currency={data.quota.currency}
+                      className="shrink-0 text-[12px] text-muted"
+                    />
                   </button>
                 ))}
               </div>

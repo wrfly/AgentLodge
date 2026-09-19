@@ -41,6 +41,21 @@ function ok(label: string, cond: boolean, detail = ''): void {
   }
 }
 
+/**
+ * The tsx binary, found by walking up rather than by counting `..` segments.
+ *
+ * A worktree lives at a different depth from the checkout it came from and installs no
+ * node_modules of its own, so a fixed relative path resolves to nothing there — ENOENT from
+ * spawnSync, in a test whose subject has nothing to do with paths.
+ */
+function tsxPath(): string {
+  for (let dir = here; dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    const candidate = path.join(dir, 'node_modules/.bin/tsx');
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error(`tsx not found in any node_modules above ${here}`);
+}
+
 const source = fs.readFileSync(path.join(here, 'index.ts'), 'utf8');
 const added = [...source.matchAll(/alter table (\w+) add column (\w+)/g)].map((m) => ({
   table: m[1]!,
@@ -124,6 +139,16 @@ const added = [...source.matchAll(/alter table (\w+) add column (\w+)/g)].map((m
        '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z'),
       ('deepseek-v4-pro', 'USD', 660000, 22000, 660000, 1980000,
        '2026-09-15T18:35:56.487Z', '2026-09-15T18:35:56.487Z');
+  `);
+  /*
+   * The rate as the deployment this was written for actually held it: settling in USD, with a
+   * live CNY entry holding dollars-per-yuan and a dead USD entry left over from when it
+   * settled the other way. 21 has to read the live one and invert it.
+   */
+  old.exec(`
+    insert into settings (key, value, updated_at) values
+      ('billing.currency', 'USD', '2026-01-01T00:00:00.000Z'),
+      ('billing.rates', '{"USD":6.75,"CNY":0.148148}', '2026-01-01T00:00:00.000Z');
   `);
   old.exec(`
     insert into users (id, email, username, password_hash, role, status, created_at)
@@ -241,6 +266,20 @@ if (db) {
     ok('the catch-all is left alone', star.n >= 1, String(star.n));
   }
 
+  console.log('\n=== And the exchange rate is one number, the way it is said out loud ===');
+  {
+    const get = (key: string) =>
+      (db!.prepare('select value from settings where key = ?').get(key) as { value: string } | undefined)
+        ?.value;
+    ok('the JSON map is gone', get('billing.rates') === undefined, String(get('billing.rates')));
+    /*
+     * 0.148148 dollars per yuan inverts to 6.7500045, and nobody typed that — it is rounded
+     * back to the number somebody would recognise on the settings page.
+     */
+    ok('and the live entry came across, right way up',
+      get('billing.cnyPerUsd') === '6.75', String(get('billing.cnyPerUsd')));
+  }
+
   console.log('\n=== The version is stamped, so the next start does none of this ===');
   {
     const [row] = db.prepare('pragma user_version').all() as Array<{ user_version: number }>;
@@ -304,7 +343,7 @@ console.log('\n=== A database with no catch-all to convert against ===');
   const entry = path.join(box2, 'run.ts');
   fs.writeFileSync(entry, `import { initDb } from ${JSON.stringify(path.join(here, 'index.ts'))};\ninitDb();\n`);
   const out = execFileSync(
-    path.join(here, '../../../../../node_modules/.bin/tsx'),
+    tsxPath(),
     [entry],
     {
       encoding: 'utf8',
@@ -371,7 +410,7 @@ console.log('\n=== Two processes migrating the same file ===');
   const { execFile } = await import('node:child_process');
   const entry = path.join(box3, 'run.ts');
   fs.writeFileSync(entry, `import { initDb } from ${JSON.stringify(path.join(here, 'index.ts'))};\ninitDb();\n`);
-  const tsx = path.join(here, '../../../../../node_modules/.bin/tsx');
+  const tsx = tsxPath();
   const start = () =>
     new Promise<{ code: number; err: string }>((resolve) => {
       execFile(

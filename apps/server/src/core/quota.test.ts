@@ -297,7 +297,8 @@ console.log('\n=== what a turn typically costs, for saying the remainder in turn
    */
   const { setSetting } = await import('./db/settings.js');
   setSetting('billing.currency', 'USD');
-  setSetting('billing.rates', JSON.stringify({ CNY: 0.5 }));
+  // 2 yuan to the dollar, so the yuan half of the split turn below is worth half its figure
+  setSetting('billing.cnyPerUsd', '2');
   const split = (turnId: string, micro: number, currency: string) =>
     run(
       `insert into usage_records

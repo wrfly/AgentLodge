@@ -574,14 +574,14 @@ export const fr: Record<string, string> = {
   'Cache read': 'Lecture cache',
   'Cache write': 'Écriture cache',
   'Time of day': 'Heure de la journée',
-  'This table holds more than one currency ({list}), and the amounts are summed. Every total is meaningless until they agree.': 'Cette table contient plus d’une devise ({list}), et les montants sont additionnés. Tant qu’elles ne concordent pas, chaque total est dénué de sens.',
   'in effect now': 'en vigueur actuellement',
   'A price is a number written with a dot — 0.15, not 0,15': 'Un prix est un nombre écrit avec un point — 0.15, pas 0,15',
   'in use since {when}': 'en vigueur depuis {when}',
   'superseded, kept for past bills': 'remplacée, conservée pour les factures passées',
-  'catch-all, and the unit quota is counted in': 'ligne par défaut, et unité des tokens facturés',
+  'catch-all': 'valeur par défaut',
+  'in use': 'en vigueur',
   'Add a price': 'Ajouter un prix',
-  'A price change is a new row, so past bills keep the price of their time. One currency for the whole table — the amounts are summed.': 'Un changement de prix est une nouvelle ligne, si bien que les factures passées gardent le prix de leur époque. Une seule devise pour toute la table : les montants sont additionnés.',
+  'A price change is a new row, so past bills keep the price of their time. Each vendor is priced in its own currency; reports convert at the rate under Settings → Quota.': 'Un changement de prix est une nouvelle ligne : les factures passées gardent le prix de leur époque. Chaque fournisseur est tarifé dans sa propre devise ; les rapports convertissent au taux défini dans Paramètres → Quota.',
 
   // Quota card: every window, capped or not
   'This quota month': 'Ce mois de quota',
@@ -656,8 +656,8 @@ export const fr: Record<string, string> = {
 
   // Settlement, for the places a limit forces a single number
   'Settlement currency': 'Devise de règlement',
-  'What cost-based ceilings are counted in. Prices stay in the currency each vendor publishes; this is what they are converted to when a limit needs one number.': 'Devise dans laquelle sont comptés les plafonds en argent. Les prix restent dans la devise publiée par chaque fournisseur ; la conversion n\'a lieu que lorsqu\'un plafond exige un seul nombre.',
-  'Exchange rates': 'Taux de change',
-  'JSON, currency → how many settlement units one of it is worth, e.g. {"USD": 6.75} when settling in CNY. Only used where a limit forces a single number.': 'JSON, devise → combien d\'unités de règlement vaut une unité, par exemple {"USD": 6.75} pour un règlement en CNY. Utilisé uniquement là où un plafond impose un seul nombre.',
+  'What every report and every ceiling is counted in. Prices stay in the currency each vendor publishes; this is what they are converted to on the way to the screen.': 'Ce dans quoi chaque rapport et chaque plafond sont comptés. Les prix restent dans la devise publiée par chaque fournisseur ; c\'est vers ceci qu\'ils sont convertis en arrivant à l\'écran.',
+  'CNY per USD': 'CNY par USD',
+  'How many yuan one dollar is worth, e.g. 7.1. The only exchange rate in the system; it converts what each vendor charges into the settlement currency.': 'Combien de yuans vaut un dollar, par exemple 7,1. Le seul taux de change du système ; il convertit ce que facture chaque fournisseur dans la devise de règlement.',
   'Cache written': 'Cache écrit',
 };
