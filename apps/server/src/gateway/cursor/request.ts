@@ -23,6 +23,14 @@ const MODE = ENUMS['agent.v1.AgentMode'] ?? {};
 /** A turn that can call tools, versus one that can only answer */
 const MODE_AGENT = MODE['AGENT'] ?? 1;
 const MODE_ASK = MODE['ASK'] ?? 2;
+const MODE_PLAN = MODE['PLAN'] ?? 3;
+
+/**
+ * Claude Code writes this into the system prompt when Shift+Tab is on Plan. It is the
+ * one marker that survives the Messages → Chat translation; there is no permission-mode
+ * header on the request.
+ */
+const PLAN_ACTIVE = /Plan mode is active/;
 
 export interface ChatPart {
   type?: string;
@@ -46,6 +54,36 @@ export interface ChatRequest {
   model?: string;
   messages?: ChatMessage[];
   tools?: { function?: { name?: string; description?: string; parameters?: unknown } }[];
+}
+
+function toolName(name: string): string {
+  return name.replace(/^client__/i, '').replace(/[_-]/g, '').toLowerCase();
+}
+
+/**
+ * Cursor's AgentMode for this request, read off what Claude Code actually sends.
+ *
+ * Claude Code's Shift+Tab cycle is default / acceptEdits / plan / auto / … — a permission
+ * toggle, not a wire field. The API request carries no `permissionMode`. What it does carry:
+ *
+ *   PLAN   the system prompt contains "Plan mode is active", or the tool list has
+ *          ExitPlanMode and not EnterPlanMode (the pair Claude Code swaps when cycling)
+ *   AGENT  the caller declared tools and is not planning — default, auto, acceptEdits,
+ *          bypassPermissions all land here; Cursor has no counterpart for those
+ *   ASK    no tools. A /model probe or a title-generator has no loop, so this rather
+ *          than AGENT: otherwise Cursor asks to read a file and waits forever
+ *
+ * Thinking (the model's) is a `requested_model.parameters` entry, not a mode.
+ */
+export function agentMode(body: ChatRequest, system = '', prompt = ''): { mode: number; delegate: boolean } {
+  const names = (body.tools ?? []).map((t) => toolName(t.function?.name ?? '')).filter(Boolean);
+  const planning =
+    PLAN_ACTIVE.test(system) ||
+    PLAN_ACTIVE.test(prompt) ||
+    (names.some((n) => n.includes('exitplanmode')) && !names.some((n) => n.includes('enterplanmode')));
+  const delegate = names.length > 0;
+  if (planning) return { mode: MODE_PLAN, delegate };
+  return { mode: delegate ? MODE_AGENT : MODE_ASK, delegate };
 }
 
 const textOf = (content: ChatMessage['content']): string => {
@@ -258,11 +296,12 @@ export function buildRunRequest(body: ChatRequest, opts: BuildOptions): { reques
     .filter((f): f is NonNullable<typeof f> => Boolean(f?.name));
   const definitions = toDefinitions(tools);
   /*
-   * A caller with no tools has no loop to run one in, so this turn is asked rather than
-   * agentic. The alternative was an agent mode turn that asks a client with nothing to answer
-   * with to read a file, and then waits.
+   * Mode is read off the whole request, not the continuation slice. A later turn of a
+   * conversation sends only what is new as the prompt, and that slice no longer has the
+   * system block Claude Code puts "Plan mode is active" in — see agentMode().
    */
-  const delegate = definitions.length > 0;
+  const whole = flatten(body.messages ?? []);
+  const { mode, delegate } = agentMode(body, whole.system, whole.prompt);
   const conversationId = opts.conversationId || crypto.randomUUID();
   const model = opts.model;
 
@@ -282,7 +321,7 @@ export function buildRunRequest(body: ChatRequest, opts: BuildOptions): { reques
               text: withSystem(prompt, system),
               message_id: crypto.randomUUID(),
               selected_context: new Uint8Array(0),
-              mode: delegate ? MODE_AGENT : MODE_ASK,
+              mode,
             },
           },
         },

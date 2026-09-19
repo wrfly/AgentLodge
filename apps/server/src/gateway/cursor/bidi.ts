@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { decode, encode, type Message } from './codec.js';
 import { envelope, FrameReader, type Frame } from './connect.js';
+import { needsHttp2, postHttp2 } from './h2.js';
 
 /**
  * A two-way conversation with Cursor's agent, over one-way requests.
@@ -14,15 +15,19 @@ import { envelope, FrameReader, type Frame } from './connect.js';
  * proxy: the same turn can be driven with two ordinary calls that share an id.
  *
  *   BidiAppend  unary, to the API host. One `AgentClientMessage` per call, under a sequence
- *               number, so the server can put them back in order
+ *               number, so the server can put them back in order. HTTP/1.1 is fine here.
  *   RunSSE      server-streaming, to the agent host. Takes nothing but the id and answers
- *               with the whole turn
+ *               with the whole turn. The host is HTTP/2 only — `fetch` cannot speak it, so
+ *               that half goes through `postHttp2`. A local test or the audit proxy is still
+ *               HTTP/1.1, and stays on `fetch`.
  *
  * The id is a uuid this end makes up and puts on both, `x-request-id` included — which is
  * where Cursor's own client reads it from, so that is where it is sent from here too.
  *
  * Neither call is anything but a POST with a protobuf body, so the audit proxy, the egress
- * gate and the abort signal all work the way they do for every other upstream.
+ * gate and the abort signal all work the way they do for every other upstream. The proxy
+ * has to speak HTTP/2 on the way out (`PROXY_HTTP2=1`) or the agent host will refuse it
+ * the same way `fetch` did.
  */
 
 /** The bidirectional RPC, and the server-streaming stand-in that carries it */
@@ -156,17 +161,32 @@ export class BidiStream {
     const out = this.opts.egress(`${this.opts.agentBase}${RUN_SSE_RPC}`);
     if (!out) throw new BidiError('This upstream has no audit proxy configured, so the request was refused', 503);
 
+    const headers = {
+      ...this.opts.headers(this.requestId),
+      'x-original-request-id': this.opts.turnId,
+      'content-type': 'application/connect+proto',
+      'connect-accept-encoding': 'gzip',
+      ...out.headers,
+    };
+    // A server-streaming call still frames its one request message
+    const body = envelope(encode(REQUEST_ID, { request_id: this.requestId }));
+
+    if (needsHttp2(out.url)) {
+      try {
+        return await postHttp2(out.url, { headers, body, signal: this.opts.signal });
+      } catch (e) {
+        if (this.opts.signal.aborted) throw e;
+        throw new BidiError(
+          `Could not open Cursor's agent stream over HTTP/2 (${(e as Error).message})`,
+          502,
+        );
+      }
+    }
+
     return fetch(out.url, {
       method: 'POST',
-      headers: {
-        ...this.opts.headers(this.requestId),
-        'x-original-request-id': this.opts.turnId,
-        'content-type': 'application/connect+proto',
-        'connect-accept-encoding': 'gzip',
-        ...out.headers,
-      },
-      // A server-streaming call still frames its one request message
-      body: envelope(encode(REQUEST_ID, { request_id: this.requestId })),
+      headers,
+      body,
       signal: this.opts.signal,
     });
   }

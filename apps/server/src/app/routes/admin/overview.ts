@@ -4,7 +4,6 @@ import * as usersRepo from '../../../core/db/users.js';
 import * as usageRepo from '../../../core/db/usage.js';
 import * as quota from '../../../core/quota.js';
 import { getString } from '../../../core/db/settings.js';
-import { fetchBalance } from '../../agents/provider.js';
 import { listAgents } from '../../agents/registry.js';
 import { guard, platformRange, presetOr } from './shared.js';
 
@@ -20,7 +19,12 @@ export function register(app: FastifyInstance): void {
     const now = new Date();
     const w = quota.boundsOf('window', now);
     const range = { from: w.start.toISOString(), to: w.end.toISOString() };
-    const [balance, agents] = await Promise.all([fetchBalance(), listAgents()]);
+    /*
+     * Balance is not fetched here. Cursor's dashboard is several RPCs including GetTeamSpend,
+     * and asking it on this route froze the landing page behind that round trip — the same
+     * class of wait `/api/admin/gate` used to cause. The card loads it from `/api/admin/balance`.
+     */
+    const agents = await listAgents();
     return {
       users: {
         total: usersRepo.count(),
@@ -49,7 +53,6 @@ export function register(app: FastifyInstance): void {
       },
       currency: getString('billing.currency', 'USD'),
       allTime: usageRepo.totalsAll(),
-      balance,
       agents,
     };
   });

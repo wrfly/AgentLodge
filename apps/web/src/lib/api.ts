@@ -662,6 +662,13 @@ export interface BalanceResult {
     totalBalance: string;
     grantedBalance: string;
     toppedUpBalance: string;
+    used?: string;
+    limit?: string;
+    source?: 'deepseek' | 'cursor';
+    label?: string;
+    planName?: string;
+    resetsAt?: string;
+    billedHere?: boolean;
   }>;
   fetchedAt: string;
   error?: string;
@@ -683,7 +690,8 @@ export interface AdminOverview {
   };
   currency: string;
   allTime: UsageTotals;
-  balance: BalanceResult | null;
+  /** Present when an older server still embedded the upstream query; the card loads `/api/admin/balance` itself */
+  balance?: BalanceResult | null;
   agents: AgentInfo[];
 }
 
@@ -1159,11 +1167,16 @@ export const admin = {
     request<Model>(`/api/admin/models/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteModel: (id: string) =>
     request<{ ok: boolean }>(`/api/admin/models/${id}`, { method: 'DELETE' }),
-  /** Ask one upstream what it offers and add whatever is missing */
-  pullModels: (providerId: string) =>
-    request<{ added: number; offered: string[]; models: Model[] }>('/api/admin/models/pull', {
+  /** Ask every upstream that can answer a list, or one of them, and add whatever is missing */
+  pullModels: (providerId?: string) =>
+    request<{
+      added: number;
+      offered?: string[];
+      models: Model[];
+      providers?: Array<{ id: string; name: string; added: number; offered: string[]; error?: string }>;
+    }>('/api/admin/models/pull', {
       method: 'POST',
-      body: JSON.stringify({ providerId }),
+      body: JSON.stringify(providerId ? { providerId } : {}),
     }),
   createProvider: (input: ProviderInput) =>
     request<Provider>('/api/admin/providers', { method: 'POST', body: JSON.stringify(input) }),

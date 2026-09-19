@@ -53,7 +53,7 @@ interface ChatEvent {
     prompt_tokens?: number;
     completion_tokens?: number;
     /** vLLM and DeepSeek's OpenAI layer provide this; Ollama does not */
-    prompt_tokens_details?: { cached_tokens?: number };
+    prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
   };
 }
 
@@ -88,8 +88,10 @@ export function absorbEvent(wire: Wire, raw: string, acc: UsageAcc): void {
     const u = e.usage;
     if (u) {
       const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
-      acc.inputTokens = Math.max(acc.inputTokens, (u.prompt_tokens ?? 0) - cached);
+      const wrote = u.prompt_tokens_details?.cache_write_tokens ?? 0;
+      acc.inputTokens = Math.max(acc.inputTokens, (u.prompt_tokens ?? 0) - cached - wrote);
       acc.cacheReadTokens = Math.max(acc.cacheReadTokens, cached);
+      acc.cacheCreationTokens = Math.max(acc.cacheCreationTokens, wrote);
       acc.outputTokens = Math.max(acc.outputTokens, u.completion_tokens ?? 0);
     }
     acc.model ??= e.model;

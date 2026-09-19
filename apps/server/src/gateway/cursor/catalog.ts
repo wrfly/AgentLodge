@@ -28,6 +28,14 @@ import { parseSlug, splitModel } from './request.js';
  * nothing is asking for is not sent: the variant's own parameters are what Cursor's client would
  * have sent, and inventing a default would be this end choosing a context size — and a price.
  *
+ * Claude Code's names are not Cursor's. A dated Anthropic id (`claude-haiku-4-5-20251001`),
+ * an older family id (`claude-3-5-sonnet`, `claude-sonnet-4-5` when this account has no
+ * such row), and a short family name (`opus`, `sonnet`, `haiku`, `fable`) all miss the
+ * variant table: the date is stripped before lookup, and anything that still names a
+ * family rather than a variant is pointed at the newest model of that family this account
+ * can actually use — which is what Claude Code means by those words, and not always what
+ * Cursor lists as `opus-latest`.
+ *
  * The table is fetched once per credential and held: it is the same answer for every request,
  * and a round trip per turn would buy nothing. When it cannot be had, the suffix reading in
  * splitModel() stands in — a model sent slightly wrong is recoverable, and refusing the turn
@@ -59,6 +67,14 @@ interface Catalog {
 }
 
 const MODELS_RPC = '/aiserver.v1.AiService/AvailableModels';
+
+/** One line when LOG_LEVEL is debug, so a live run can show cache hits without a debugger */
+export function cursorLog(msg: string, extra: Record<string, unknown> = {}): void {
+  const level = process.env.LOG_LEVEL ?? 'warn';
+  if (level !== 'debug' && level !== 'trace') return;
+  const rest = Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : '';
+  console.log(`[cursor] ${msg}${rest}`);
+}
 
 /** How long a fetched catalog stands. Cursor's list moves, but not within a turn. */
 const TTL_MS = 5 * 60_000;
@@ -101,9 +117,9 @@ function definitionsOf(model: Message): Parameters {
 }
 
 /** One model's variants, as resolutions keyed by every slug that selects them */
-function variantsOf(model: Message, into: Map<string, ResolvedModel>): void {
+function variantsOf(model: Message, into: Map<string, ResolvedModel>): ResolvedModel | undefined {
   const name = str(model['name']);
-  if (!name) return;
+  if (!name) return undefined;
 
   const variants = Array.isArray(model['variants']) ? (model['variants'] as Message[]) : [];
   for (const variant of variants) {
@@ -123,21 +139,120 @@ function variantsOf(model: Message, into: Map<string, ResolvedModel>): void {
    * variant Cursor marks as its default is the one its own client would have selected; a
    * model with no variants takes no parameters and is simply itself.
    */
-  if (!into.has(name)) {
-    const preferred = variants.find((v) => v['is_default_non_max_config'] === true)
-      ?? variants.find((v) => v['is_default_max_config'] === true);
-    into.set(name, {
-      id: name,
-      parameters: parametersOf(preferred),
-      max: preferred?.['is_max_mode'] === true,
-      from: 'catalog',
-    });
+  const preferred = variants.find((v) => v['is_default_non_max_config'] === true)
+    ?? variants.find((v) => v['is_default_max_config'] === true);
+  const fallback: ResolvedModel = into.get(name) ?? {
+    id: name,
+    parameters: parametersOf(preferred),
+    max: preferred?.['is_max_mode'] === true,
+    from: 'catalog',
+  };
+  if (!into.has(name)) into.set(name, fallback);
+
+  /*
+   * Names that are not a variant of their own still have to resolve to *something*. An empty
+   * parameter list used to be sent for these, which is a silent default — the same as asking
+   * for the model with none of the choices its table exists to make. The default variant is
+   * the one Cursor itself would have picked.
+   */
+  for (const slug of [
+    ...(Array.isArray(model['legacy_slugs']) ? (model['legacy_slugs'] as unknown[]) : []),
+    ...(Array.isArray(model['id_aliases']) ? (model['id_aliases'] as unknown[]) : []),
+  ]) {
+    const key = str(slug);
+    if (!key || into.has(key) || SHORT_NAME.has(key)) continue;
+    into.set(key, fallback);
   }
 
-  for (const legacy of Array.isArray(model['legacy_slugs']) ? (model['legacy_slugs'] as unknown[]) : []) {
-    const slug = str(legacy);
-    if (slug && !into.has(slug)) into.set(slug, { id: name, parameters: [], max: false, from: 'catalog' });
+  return fallback;
+}
+
+/**
+ * The names Claude Code uses for a family, which Cursor scatters across several models.
+ *
+ * Cursor's own `id_aliases` put `opus` on 4.5, 4.6 and 4.8 at once, and `opus-latest` on
+ * 4.8 while Claude Code's `opus` is Opus 5. A gateway that speaks Claude Code on the way
+ * in has to pick the newest of the family this account can use, not the first row Cursor
+ * happened to list.
+ */
+const SHORT_NAME = new Set(['opus', 'sonnet', 'haiku', 'fable']);
+
+const familyOf = (name: string): string | undefined => {
+  const match = /^claude-(?:3(?:-\d+)?-)?(opus|sonnet|haiku|fable)(?:-|$)/.exec(name);
+  return match?.[1];
+};
+
+/**
+ * Trailing numeric segments, for picking the newest of a family.
+ *
+ * `claude-opus-5` is `[5]`, `claude-opus-4-8` is `[4, 8]`. A date on the end is ignored
+ * here because it is stripped before lookup — see undated().
+ */
+const versionOf = (name: string): number[] => {
+  const rest = name.replace(/^claude-(?:opus|sonnet|haiku|fable)-/, '');
+  if (rest === name) return [];
+  return rest.split('-').filter((p) => /^\d+$/.test(p)).map(Number);
+};
+
+/** Negative when `a` is newer. Compared segment by segment, so 5 beats 4-8. */
+const newer = (a: string, b: string): number => {
+  const va = versionOf(a);
+  const vb = versionOf(b);
+  for (let i = 0; i < Math.min(va.length, vb.length); i++) {
+    if (va[i] !== vb[i]) return (vb[i] ?? 0) - (va[i] ?? 0);
   }
+  // The longer remainder is the newer patch: `claude-opus-4-8` beats `claude-opus-4`.
+  return vb.length - va.length;
+};
+
+/** Anthropic's dated snapshot id: `claude-haiku-4-5-20251001` is the model `claude-haiku-4-5` */
+export const undated = (name: string): string => name.replace(/-\d{8}$/, '');
+
+/**
+ * A model identity rather than a variant slug.
+ *
+ * `claude-sonnet-4-5` and `claude-3-5-sonnet` name a model. `claude-opus-5-thinking-high`
+ * names a variant, and those are looked up as written — falling through to the newest of
+ * the family would throw away the variant the caller did pick.
+ */
+function isFamilyIdentity(name: string): boolean {
+  if (!familyOf(name)) return false;
+  const rest = name.replace(/^claude-(?:3(?:-\d+)?-)?(?:opus|sonnet|haiku|fable)-?/, '');
+  return rest === '' || /^[\d-]+$/.test(rest);
+}
+
+function applyShortNames(
+  defaults: Map<string, { name: string; resolution: ResolvedModel }>,
+  into: Map<string, ResolvedModel>,
+): void {
+  const newest = new Map<string, { name: string; resolution: ResolvedModel }>();
+  for (const row of defaults.values()) {
+    const family = familyOf(row.name);
+    if (!family) continue;
+    const cur = newest.get(family);
+    if (!cur || newer(row.name, cur.name) < 0) newest.set(family, row);
+  }
+  for (const [family, row] of newest) into.set(family, row.resolution);
+}
+
+/** The lookup tables, from the structured `models[]` Cursor answers with */
+export function buildCatalog(models: Message[], flat: string[] = []): Catalog {
+  const slugs = new Map<string, ResolvedModel>();
+  const parameters = new Map<string, Parameters>();
+  const defaults = new Map<string, { name: string; resolution: ResolvedModel }>();
+
+  for (const model of models) {
+    const resolution = variantsOf(model, slugs);
+    const name = str(model['name']);
+    if (name) {
+      parameters.set(name, definitionsOf(model));
+      if (resolution) defaults.set(name, { name, resolution });
+    }
+  }
+  applyShortNames(defaults, slugs);
+
+  const names = slugs.size ? [...slugs.keys()].sort() : flat;
+  return { names, slugs, parameters };
 }
 
 export interface CatalogOptions {
@@ -179,40 +294,41 @@ async function fetchCatalog(opts: CatalogOptions): Promise<Catalog> {
 
   const body = decode('aiserver.v1.AvailableModelsResponse', new Uint8Array(await res.arrayBuffer()));
   const models = Array.isArray(body['models']) ? (body['models'] as Message[]) : [];
-
-  const slugs = new Map<string, ResolvedModel>();
-  const parameters = new Map<string, Parameters>();
-  for (const model of models) {
-    variantsOf(model, slugs);
-    // Keyed by the model's own name, because that is what a resolution carries in `model_id`;
-    // the slug a caller asked for is one of several that can arrive at the same model
-    const name = str(model['name']);
-    if (name) parameters.set(name, definitionsOf(model));
-  }
-
+  const flat = (Array.isArray(body['model_names']) ? (body['model_names'] as unknown[]) : []).map(str).filter(Boolean);
   /*
    * Two lists, and the structured one is the better answer: `model_names` is the flat legacy
    * field, while `models[]` carries what each name actually is. Falling back to the flat one
    * keeps the console working if the structured field goes away; it just cannot resolve
    * variants, which is what the suffix reading is for.
-   */
-  const flat = (Array.isArray(body['model_names']) ? (body['model_names'] as unknown[]) : []).map(str).filter(Boolean);
-  /*
+   *
    * Every slug, not just every model name: a console offering `claude-opus-5` alone would hide
    * the effort levels, and on this upstream those are how a model is chosen.
    */
-  const names = slugs.size ? [...slugs.keys()].sort() : flat;
-  return { names, slugs, parameters };
+  return buildCatalog(models, flat);
 }
 
 /** The catalog for this credential, fetched if it is not held or has aged out */
 async function catalogOf(opts: CatalogOptions): Promise<Catalog> {
   const key = JSON.stringify([opts.baseUrl, opts.secret]);
   const hit = cache.get(key);
-  if (hit && hit.at + TTL_MS > Date.now()) return hit.catalog;
+  if (hit && hit.at + TTL_MS > Date.now()) {
+    cursorLog('catalog cache hit', {
+      host: opts.baseUrl,
+      ageMs: Date.now() - hit.at,
+      ttlMs: TTL_MS,
+      slugs: hit.catalog.slugs.size,
+    });
+    return hit.catalog;
+  }
 
+  cursorLog('catalog fetch', { host: opts.baseUrl });
   const catalog = await fetchCatalog(opts);
   cache.set(key, { at: Date.now(), catalog });
+  cursorLog('catalog fetched', {
+    host: opts.baseUrl,
+    models: catalog.parameters.size,
+    slugs: catalog.slugs.size,
+  });
   return catalog;
 }
 
@@ -246,14 +362,31 @@ function withParameters(model: ResolvedModel, asked: Map<string, string>, accept
  *
  * The bracket a caller may have written — `claude-opus-5[1m]` — is taken off before the lookup
  * and applied after it, because it names a parameter rather than a variant and no slug in the
- * catalogue carries one.
+ * catalogue carries one. A date Anthropic stamps on a snapshot — `claude-haiku-4-5-20251001`
+ * — comes off the same way: Cursor's table has the undated name. A family identity that still
+ * is not in the table (`claude-sonnet-4-5`, `claude-3-5-sonnet`) takes the newest of that
+ * family, the same answer the short name would have got.
  */
 export async function resolveModel(slug: string, opts: CatalogOptions): Promise<ResolvedModel> {
   const { base, parameters: asked } = parseSlug(slug);
   try {
     const catalog = await catalogOf(opts);
-    const hit = catalog.slugs.get(base);
-    if (hit) return asked.size ? withParameters(hit, asked, catalog.parameters.get(hit.id)) : hit;
+    const stem = undated(base);
+    const family = familyOf(stem);
+    const hit = catalog.slugs.get(base)
+      ?? catalog.slugs.get(stem)
+      ?? (family && isFamilyIdentity(stem) ? catalog.slugs.get(family) : undefined);
+    if (hit) {
+      const resolved = asked.size ? withParameters(hit, asked, catalog.parameters.get(hit.id)) : hit;
+      cursorLog('resolve', {
+        asked: slug,
+        id: resolved.id,
+        from: resolved.from,
+        max: resolved.max,
+        params: resolved.parameters,
+      });
+      return resolved;
+    }
   } catch {
     // Falls through to the suffix reading, deliberately: the model is the request's subject,
     // not its destination, and a second call failing must not fail the turn
@@ -263,7 +396,8 @@ export async function resolveModel(slug: string, opts: CatalogOptions): Promise<
    * dropped with the catalogue that would have checked them: sending one unverified is how a
    * turn fails outright, and the window it names is a preference rather than the request.
    */
-  const split = splitModel(base);
+  const split = splitModel(undated(base));
+  cursorLog('resolve suffix', { asked: slug, id: split.id, max: split.max, params: split.parameters });
   return { ...split, from: 'suffix' };
 }
 
@@ -271,7 +405,10 @@ export async function resolveModel(slug: string, opts: CatalogOptions): Promise<
 export async function listModels(opts: CatalogOptions): Promise<{ models: string[]; error?: string }> {
   try {
     const { names } = await catalogOf(opts);
-    return names.length ? { models: names } : { models: [], error: 'Cursor returned an empty model list' };
+    // Brackets carry parameters (`[1m]`, `[fast=false]`), not a model identity. Pulling
+    // them as rows floods the picker and hands Claude Code a `--model` it will refuse.
+    const models = names.filter((n) => !n.includes('['));
+    return models.length ? { models } : { models: [], error: 'Cursor returned an empty model list' };
   } catch (e) {
     return { models: [], error: (e as Error).message };
   }

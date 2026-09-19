@@ -9,7 +9,7 @@ export interface RunOptions {
   resumeSessionId?: string;
   model?: string;
   effort?: string;
-  /** The gateway credential. Empty bypasses the gateway and uses the CLI's own configuration. */
+  /** The gateway credential. Empty still points the CLI at the gateway, so the host login cannot answer. */
   runtimeToken?: string;
   /** Container name. Empty runs on the host directly. */
   containerName?: string;

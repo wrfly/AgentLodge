@@ -8,11 +8,14 @@
  *
  * Run: npm -w @agentlodge/server run test:cursor
  */
+import http2 from 'node:http2';
 import { isErrorBody } from '../translate.js';
 import { decodeAppend } from './bidi.js';
+import { buildCatalog, undated } from './catalog.js';
 import { decode, encode, oneofOf, type Message } from './codec.js';
 import { endOfStream, envelope, FrameReader, FLAG_END_STREAM } from './connect.js';
 import { EXEC_TOOLS, shellStream, toolFor } from './exec-bridge.js';
+import { needsHttp2, postHttp2 } from './h2.js';
 import { argsOf, clientName, fromValue, toDefinitions, toValue, wireName } from './mcp.js';
 import { buildRunRequest, flatten, parseSlug, splitModel, toolResults, type ChatRequest } from './request.js';
 import { MESSAGES } from './schema.generated.js';
@@ -215,6 +218,57 @@ console.log("\n=== A caller's tools decide whether the turn can call tools at al
   ok('and nothing is delegated to it', plain.delegate === false);
   // Present but empty, which is what a capture of the real client shows it sending
   ok('the tools field is still there, holding nothing', JSON.stringify(asked['mcp_tools']) === '{}', JSON.stringify(asked['mcp_tools']));
+
+  const planning: ChatRequest = {
+    messages: [
+      {
+        role: 'system',
+        content:
+          'Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits.',
+      },
+      { role: 'user', content: 'how should we do this' },
+    ],
+    tools: [
+      { function: { name: 'Read', parameters: { type: 'object' } } },
+      { function: { name: 'ExitPlanMode', parameters: { type: 'object' } } },
+    ],
+  };
+  const planned = buildRunRequest(planning, { model: asModel('m') });
+  const plannedRun = roundTrip(CLIENT, planned.request)['run_request'] as Message;
+  const plannedMessage = ((plannedRun['action'] as Message)['user_message_action'] as Message)['user_message'] as Message;
+  ok("Claude Code's plan mode is a plan turn", plannedMessage['mode'] === 3, String(plannedMessage['mode']));
+  ok('and its tools are still delegated to, so it can read', planned.delegate === true);
+
+  const byTool: ChatRequest = {
+    messages: [{ role: 'user', content: 'plan this' }],
+    tools: [{ function: { name: 'ExitPlanMode', parameters: { type: 'object' } } }],
+  };
+  const fromTool = buildRunRequest(byTool, { model: asModel('m') });
+  const fromToolMessage = (((roundTrip(CLIENT, fromTool.request)['run_request'] as Message)['action'] as Message)[
+    'user_message_action'
+  ] as Message)['user_message'] as Message;
+  ok('ExitPlanMode without the prompt is enough', fromToolMessage['mode'] === 3, String(fromToolMessage['mode']));
+
+  const both: ChatRequest = {
+    messages: [{ role: 'user', content: 'hi' }],
+    tools: [
+      { function: { name: 'EnterPlanMode', parameters: { type: 'object' } } },
+      { function: { name: 'ExitPlanMode', parameters: { type: 'object' } } },
+    ],
+  };
+  const bothMessage = (((roundTrip(CLIENT, buildRunRequest(both, { model: asModel('m') }).request)['run_request'] as Message)[
+    'action'
+  ] as Message)['user_message_action'] as Message)['user_message'] as Message;
+  ok('both enter and exit is still an agent turn', bothMessage['mode'] === 1, String(bothMessage['mode']));
+
+  const continued = buildRunRequest(planning, {
+    model: asModel('m'),
+    messages: [{ role: 'user', content: 'and then?' }],
+  });
+  const continuedMessage = (((roundTrip(CLIENT, continued.request)['run_request'] as Message)['action'] as Message)[
+    'user_message_action'
+  ] as Message)['user_message'] as Message;
+  ok('a continuation still plans, even though the slice has no system block', continuedMessage['mode'] === 3, String(continuedMessage['mode']));
 }
 
 /*
@@ -297,6 +351,12 @@ console.log("\n=== Cursor's own tool names are not re-registered ===");
   ok('a client tool goes out prefixed', wireName('Read') === 'client__Read');
   ok('and comes back as itself', clientName('client__Read') === 'Read');
   ok('a name that was never prefixed is left alone', clientName('SomeMcpTool') === 'SomeMcpTool');
+  ok(
+    'WebSearch is not offered as MCP, because Cursor already runs it',
+    toDefinitions([{ name: 'WebSearch' }, { name: 'Read' }]).every((t) => t['name'] !== 'client__WebSearch') &&
+      toDefinitions([{ name: 'WebSearch' }, { name: 'Read' }]).some((t) => t['name'] === 'client__Read'),
+  );
+  ok('and neither is WebFetch', toDefinitions([{ name: 'WebFetch' }]).length === 0);
 }
 
 console.log('\n=== Arguments survive the trip through google.protobuf.Value ===');
@@ -407,8 +467,15 @@ console.log('\n=== Events become a Chat Completions stream ===');
 
   const usage = evs.find((e) => e['usage'])!['usage'] as Record<string, unknown>;
   ok('the counts are the ones Cursor reported, not an estimate', usage['completion_tokens'] === 20, JSON.stringify(usage));
-  ok('cache reads are kept apart from fresh input', JSON.stringify(usage['prompt_tokens_details']) === '{"cached_tokens":40}');
-  ok('and cache writes are billed as input', usage['prompt_tokens'] === 150, JSON.stringify(usage));
+  ok(
+    'cache reads and writes travel as details, not mixed into each other',
+    JSON.stringify(usage['prompt_tokens_details']) === '{"cached_tokens":40,"cache_write_tokens":10}',
+  );
+  ok(
+    'prompt_tokens is Cursor\'s input, which already is the whole prompt',
+    usage['prompt_tokens'] === 100,
+    JSON.stringify(usage),
+  );
   ok('reasoning is reported without being added twice', JSON.stringify(usage['completion_tokens_details']) === '{"reasoning_tokens":5}');
   ok('it ends with [DONE]', sse.trimEnd().endsWith('[DONE]'));
 }
@@ -452,6 +519,143 @@ console.log('\n=== Which arm of a oneof is set is answerable without guessing ==
   const message = decode(SERVER, encode(SERVER, { exec_server_message: { id: 1, pi_read_args: { path: '/a' } } }));
   ok('the arm is named', oneofOf(SERVER, message, 'message')?.name === 'exec_server_message');
   ok('and an unset group answers nothing', oneofOf(SERVER, {}, 'message') === undefined);
+}
+
+console.log('\n=== RunSSE over HTTP/2 comes back as a fetch Response ===');
+{
+  ok('https to the real host uses it', needsHttp2('https://agentn.us.api5.cursor.sh/agent.v1.AgentService/RunSSE'));
+  ok('http to a test or the audit proxy does not', !needsHttp2('http://127.0.0.1:9/agent.v1.AgentService/RunSSE'));
+
+  const payload = envelope(encode(SERVER, { interaction_update: { text_delta: { text: 'ok' } } }));
+  const seen: { path?: string; ctype?: string } = {};
+  const server = http2.createServer((req, res) => {
+    seen.path = req.url;
+    seen.ctype = req.headers['content-type'] as string | undefined;
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/connect+proto' });
+      res.end(Buffer.from(payload));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address() as { port: number };
+  try {
+    const res = await postHttp2(`http://127.0.0.1:${port}/agent.v1.AgentService/RunSSE`, {
+      headers: { 'content-type': 'application/connect+proto', connection: 'keep-alive' },
+      body: envelope(encode('aiserver.v1.BidiRequestId', { request_id: 'req-1' })),
+      signal: new AbortController().signal,
+    });
+    ok('the status is the one the server sent', res.status === 200, String(res.status));
+    ok('the path is the RPC', seen.path === '/agent.v1.AgentService/RunSSE', seen.path);
+    ok('hop-by-hop headers were not forwarded', seen.ctype === 'application/connect+proto', seen.ctype);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const frame = new FrameReader().push(bytes)[0];
+    const text = ((decode(SERVER, frame!.payload)['interaction_update'] as Message)['text_delta'] as Message)['text'];
+    ok('and the body is the framed message', text === 'ok', String(text));
+  } finally {
+    server.close();
+  }
+
+  const hanging = http2.createServer(() => {
+    /* never answers, so abort is the only way out */
+  });
+  await new Promise<void>((r) => hanging.listen(0, '127.0.0.1', r));
+  const hangingPort = (hanging.address() as { port: number }).port;
+  try {
+    const ac = new AbortController();
+    const pending = postHttp2(`http://127.0.0.1:${hangingPort}/agent.v1.AgentService/RunSSE`, {
+      headers: {},
+      body: new Uint8Array(0),
+      signal: ac.signal,
+    });
+    ac.abort();
+    const err = await pending.then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    ok('aborting the signal refuses the call', err instanceof Error, String(err));
+  } finally {
+    hanging.close();
+  }
+}
+
+console.log('\n=== Claude Code names that miss the variant table still resolve ===');
+{
+  const catalog = buildCatalog([
+    {
+      name: 'claude-opus-4',
+      variants: [
+        {
+          variant_string_representation: 'claude-opus-4',
+          is_default_non_max_config: true,
+          parameter_values: [],
+        },
+      ],
+    },
+    {
+      name: 'claude-opus-4-8',
+      id_aliases: ['opus', 'opus-latest'],
+      variants: [
+        {
+          variant_string_representation: 'claude-opus-4-8',
+          is_default_non_max_config: true,
+          parameter_values: [{ id: 'effort', value: 'high' }],
+        },
+      ],
+    },
+    {
+      name: 'claude-opus-5',
+      id_aliases: ['opus'],
+      variants: [
+        {
+          variant_string_representation: 'claude-opus-5-high',
+          is_default_non_max_config: true,
+          parameter_values: [{ id: 'effort', value: 'high' }],
+        },
+      ],
+    },
+    {
+      name: 'claude-sonnet-4-6',
+      id_aliases: ['sonnet', 'sonnet-latest'],
+      variants: [
+        {
+          variant_string_representation: 'claude-sonnet-4-6',
+          is_default_non_max_config: true,
+          parameter_values: [],
+        },
+      ],
+    },
+    {
+      name: 'claude-sonnet-5',
+      variants: [
+        {
+          variant_string_representation: 'claude-sonnet-5',
+          is_default_non_max_config: true,
+          parameter_values: [{ id: 'effort', value: 'high' }],
+        },
+      ],
+    },
+    {
+      name: 'claude-haiku-4-5',
+      id_aliases: ['haiku'],
+      variants: [
+        {
+          variant_string_representation: 'claude-haiku-4-5',
+          is_default_non_max_config: true,
+          parameter_values: [{ id: 'thinking', value: 'true' }],
+        },
+      ],
+    },
+  ]);
+  ok('opus is Opus 5, not the first alias Cursor listed', catalog.slugs.get('opus')?.id === 'claude-opus-5');
+  ok("and Cursor's own latest alias is left as Cursor listed it", catalog.slugs.get('opus-latest')?.id === 'claude-opus-4-8');
+  ok('sonnet is Sonnet 5', catalog.slugs.get('sonnet')?.id === 'claude-sonnet-5');
+  ok("sonnet-latest is Cursor's 4.6", catalog.slugs.get('sonnet-latest')?.id === 'claude-sonnet-4-6');
+  ok('haiku is the one this account has', catalog.slugs.get('haiku')?.id === 'claude-haiku-4-5');
+  ok('a shorter 4 does not beat 4-8, and neither beats 5', catalog.slugs.get('opus')?.id === 'claude-opus-5');
+  ok('a dated snapshot id is the undated model', undated('claude-haiku-4-5-20251001') === 'claude-haiku-4-5');
+  ok('and a date is not stripped off a version', undated('claude-opus-4-8') === 'claude-opus-4-8');
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);

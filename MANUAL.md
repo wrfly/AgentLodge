@@ -39,7 +39,7 @@ JWT_SECRET=$(openssl rand -base64 32) npm run dev
 npm run dev:free        # 假上游 + 后端 + 前端 一起起
 ```
 
-然后进 `/admin` → 系统设置：
+然后进 `/admin` → 模型配置：
 
 ```
 DeepSeek Base URL   http://127.0.0.1:9998
@@ -96,17 +96,20 @@ protobuf，schema 没公开过，是从 `cursor-agent` 自己的 bundle 里读�
 
 两种最后都是拿 `/auth/exchange_user_api_key` 换访问令牌，令牌不落盘，过期自己换。
 
-模型清单点「从上游拉取」，问的是 Cursor 的 `AvailableModels`，拉回来的是**每个可选的 slug**
+模型清单点「从全部上游拉取」，问的是 Cursor 的 `AvailableModels`，拉回来的是**每个可选的 slug**
 而不是每个模型名 —— 因为在 Cursor 这边模型是按 variant 选的：`claude-opus-5-thinking-high`
 不是一个模型名，是模型 `claude-opus-5` 的一个 variant。网关发请求前会拿 slug 去那张表里查出
 该发什么（模型 + 参数 + 是否 max mode），所以**直接填 Cursor 列出来的 slug 就行**，别自己拼。
+Claude Code 带来的短名（`opus` / `sonnet` / `haiku` / `fable`）和带日期的 Anthropic id
+也会被接到这个账号能用的、该家族最新的模型上——`opus` 是 Opus 5，不是 Cursor 的 `opus-latest`。
 表按凭据缓存 5 分钟；万一查不到，网关会退回按后缀猜，模型可能跟你想要的差一档但请求不会失败。
 
 配之前要知道的几件事：
 
-- **要放开两个域名。** 一个 turn 分两个调用：消息发到 `api2.cursor.sh`，回来的流从 agent host
-  （默认 `agentn.us.api5.cursor.sh`）读。有 egress allowlist 的部署两个都要放。上游填了
-  Base URL 的话两个都走那一个地址。
+- **要放开两个域名。** 一个 turn 分两个调用：消息发到 `api2.cursor.sh`（HTTP/1.1 即可），回来的流从 agent host
+  （默认 `agentn.us.api5.cursor.sh`）读。**agent host 只讲 HTTP/2**，网关这一跳走 `node:http2` 而不是 `fetch`。
+  有 egress allowlist 的部署两个都要放。上游填了 Base URL 的话两个都走那一个地址。前面挂了审计代理
+  时还要开 `PROXY_HTTP2=1`，否则代理仍会用 HTTP/1.1 打到 agent host，turn 过不去。
 - **thinking 不往下传。** Cursor 单独发思考内容，Chat Completions 没有这个字段，翻译层也不读
   任何厂商自创的那几种，所以这条上游的思考在界面上是空的。
 - **Cursor 会反过来要求执行工具，跑在用户自己的机器上。** agent 协议里服务端会让客户端读文件、
@@ -141,7 +144,7 @@ CURSOR_API_KEY=key_… npm -w @agentlodge/server run cursor:probe -- --raw "hell
   `priority` 小的先用。
 - **上游那边名字不同**就填「上游那边的名字」，发出去时改写，账仍然记在用户选的那个名字上。
 - **关掉一行**等于告诉网关别往这条上游发这个模型，也不作为备选。
-- **从上游拉取**会问那条上游有哪些模型，把缺的加进来；只加不删、不重排，关掉的仍然是关的。
+- **从全部上游拉取**会问**每一条**能回答模型清单的上游有哪些模型，把缺的加进来；只加不删、不重排，关掉的仍然是关的。Mock / 本机 CLI 没有清单，会跳过。一条失败不影响其它条。
   打开「每小时刷新模型清单」就是自动做这件事。
 
 用户没选模型时用哪个，由两个设置决定：`Claude 的默认模型` 和 `Codex 的默认模型`。
@@ -701,7 +704,7 @@ Error: Usage endpoint is rate limited. Please try again in a moment.
 | `/profile` | 使用画像 + 会话总结 |
 | `/api-keys` | API 密钥：把本机 CLI 指到本服务 |
 | `/settings` | 改密码、登录设备管理 |
-| `/admin` | 管理后台：总览 / 用户 / 邀请码 / 系统设置 / 审计日志 |
+| `/admin` | 管理后台：总览 / 用户 / 邀请码 / 模型配置 / 系统设置 / 审计日志 |
 | `/register?code=` | 邀请注册（邮件链接会预填邀请码和邮箱） |
 | `/reset-password?token=` | 密码重置 |
 
@@ -857,18 +860,18 @@ workspaces/<userId>/<convId>/AGENTS.md    上面这些渲染成一整份，给 c
 - 路径穿越防护：所有路径必须解析在会话目录之内
 
 **模型列表**
-- 三层回退：**provider 的 `models` 字段** → 环境变量 `CLAUDE_MODELS` / `CODEX_MODELS` →
-  各自内置默认（claude 是 `opus`/`sonnet`/`haiku` 三个别名，codex 读 `~/.codex/models.json`）
+- 选择器只读 **models 表**：能选的名字就是有上游在后面的名字。没有模型行则拒绝对话，
+  不会退回本机 Claude / Codex 登录，也不会用 `CLAUDE_MODELS` / `~/.codex/models.json` 冒充清单
 - 模型名放在 provider 上而不是全局：型号是**端点的属性**，换上游就是换整套名字
-- 后台 provider 表单里有「从上游拉取」——网关拿这个 provider 的 key 去问它的
-  `/v1/models`（openai-chat 是 `/models`），把结果填进列表。DeepSeek 那种
-  `…/anthropic` 兼容层前缀会自动去掉，因为模型列表在根上
+- 后台**模型**卡片上有「从全部上游拉取」——网关拿每条能回答清单的上游的 key 去问它的
+  `/v1/models`（openai-chat 是 `/models`，Cursor 是 `AvailableModels`），把缺的名字加进来。
+  DeepSeek 那种 `…/anthropic` 兼容层前缀会自动去掉，因为模型列表在根上。Mock / 本机 CLI
+  没有清单，会跳过；一条失败不影响其它条
 - 上游答不上来时给的是**原因**而不是空列表（404 / 连不上 / 没配 key / 内置假上游），
   否则「问不到」和「没有模型」在界面上长得一样、意思相反
-- **每小时自动拉一次**，开关在后台**上游 provider 卡片底部**（不在通用设置列表里——一个关于
+- **每小时自动拉一次**，开关在后台**模型卡片底部**（不在通用设置列表里——一个关于
   模型列表的开关，摆在一堆无关设置中间没人找得到），**默认关**：
-  打开等于把手工维护的列表交给上游。只拉**当前启用的那个 provider**（选择器用的就是它；
-  配置别的 provider 时管理员就在界面上，有手工按钮）。上游答不上来**什么都不改**，不会
+  打开等于把手工维护的列表交给上游。拉的是**每一条**能回答清单的上游。上游答不上来**什么都不改**，不会
   把能用的列表清空；列表没变也不写库，免得 `updated_at` 每小时动一次、审计日志里全是
   没改动的改动。真的变了会记一条 `provider.models.refresh` 审计（带改前改后），
   没有 actor —— 不是人做的
@@ -886,8 +889,7 @@ workspaces/<userId>/<convId>/AGENTS.md    上面这些渲染成一整份，给 c
 
 **模型与推理强度**
 - 输入框内两个下拉，只影响后续消息；新会话继承当前选择
-- Claude 模型走别名（`opus`/`sonnet`/`haiku`），接第三方端点时由 `ANTHROPIC_DEFAULT_*_MODEL` 映射
-- Codex 模型读 `~/.codex/models.json`
+- 能选的型号就是 models 表里的名字；没配模型时下拉是空的，发消息会被拒绝
 - 强度取值实测得到：Claude `low|medium|high|xhigh|max`；Codex 另有 `none|minimal`
 - 「思考」开关在强度下拉的菜单底部——问的是同一件事：要多少推理。默认开，只有 Claude 有；
   关着的时候强度按钮上的脑图标是灰的。关掉是往上游发 `thinking: disabled`；开着时网关把
@@ -895,8 +897,8 @@ workspaces/<userId>/<convId>/AGENTS.md    上面这些渲染成一整份，给 c
   不回思考过程的原因）。详见 DESIGN.md §2.2b「思考的方言」
 
 **后台可改，无需重启**
-- **上游与模型**：上游是地址、协议、凭据；模型是「名字 → 上游」，同名可挂多条。配了模型就启用计量网关，
-  agent 从此只能经网关访问上游；一条都没有则沿用本机 CLI 自己的配置，用量退化为按轮次粗记
+- **上游与模型**：上游是地址、协议、凭据；模型是「名字 → 上游」，同名可挂多条。配了模型才启用计量网关，
+  agent 只能经网关访问上游；一条都没有则拒绝对话，不会去用宿主机 Claude / Codex 登录。
 - **审计代理**：启用开关（默认关）、上游白名单、保留策略
 - **并发闸门**：上限热调且落库（重启不丢），「跟随上游自适应」开关决定 AIMD 砍不砍并发，
   按上游分池显示各自在途与排队
@@ -1016,7 +1018,7 @@ node scripts/check-layers.mjs
 
 几条要知道的：
 
-- 价格表在**后台 → 系统设置 → 价格表**里改，就在模型列表下面。改价是加一行新的，过去的账单保留当时的价格。
+- 价格表在**后台 → 模型配置 → 价格表**里改，就在模型列表下面。改价是加一行新的，过去的账单保留当时的价格。
 - **上游不是 Anthropic 的（本地模型、二道贩子）要自己加行**，否则按兜底行（Opus 5 的价）计费，会高估很多。DeepSeek 的两个型号种子里有。
 - 种子里的价格和模型选择器显示的价格是同一组数字，`npm run typecheck` 里的 `check-pricing` 会逐个比对——用户看到的价和实际扣的钱对不上，不是显示 bug。
 - **每行自带币种**，各家用各家的，价格表里永远不换算——那是对厂商账单用的。汇总和展示时才按那一个汇率折成结算币种。
@@ -1549,8 +1551,8 @@ app 和内网：那两个不在这张网上，所以 agent 的可达范围跟任
 
 1. 看 `podman compose -f docker/compose.yml logs app`，里面打印了 **bootstrap 管理员邀请码**
 2. 用它注册第一个账号（自动是 admin）
-3. 进 `/admin` → 系统设置 → **上游凭据**，登录订阅、粘一把 key，或者指向挂进来的凭据文件
-4. 同一页的**上游**填 Base URL 并指向刚才那条凭据；**模型**里加几行，或者点「从上游拉取」
+3. 进 `/admin` → **模型配置** → **上游凭据**，登录订阅、粘一把 key，或者指向挂进来的凭据文件
+4. 同一页的**上游**填 Base URL 并指向刚才那条凭据；**模型**里加几行，或者点「从全部上游拉取」
    —— 配了模型才会启用计量网关
 5. 把**价格表**核对一遍（默认值是占位数，按官网单价改）。同一个模型挂了两条上游、价格不同时，
    价格行要指定上游

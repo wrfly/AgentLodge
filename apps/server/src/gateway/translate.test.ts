@@ -13,6 +13,7 @@ import {
   ChatToResponses,
   anthropicRequestToChat,
   chatResponseToAnthropic,
+  chatStreamToResponse,
   responsesRequestToChat,
 } from './translate.js';
 
@@ -275,6 +276,25 @@ console.log('\n=== The frame that ends an ordinary answer is not one of them ===
   ok('no error frame', !out.includes('event: error'), out);
   ok('the message is closed properly', out.includes('"stop_reason":"end_turn"') && out.includes('message_stop'), out);
   ok('and the count it carried is reported', out.includes('"output_tokens":3'), out);
+  ok('input sits on the same delta, which is when the upstream actually sent it', out.includes('"input_tokens":7'), out);
+
+  const cached = new ChatToAnthropic('m');
+  const cachedOut =
+    cached.push('data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n') +
+    cached.push(
+      'data: {"choices":[],"usage":{"prompt_tokens":150,"completion_tokens":4,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}\n\n',
+    ) +
+    cached.end();
+  ok(
+    'a Cursor cache read becomes Anthropic cache_read_input_tokens',
+    cachedOut.includes('"cache_read_input_tokens":40'),
+    cachedOut,
+  );
+  ok(
+    'and the write becomes cache_creation_input_tokens, not extra input',
+    cachedOut.includes('"cache_creation_input_tokens":10') && cachedOut.includes('"input_tokens":100'),
+    cachedOut,
+  );
 
   const r = new ChatToResponses('m');
   const rout = r.push('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n') + r.push(usage) + r.end();
@@ -376,6 +396,55 @@ console.log('\n=== The Responses side carries images too ===');
     out.messages[0]!.content === 'be brief\n[image]',
     JSON.stringify(out.messages[0]),
   );
+}
+
+console.log('\n=== A chat SSE stream folds into one Message with usage ===');
+{
+  /*
+   * Claude Code `/model` reads `_r.usage.input_tokens` on the JSON body. An SSE
+   * `message_start` has usage nested, which is the TypeError the probe reported.
+   */
+  const sse = [
+    'data: {"model":"claude-sonnet-5","choices":[{"delta":{"content":"Hi"}}]}',
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+    'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":1}}',
+    'data: [DONE]',
+    '',
+  ].join('\n\n');
+  const folded = chatStreamToResponse(sse);
+  const msg = JSON.parse(chatResponseToAnthropic(folded, 'claude-sonnet-5')) as {
+    type?: string;
+    usage?: { input_tokens?: number; output_tokens?: number };
+    content?: Array<{ text?: string }>;
+  };
+  ok('the folded body is a Message', msg.type === 'message', folded);
+  ok('usage sits on the Message, not nested', msg.usage?.input_tokens === 12 && msg.usage?.output_tokens === 1, JSON.stringify(msg.usage));
+  ok('and the text survived', msg.content?.[0]?.text === 'Hi', JSON.stringify(msg.content));
+
+  const withCache = JSON.parse(
+    chatResponseToAnthropic(
+      JSON.stringify({
+        choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+        usage: {
+          prompt_tokens: 150,
+          completion_tokens: 2,
+          prompt_tokens_details: { cached_tokens: 40, cache_write_tokens: 10 },
+        },
+      }),
+      'm',
+    ),
+  ) as { usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } };
+  ok(
+    'non-streaming usage splits the cache the same way',
+    withCache.usage?.input_tokens === 100 &&
+      withCache.usage?.cache_read_input_tokens === 40 &&
+      withCache.usage?.cache_creation_input_tokens === 10,
+    JSON.stringify(withCache.usage),
+  );
+
+  const refused = chatStreamToResponse(`data: ${JSON.stringify({ error: { message: 'context length exceeded' } })}\n\n`);
+  ok('a refusal stays a refusal', refused.includes('context length exceeded'), refused);
+  ok('and is not rewritten into a Message', chatResponseToAnthropic(refused, 'm') === refused, chatResponseToAnthropic(refused, 'm'));
 }
 
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);

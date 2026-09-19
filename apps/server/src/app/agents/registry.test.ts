@@ -111,6 +111,16 @@ console.log('\n=== The command line a turn runs on ===');
   ok('the Skill tool is disallowed', at >= 0 && args[at + 1] === 'Skill', args.join(' '));
   ok('the prompt is still there', args.includes('hello'));
   ok('and the model it was asked for', args[args.indexOf('--model') + 1] === 'claude-opus-5');
+
+  const windowed = turnArgs({ prompt: 'hello', cwd: '/workspace', model: 'claude-opus-5[1m]' } as Parameters<typeof turnArgs>[0]);
+  ok('a 1M window is still a Claude Code model id', windowed[windowed.indexOf('--model') + 1] === 'claude-opus-5[1m]');
+
+  const cursor = turnArgs({ prompt: 'hello', cwd: '/workspace', model: 'composer-2.5[fast=false]' } as Parameters<typeof turnArgs>[0]);
+  ok(
+    'a Cursor slug is sent as sonnet, which Claude Code will actually start',
+    cursor[cursor.indexOf('--model') + 1] === 'sonnet',
+    cursor.join(' '),
+  );
 }
 
 fs.rmSync(box, { recursive: true, force: true });

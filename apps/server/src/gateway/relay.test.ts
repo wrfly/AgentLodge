@@ -97,7 +97,7 @@ const ask = (model = 'local-model') =>
     method: 'POST',
     url: '/v1/messages',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    payload: { model, max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] },
+    payload: { model, max_tokens: 64, stream: true, messages: [{ role: 'user', content: 'hi' }] },
   });
 
 /** An SSE upstream, headers flushed so the silence lands in the body where the relay is */
@@ -278,6 +278,50 @@ async function run(): Promise<void> {
     const out = JSON.parse(res.body) as { type?: string; content?: Array<{ text?: string }> };
     ok('the client gets an Anthropic message', out.type === 'message', res.body);
     ok('carrying the text', out.content?.[0]?.text === 'hello there', res.body);
+  }
+
+  console.log('\n=== A non-streaming Messages client gets a Message, not SSE ===');
+  {
+    /*
+     * Claude Code `/model` validates with messages.create (stream omitted) and then
+     * reads usage.input_tokens. Relaying Cursor's SSE left usage nested under
+     * message_start and threw `undefined is not an object (evaluating '_r.usage.input_tokens')`.
+     */
+    sse((res) => {
+      res.write(`data: ${JSON.stringify({ model: 'local-model', choices: [{ delta: { content: 'Hi' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 12, completion_tokens: 1 } })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      payload: {
+        model: 'local-model',
+        max_tokens: 1,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi', cache_control: { type: 'ephemeral' } }] }],
+      },
+    });
+    ok('the body is JSON, not an event stream', !res.body.includes('event:'), res.body.slice(0, 160));
+    const out = JSON.parse(res.body) as {
+      type?: string;
+      usage?: { input_tokens?: number; output_tokens?: number };
+      content?: Array<{ text?: string }>;
+    };
+    ok('it is an Anthropic Message', out.type === 'message', res.body);
+    ok(
+      'with usage.input_tokens, which is what the probe reads',
+      typeof out.usage?.input_tokens === 'number',
+      JSON.stringify(out.usage),
+    );
+    ok(
+      'and the counts survived the fold',
+      out.usage?.input_tokens === 12 && out.usage?.output_tokens === 1,
+      JSON.stringify(out.usage),
+    );
+    ok('carrying the text', out.content?.[0]?.text === 'Hi', res.body);
   }
 
   console.log('\n=== What the upstream said about waiting is passed on ===');

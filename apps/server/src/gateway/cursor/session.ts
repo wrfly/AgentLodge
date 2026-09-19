@@ -3,6 +3,7 @@ import os from 'node:os';
 import { BidiStream, type BidiOptions, BidiError } from './bidi.js';
 import { decode, oneofOf, type Message } from './codec.js';
 import { endOfStream, statusOf } from './connect.js';
+import { cursorLog } from './catalog.js';
 import { EXEC_TOOLS, shellStream, toolFor } from './exec-bridge.js';
 import { argsOf, clientName, mcpResult } from './mcp.js';
 
@@ -51,6 +52,20 @@ interface Pending {
   /** Which bridge answers it, or absent when this was one of the caller's own tools */
   tool?: (typeof EXEC_TOOLS)[number];
 }
+
+/**
+ * Cursor asking whether a built-in may run. There is no IDE prompt on this side, so every
+ * arm that is a yes/no is approved. `switch_mode` is the one that shows up around web
+ * search: Cursor wants AGENT (or PLAN) for a call the current mode forbids.
+ */
+const APPROVE: Record<string, string> = {
+  web_search_request_query: 'web_search_request_response',
+  web_fetch_request_query: 'web_fetch_request_response',
+  switch_mode_request_query: 'switch_mode_request_response',
+  mcp_auth_request_query: 'mcp_auth_request_response',
+  connect_scm_request_query: 'connect_scm_request_response',
+  generate_image_request_query: 'generate_image_request_response',
+};
 
 export interface SessionOptions extends BidiOptions {
   /**
@@ -197,6 +212,17 @@ export class AgentSession {
       return;
     }
 
+    /*
+     * Cursor asks this end whether a built-in may run — search, fetch, a mode switch —
+     * then does the work itself. Skipping the query leaves the turn waiting for a
+     * response that never comes (Shimmying after Web Search). Every arm is answered.
+     */
+    const query = message['interaction_query'];
+    if (isMessage(query)) {
+      await this.answerQuery(query);
+      return;
+    }
+
     const exec = message['exec_server_message'];
     if (isMessage(exec)) {
       yield* this.exec(exec);
@@ -223,16 +249,15 @@ export class AgentSession {
 
     const ended = update['turn_ended'];
     if (isMessage(ended)) {
-      yield {
-        kind: 'done',
-        usage: {
-          input: Number(ended['input_tokens'] ?? 0),
-          output: Number(ended['output_tokens'] ?? 0),
-          cacheRead: Number(ended['cache_read_tokens'] ?? 0),
-          cacheWrite: Number(ended['cache_write_tokens'] ?? 0),
-          reasoning: Number(ended['reasoning_tokens'] ?? 0),
-        },
+      const usage = {
+        input: Number(ended['input_tokens'] ?? 0),
+        output: Number(ended['output_tokens'] ?? 0),
+        cacheRead: Number(ended['cache_read_tokens'] ?? 0),
+        cacheWrite: Number(ended['cache_write_tokens'] ?? 0),
+        reasoning: Number(ended['reasoning_tokens'] ?? 0),
       };
+      cursorLog('usage', usage);
+      yield { kind: 'done', usage };
     }
   }
 
@@ -263,9 +288,32 @@ export class AgentSession {
       return;
     }
 
+    if (message['web_fetch_allowlist_precheck_args'] !== undefined) {
+      await this.stream.send({
+        exec_client_message: { id, exec_id: execId, web_fetch_allowlist_precheck_result: { allowlisted: true } },
+      });
+      return;
+    }
+    if (message['mcp_allowlist_precheck_args'] !== undefined) {
+      await this.stream.send({
+        exec_client_message: { id, exec_id: execId, mcp_allowlist_precheck_result: { allowlisted: true } },
+      });
+      return;
+    }
+    if (message['shell_allowlist_precheck_args'] !== undefined) {
+      await this.stream.send({
+        exec_client_message: { id, exec_id: execId, shell_allowlist_precheck_result: { allowlisted: true } },
+      });
+      return;
+    }
+
     // One of the caller's own tools, coming back under the name it was registered with
     const mcp = message['mcp_args'];
     if (isMessage(mcp)) {
+      if (mcp['smart_mode_approval_only']) {
+        await this.stream.send({ exec_client_message: { id, exec_id: execId, mcp_result: { approved: {} } } });
+        return;
+      }
       const callId = String(mcp['tool_call_id'] ?? '') || `mcp_${id}`;
       this.pending.set(callId, { id, execId, args: mcp });
       yield {
@@ -315,6 +363,48 @@ export class AgentSession {
     yield { kind: 'tool', callId, name: tool.name, input: input as Record<string, unknown> };
   }
 
+  private async answerQuery(query: Message): Promise<void> {
+    const id = Number(query['id'] ?? 0);
+    const which = oneofOf('agent.v1.InteractionQuery', query, 'query')?.name;
+    cursorLog('query', { id, which: which ?? 'unknown' });
+
+    if (which && APPROVE[which]) {
+      const approved: Message = {};
+      if (which === 'generate_image_request_query') {
+        const args = (query[which] as Message)?.['args'] as Message | undefined;
+        approved['description'] = String(args?.['description'] ?? '');
+      }
+      await this.stream.send({
+        interaction_response: { id, [APPROVE[which]]: { approved } },
+      });
+      return;
+    }
+    if (which === 'create_plan_request_query') {
+      await this.stream.send({
+        interaction_response: { id, create_plan_request_response: { result: { success: {} } } },
+      });
+      return;
+    }
+    if (which === 'ask_question_interaction_query') {
+      await this.stream.send({
+        interaction_response: { id, ask_question_interaction_response: { result: { success: { answers: [] } } } },
+      });
+      return;
+    }
+    if (which === 'setup_vm_environment_args') {
+      await this.stream.send({
+        interaction_response: { id, setup_vm_environment_result: { success: {} } },
+      });
+      return;
+    }
+    if (which === 'replace_env_args') {
+      await this.stream.send({
+        interaction_response: { id, replace_env_result: { success: {} } },
+      });
+      return;
+    }
+  }
+
   /** Where the caller says it is, which is all this end can honestly report */
   private context(): Message {
     return {
@@ -328,6 +418,8 @@ export class AgentSession {
             sandbox_enabled: false,
             time_zone: process.env['TZ'] || 'UTC',
           },
+          web_search_enabled: true,
+          web_fetch_enabled: true,
         },
       },
     };

@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import { accessToken, CursorAuthError } from './auth.js';
 import type { Egress } from './bidi.js';
-import { listModels, resolveModel, type CatalogOptions } from './catalog.js';
+import { cursorLog, listModels, resolveModel, type CatalogOptions } from './catalog.js';
 import { AgentSession, type AgentEvent } from './session.js';
-import { canonical, identify, keep, planFor, recall, spoken, systemOf, type Sticky } from './conversation.js';
+import { canonical, identify, keep, planFor, recall, spoken, systemOf, asideOf, type Sticky } from './conversation.js';
 import { buildRunRequest, toolResults, type ChatRequest } from './request.js';
 import { ChatStream } from './stream.js';
 import { BUNDLE_VERSION } from './schema.generated.js';
@@ -52,7 +52,7 @@ export const CURSOR_API = 'https://api2.cursor.sh';
  *
  * Cursor advertises this through `GetServerConfig`; pinned here to what it advertises today,
  * because a gateway that resolved it per request would be asking a second service whether the
- * first one is reachable.
+ * first one is reachable. The host speaks HTTP/2 only — see `h2.ts`.
  */
 export const CURSOR_AGENT_API = 'https://agentn.us.api5.cursor.sh';
 
@@ -104,6 +104,8 @@ export interface FetchOptions {
   /** What this upstream calls the model */
   model: string;
   conversationId?: string;
+  /** Who sent it, so two people's API-key sessions cannot share a lane by accident */
+  userId?: string;
   signal: AbortSignal;
   egress?: Egress;
 }
@@ -185,9 +187,34 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
    * Worked out here rather than earlier because a lane is keyed by the model configuration as
    * well as the thread — see conversation.ts — and the model has only just been resolved.
    */
-  const identity = identify({ conversationId: opts.conversationId, model, messages: now });
-  const plan = planFor(recall(identity.lane), now, system);
+  const identity = identify({
+    conversationId: opts.conversationId,
+    userId: opts.userId,
+    model,
+    messages: now,
+  });
+  /*
+   * An aside is not this thread. It used to mint a throwaway conversation and write nothing
+   * back, which kept the thread's checkpoint safe and also meant a classifier that ran twice
+   * paid for its prompt twice. It now has a lane of its own — see asideOf() — so the second
+   * turn of the same aside can continue, and the thread's lane is not the one that is written.
+   */
+  let used = identity;
+  let plan = planFor(recall(identity.lane), now, system);
+  if (plan.kind === 'aside') {
+    used = asideOf(identity, now, system);
+    const side = planFor(recall(used.lane), now, system);
+    plan = side.kind === 'aside' ? { kind: 'fresh' } : side;
+  }
   const held = plan.kind === 'continue' ? plan.held : undefined;
+  cursorLog('turn', {
+    asked: opts.model,
+    id: model.id,
+    from: model.from,
+    plan: plan.kind,
+    ...(used.lane !== identity.lane ? { aside: true } : {}),
+    ...(plan.kind === 'continue' ? { fromMessage: plan.from } : {}),
+  });
 
   /*
    * The turn's own id, which is not the stream's. The real client keeps the two apart — a
@@ -197,13 +224,8 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
   const turnId = crypto.randomUUID();
   const { request, delegate } = buildRunRequest(opts.body, {
     model,
-    /*
-     * An aside is not this thread, so it is sent as a conversation of its own — one
-     * buildRunRequest mints — under the thread's group, where Cursor's own accounting can still
-     * read the two as one piece of work.
-     */
-    conversationId: plan.kind === 'aside' ? undefined : identity.id,
-    conversationGroupId: identity.groupId,
+    conversationId: used.id,
+    conversationGroupId: used.groupId,
     runId: turnId,
     state: held?.state,
     /*
@@ -215,11 +237,10 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
   });
 
   /*
-   * What this turn writes back to the lane if it finishes. An aside writes nothing: it is not
-   * the thread, and the state it produces would stand where the thread's own belongs.
+   * What this turn writes back to its lane if it finishes. An aside writes to the aside's
+   * own lane, not the thread's — that is the whole point of routing it away above.
    */
-  const sticky: Sticky | undefined =
-    plan.kind === 'aside' ? undefined : { lane: identity.lane, messages: now, system };
+  const sticky: Sticky | undefined = { lane: used.lane, messages: now, system };
 
   const start = async (bearer: string) => {
     const controller = new AbortController();
@@ -344,7 +365,7 @@ function relay(
   /**
    * Which lane this turn's state belongs to, and the transcript to file it under.
    *
-   * Absent for a turn whose state is nobody's to keep — an aside, or a resumed turn whose lane
+   * Absent for a turn whose state is nobody's to keep — a resumed turn whose lane
    * did not outlive the request that parked it.
    */
   sticky?: Sticky,
@@ -464,8 +485,9 @@ function jsonError(status: number, message: string): Response {
  *
  * Every slug rather than every model name: on this upstream a model is chosen by its variant
  * (`claude-opus-5-thinking-high`), so a list of bare names would hide the choice that matters.
- * See catalog.ts, which holds the answer for the length of its TTL and is the same table the
- * relay resolves a request's model through.
+ * A context window (`[1m]`) is not a slug — it is a parameter on the request — so it is not
+ * pulled into the table. See catalog.ts, which holds the answer for the length of its TTL
+ * and is the same table the relay resolves a request's model through.
  */
 export async function fetchCursorModels(
   secret: string,

@@ -33,6 +33,8 @@ const usage = await import('../../core/db/usage.js');
 const turns = await import('../turns.js');
 const users = await import('../../core/db/users.js');
 const sessions = await import('../../core/db/sessions.js');
+const providers = await import('../../core/db/providers.js');
+const models = await import('../../core/db/models.js');
 const { signAccessToken } = await import('../../core/auth/tokens.js');
 const { installLocale } = await import('../../core/i18n/locale.js');
 const { attachUser } = await import('../../core/auth/guard.js');
@@ -56,6 +58,8 @@ function ok(label: string, cond: boolean, detail = ''): void {
 const alice = users.create({
   email: 'a@example.com', username: 'alice', passwordHash: 'x', role: 'user',
 });
+const mock = providers.create({ name: 'mock', kind: 'mock' });
+models.create({ name: 'opus', providerId: mock.id });
 const session = sessions.create({
   userId: alice.id, refreshToken: 'test-refresh', ttlMs: 3600_000,
 });
@@ -372,6 +376,17 @@ console.log('\n=== The guards around editing ===');
   ok('a message nobody knows is 404', missing.statusCode === 404, String(missing.statusCode));
   const empty = await post(`/api/conversations/${convRepo.create({ userId: alice.id, agent: 'claude' }).id}/retry`, {});
   ok('a conversation with no question cannot be retried', empty.statusCode === 400, String(empty.statusCode));
+}
+
+console.log('\n=== A turn without a model is refused ===');
+{
+  for (const m of models.list()) models.remove(m.id);
+  const c = convRepo.create({ userId: alice.id, agent: 'claude' });
+  const res = await post(`/api/conversations/${c.id}/messages`, { text: 'hello' });
+  ok('503', res.statusCode === 503, String(res.statusCode));
+  const err = (res.json() as { error?: string }).error ?? '';
+  ok('names the missing model rather than spawning the CLI', err.includes('host CLI login'), err);
+  ok('the question was not stored', questionsIn(c.id) === 0, String(questionsIn(c.id)));
 }
 
 await app.close();

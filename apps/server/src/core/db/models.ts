@@ -83,6 +83,41 @@ export function names(): string[] {
   ).map((r) => r.name);
 }
 
+/**
+ * The stem Claude Code meant, with parameters taken off.
+ *
+ * `claude-opus-5[1m]` is the model `claude-opus-5` running at a 1M window — a parameter, not
+ * a different row. `claude-haiku-4-5-20251001` is the same model as `claude-haiku-4-5` with
+ * Anthropic's snapshot date stamped on. The table is keyed by the stem; the suffix has to
+ * travel with the request so the upstream can still read it.
+ */
+export function stemOf(name: string): string {
+  return name.replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, '').trim();
+}
+
+/**
+ * What an Anthropic client is told we serve.
+ *
+ * `[1m]` is a context window, not a model. The table and the picker keep the stem. Claude
+ * Code still writes the window onto the name (`opus[1m]` → `claude-opus-5[1m]`) and looks
+ * that string up in `GET /v1/models`; missing it is refused as unknown. The alias is only
+ * for that lookup — it is not a row, and a pull must not create one.
+ */
+export function advertisedNames(): string[] {
+  const listed = names();
+  const seen = new Set(listed);
+  const extra: string[] = [];
+  for (const id of listed) {
+    if (id.includes('[')) continue;
+    if (!/^(claude-|opus$|sonnet$|haiku$|fable$)/.test(id)) continue;
+    const alias = `${id}[1m]`;
+    if (seen.has(alias)) continue;
+    seen.add(alias);
+    extra.push(alias);
+  }
+  return extra.length ? [...listed, ...extra] : listed;
+}
+
 /** Whether anything at all is configured, which is what "the deployment is not set up" means */
 export function any(): boolean {
   return Boolean(get('select 1 as x from models where enabled = 1 limit 1'));

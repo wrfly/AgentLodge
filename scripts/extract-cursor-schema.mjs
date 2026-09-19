@@ -98,6 +98,59 @@ const ROOTS = [
   'agent.v1.TurnEndedUpdate',
 
   /*
+   * Cursor's own web search and fetch. These are not MCP tools: the server asks the client
+   * whether to allow the call (`InteractionQuery`) and then does the work itself. Ignoring
+   * the query leaves the turn waiting for an `InteractionResponse` that never comes.
+   */
+  'agent.v1.InteractionQuery',
+  'agent.v1.InteractionResponse',
+  'agent.v1.WebSearchRequestQuery',
+  'agent.v1.WebSearchArgs',
+  'agent.v1.WebSearchRequestResponse',
+  'agent.v1.WebSearchRequestResponse.Approved',
+  'agent.v1.WebSearchRequestResponse.Rejected',
+  'agent.v1.WebFetchRequestQuery',
+  'agent.v1.WebFetchArgs',
+  'agent.v1.WebFetchRequestResponse',
+  'agent.v1.WebFetchRequestResponse.Approved',
+  'agent.v1.WebFetchRequestResponse.Rejected',
+  'agent.v1.WebFetchAllowlistPrecheckArgs',
+  'agent.v1.WebFetchAllowlistPrecheckResult',
+  'agent.v1.McpAllowlistPrecheckArgs',
+  'agent.v1.McpAllowlistPrecheckResult',
+  'agent.v1.ShellAllowlistPrecheckArgs',
+  'agent.v1.ShellAllowlistPrecheckResult',
+  'agent.v1.McpApproved',
+  'agent.v1.SwitchModeRequestQuery',
+  'agent.v1.SwitchModeArgs',
+  'agent.v1.SwitchModeRequestResponse',
+  'agent.v1.SwitchModeRequestResponse.Approved',
+  'agent.v1.McpAuthRequestQuery',
+  'agent.v1.McpAuthRequestResponse',
+  'agent.v1.McpAuthRequestResponse.Approved',
+  'agent.v1.ConnectScmRequestQuery',
+  'agent.v1.ConnectScmRequestResponse',
+  'agent.v1.ConnectScmRequestResponse.Approved',
+  'agent.v1.GenerateImageRequestQuery',
+  'agent.v1.GenerateImageArgs',
+  'agent.v1.GenerateImageRequestResponse',
+  'agent.v1.GenerateImageRequestResponse.Approved',
+  'agent.v1.CreatePlanRequestQuery',
+  'agent.v1.CreatePlanRequestResponse',
+  'agent.v1.CreatePlanResult',
+  'agent.v1.CreatePlanSuccess',
+  'agent.v1.AskQuestionInteractionQuery',
+  'agent.v1.AskQuestionInteractionResponse',
+  'agent.v1.AskQuestionResult',
+  'agent.v1.AskQuestionSuccess',
+  'agent.v1.SetupVmEnvironmentArgs',
+  'agent.v1.SetupVmEnvironmentResult',
+  'agent.v1.SetupVmEnvironmentSuccess',
+  'agent.v1.ReplaceEnvArgs',
+  'agent.v1.ReplaceEnvResult',
+  'agent.v1.ReplaceEnvSuccess',
+
+  /*
    * Conversation state, which the server keeps on the client rather than its own side.
    * Answering these is not optional: a turn stops when a blob it asked for does not come back.
    */

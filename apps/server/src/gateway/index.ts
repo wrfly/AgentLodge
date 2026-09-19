@@ -27,6 +27,7 @@ import {
   localAgentText,
   mockStream,
   outboundHeaders,
+  requestedModel,
   resolveUpstream,
   speaksAdaptiveThinking,
   endUserId,
@@ -40,6 +41,7 @@ import {
   ChatToResponses,
   anthropicRequestToChat,
   chatResponseToAnthropic,
+  chatStreamToResponse,
   errorTextOf,
   isErrorBody,
   responsesRequestToChat,
@@ -47,6 +49,7 @@ import {
   type ResponsesRequest,
 } from './translate.js';
 import { fetchCursor } from './cursor/index.js';
+import { threadOf } from './cursor/conversation.js';
 import type { ChatRequest } from './cursor/request.js';
 import { SseSniffer, absorbBody, absorbStream, newUsageAcc, type Wire } from './usage-parser.js';
 import {
@@ -61,6 +64,7 @@ import { fetchModels } from './models.js';
 import { startModelRefresh } from './model-refresh.js';
 import * as modelsRepo from '../core/db/models.js';
 import * as providersRepo from '../core/db/providers.js';
+import * as convRepo from '../core/db/conversations.js';
 import * as trimsRepo from '../core/db/trims.js';
 import { trimRedoAnswers } from './redo-trim.js';
 import { getBoolFresh, getNumberFresh } from '../core/db/settings.js';
@@ -296,7 +300,15 @@ async function handleProxy(
   }
 
   const asked = (req.body as { model?: unknown } | undefined)?.model;
-  const target = await resolveUpstream(wire, req.url, typeof asked === 'string' ? asked : undefined);
+  const bodyModel = typeof asked === 'string' ? asked : undefined;
+  const chosen = requestedModel(bodyModel, claims.cid ? convRepo.meta(claims.cid, claims.sub)?.model : undefined);
+  const target = await resolveUpstream(wire, req.url, chosen);
+  // The harness may have sent a Claude id it could actually name; the conversation holds
+  // the Cursor slug the user picked. Rewrite so the upstream sees that slug, including
+  // any parameter suffix (`[fast=false]`, `[1m]`).
+  if (target && chosen && chosen !== bodyModel && !target.upstreamModel) {
+    target.upstreamModel = chosen;
+  }
   if (!target) {
     return sendError(
       reply,
@@ -519,7 +531,14 @@ async function handleProxy(
             secret,
             body: attributed as ChatRequest,
             model: reqModel,
-            conversationId: claims.cid,
+            /*
+             * An API key has no gateway conversation. Claude Code still has a session id —
+             * the header, or the one nested in metadata.user_id — and that is what keeps
+             * Cursor's checkpoint attached to the same thread instead of hashing the
+             * transcript and missing on the second turn.
+             */
+            conversationId: claims.cid || threadOf(req.headers, body),
+            userId: claims.sub,
             signal: ac.signal,
             egress: (upstreamUrl) => egressTarget({ ...target, url: upstreamUrl }),
           })
@@ -596,6 +615,19 @@ async function handleProxy(
 
     const ct = upstream.headers.get('content-type') ?? 'application/json';
     /*
+     * Cursor — and any chat upstream we translate — only answers as SSE. A Messages
+     * client that did not ask for a stream still needs a JSON Message: Claude Code's
+     * `/model` probe is one, and it reads `usage.input_tokens` off the body. Relaying
+     * the stream as it stood left usage nested under `message_start`, which throws
+     * `undefined is not an object (evaluating '_r.usage.input_tokens')`.
+     *
+     * A native Anthropic upstream already honours `stream: false`, so it is left
+     * alone: if it sent SSE, that is what the client is reading.
+     */
+    const clientStream = (body as { stream?: unknown } | null)?.stream === true;
+    const upstreamSse = Boolean(upstream.body) && ct.includes('text/event-stream');
+    const streaming = upstreamSse && (clientStream || wire !== 'anthropic' || !target.translate);
+    /*
      * The upstream's own headers are not forwarded — only the ones below are written, and
      * that is deliberate: a shared subscription's allowance headers describe the pool, so
      * relaying them would show every user the whole platform's consumption. The allowance
@@ -607,7 +639,7 @@ async function handleProxy(
      * here would cost a second query to move the number by one turn.
      */
     const outHeaders = {
-      'content-type': ct,
+      'content-type': streaming ? ct : upstreamSse ? 'application/json' : ct,
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       // The one upstream header worth relaying: it says how long to wait, the gate or the
@@ -622,7 +654,6 @@ async function handleProxy(
      * failed to arrive, the client had already been told 200, and the best left to say was
      * an error object under a success. Held back, the same failure is a 504.
      */
-    const streaming = Boolean(upstream.body) && ct.includes('text/event-stream');
     if (streaming) reply.raw.writeHead(status, outHeaders);
 
     /*
@@ -826,7 +857,8 @@ async function handleProxy(
         if (idle) clearTimeout(idle);
       }
       acc.ttftMs = Date.now() - startedAt;
-      absorbBody(target.wire, text, acc);
+      if (upstreamSse) absorbStream(target.wire, text, acc);
+      else absorbBody(target.wire, text, acc);
       /*
        * A refusal keeps its wording but takes the shape of the wire it is arriving on.
        * Relaying an OpenAI error object as it stands under a 200 — which is how these
@@ -836,14 +868,19 @@ async function handleProxy(
        *
        * Non-streaming is rare either way — probes and fallbacks — but a Codex-shaped body
        * would carry the shared account's allowance in it just the same.
+       *
+       * Cursor's answer is always SSE. Fold it into one Chat Completions body first so
+       * the translator below sees the shape it already knows, and so usage is on the
+       * Message rather than nested under message_start.
        */
-      const refused = target.translate && wire === 'anthropic' && isErrorBody(safeParse(text));
+      const folded = upstreamSse && target.translate && wire === 'anthropic' ? chatStreamToResponse(text) : text;
+      const refused = target.translate && wire === 'anthropic' && isErrorBody(safeParse(folded));
       reply.raw.writeHead(status, outHeaders);
       reply.raw.write(
         refused
-          ? JSON.stringify(anthropicError('api_error', errorTextOf(safeParse(text))))
+          ? JSON.stringify(anthropicError('api_error', errorTextOf(safeParse(folded))))
           : target.translate && wire === 'anthropic'
-            ? chatResponseToAnthropic(text, reqModel)
+            ? chatResponseToAnthropic(folded, reqModel)
             : wire === 'anthropic'
               ? text
               : (stripRateLimits(text, (rl) => allowance.recordCodex(target.provider.name, target.wire, rl)) ?? text),
@@ -1049,7 +1086,9 @@ export function buildGateway(): FastifyInstance {
     }
 
     const counted = (req.body as { model?: unknown } | undefined)?.model;
-    const target = await resolveUpstream('anthropic', '/v1/messages/count_tokens', typeof counted === 'string' ? counted : undefined);
+    const bodyModel = typeof counted === 'string' ? counted : undefined;
+    const chosen = requestedModel(bodyModel, who.cid ? convRepo.meta(who.cid, who.sub)?.model : undefined);
+    const target = await resolveUpstream('anthropic', '/v1/messages/count_tokens', chosen);
     const egress = target && egressTarget(target);
     if (target && egress && target.apiKey && !target.translate) {
       try {
@@ -1110,10 +1149,11 @@ export function buildGateway(): FastifyInstance {
     }
     // Answered from the models table rather than by asking an upstream: with several
     // upstreams live at once there is no single one to ask, and this list is exactly what
-    // an administrator configured for people to pick from.
+    // an administrator configured for people to pick from. Window aliases (`[1m]`) travel
+    // with it so Claude Code's Default (`opus[1m]`) is a name the list actually contains.
     return reply.code(200).send({
       object: 'list',
-      data: modelsRepo.names().map((id) => ({ id, object: 'model' })),
+      data: modelsRepo.advertisedNames().map((id) => ({ id, object: 'model' })),
     });
   });
 

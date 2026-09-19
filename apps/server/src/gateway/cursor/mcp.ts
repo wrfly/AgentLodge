@@ -23,8 +23,16 @@ export const PROVIDER = 'agentlodge';
  * request with a 400 — which surfaces as `ERROR_PROVIDER_ERROR` and looks like the bridge
  * being wrong rather than a name collision. Claude Code's built-ins are exactly those names,
  * so every client tool goes out prefixed and is renamed back before the caller sees it.
+ *
+ * `WebSearch` and `WebFetch` are the exception: Cursor can run those itself, after this
+ * end approves the `interaction_query` it sends. Offering them as MCP tools makes Cursor
+ * call *us* instead, Claude Code then tries to execute a search it cannot, and the turn
+ * sits on Shimmying with nothing coming back.
  */
 const PREFIX = 'client__';
+
+/** Tools Cursor already implements; offering them as MCP is how a web search hangs */
+const NATIVE = new Set(['websearch', 'webfetch']);
 
 export const wireName = (name: string): string => `${PREFIX}${name}`;
 export const clientName = (name: string): string => (name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name);
@@ -93,6 +101,7 @@ export function toDefinitions(tools: ClientTool[] | undefined): Message[] {
   const out: Message[] = [];
   for (const tool of tools ?? []) {
     if (!tool.name) continue;
+    if (NATIVE.has(tool.name.replace(/[_-]/g, '').toLowerCase())) continue;
     const schema = (tool.parameters as Record<string, unknown>) ?? { type: 'object', properties: {} };
     const name = wireName(tool.name);
     out.push({

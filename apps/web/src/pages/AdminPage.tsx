@@ -8,6 +8,7 @@ import { UserUsage } from './admin/UserUsage';
 import { Invites } from './admin/Invites';
 import { TraceLogs } from './admin/Traces';
 import { SettingsTab } from './admin/Settings';
+import { ModelSetupTab } from './admin/ModelSetup';
 import { Audit } from './admin/Audit';
 
 const TABS: Array<{ id: AdminTab; label: string }> = [
@@ -16,6 +17,7 @@ const TABS: Array<{ id: AdminTab; label: string }> = [
   { id: 'user_usage', label: 'User usage' },
   { id: 'users', label: 'Accounts' },
   { id: 'invites', label: 'Invite codes' },
+  { id: 'models', label: 'Model setup' },
   { id: 'settings', label: 'System settings' },
   { id: 'trace_logs', label: 'Egress traces' },
   { id: 'audit', label: 'Audit log' },
@@ -27,7 +29,7 @@ export function AdminPage({ tab }: { tab: AdminTab }) {
   const t = useT();
   return (
     <Page title={t('Admin console')}>
-      <div className="mb-5 flex gap-1 border-b border-line">
+      <div className="mb-5 flex flex-wrap gap-1 border-b border-line">
         {/* Not `t` for the loop variable — that is the translator, and shadowing
             it here is exactly how these labels ended up untranslated. */}
         {TABS.map((item) => (
@@ -50,6 +52,7 @@ export function AdminPage({ tab }: { tab: AdminTab }) {
       {tab === 'user_usage' && <UserUsage />}
       {tab === 'users' && <Users />}
       {tab === 'invites' && <Invites />}
+      {tab === 'models' && <ModelSetupTab />}
       {tab === 'settings' && <SettingsTab />}
       {tab === 'trace_logs' && <TraceLogs />}
       {tab === 'audit' && <Audit />}

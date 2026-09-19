@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { ChatMessage } from './request.js';
+import * as stored from '../../core/db/cursor-lanes.js';
 
 /**
  * Cursor's side of a conversation, across the requests it is made of.
@@ -31,8 +32,9 @@ import type { ChatMessage } from './request.js';
  *   **a continuation**  everything held is still at the front of what arrived, so the
  *                       difference is what to send, and the state carries the rest
  *   **an aside**        a short exchange under a different system prompt beside a long thread,
- *                       which is what a classifier or a title-generator looks like. It gets a
- *                       conversation of its own and the lane keeps the thread's state
+ *                       which is what a classifier or a title-generator looks like. It keeps a
+ *                       lane of its own — same group, different conversation — so a second
+ *                       turn of the same aside can cache-read, and the thread's state stays
  *   **a rewrite**       neither: compaction rewrote the history, or the client started again.
  *                       The lane is replaced
  *
@@ -46,13 +48,21 @@ import type { ChatMessage } from './request.js';
  * nobody is continuing is one nobody will ask for again, and a count, oldest first, so no number
  * of abandoned threads can grow this without limit. Losing a lane costs a cache read and never
  * an answer — the transcript is still the whole conversation.
+ *
+ * The map is a cache. The same rows live in `cursor_lanes`, so a process restart does not
+ * throw away a session that is still being talked to. The TTL is days rather than an hour
+ * because that is how long a Claude Code session actually lasts; an hour was why walking
+ * away and coming back paid for the whole transcript again.
  */
 
 /** How long a lane stands with nothing arriving on it */
-const TTL_MS = 60 * 60_000;
+const TTL_MS = 7 * 24 * 60 * 60_000;
 
-/** At most this many conversations held at once, across every provider */
-const MAX_LANES = 64;
+/** At most this many conversations held in process, across every provider */
+const MAX_LANES = 512;
+
+/** And on disk, so a busy gateway does not keep every abandoned thread forever */
+const MAX_STORED = 4096;
 
 /** One message, reduced to what "is this the same conversation" needs to compare */
 export interface Turn {
@@ -170,8 +180,8 @@ export type Plan =
  *
  * Two signals, and neither is conclusive alone: a system prompt that is not the thread's, and a
  * transcript far shorter than the one held. A request that is genuinely a fresh start on the
- * same conversation looks like an aside by these rules and is answered as one — which costs it
- * the cache and nothing else, because an aside is still the whole transcript.
+ * same conversation looks like an aside by these rules and is answered as one: it still has a
+ * conversation, just not this one, so the thread's checkpoint is not the thing that is replaced.
  */
 function isAside(held: Conversation, now: Turn[], system: string): boolean {
   if (held.system && system && held.system !== system) return true;
@@ -192,11 +202,15 @@ export function planFor(held: Conversation | undefined, now: Turn[], system: str
   if (!held || !held.state.length) return { kind: 'fresh' };
   if (continues(held.messages, now)) {
     /*
-     * A system prompt that changed ends the conversation even where the transcript did not. The
-     * instructions went out inside the first turn's prompt and are part of the state now, so a
-     * continuation cannot replace them — only starting again can.
+     * Claude Code rewrites its system prompt every turn — the date, git status, a memory
+     * file. That is not a new conversation. Treating it as one threw away the checkpoint
+     * and resent the whole transcript, which is the cache-read of zero on every API-key
+     * turn. An aside is a *different* transcript, caught below; a system prompt that
+     * drifted on the same thread is still this thread.
+     *
+     * The new wording does not replace what Cursor already baked into the state. The
+     * alternative is paying for the history again to put a date stamp in front of it.
      */
-    if (held.system !== system) return { kind: 'fresh' };
     return now.length > held.messages.length
       ? { kind: 'continue', from: held.messages.length, held }
       : { kind: 'fresh' };
@@ -245,27 +259,83 @@ export interface Identity {
 }
 
 /**
+ * The identifier a Claude Code session already has, if the request carried one.
+ *
+ * Two places, same uuid: the `x-claude-code-session-id` header, and `session_id` inside
+ * the JSON blob Claude Code puts in `metadata.user_id`. The header is the one to prefer;
+ * the blob is overwritten by `withEndUser` before anything goes upstream, so this has to
+ * run against the body the client actually sent.
+ *
+ * That uuid is what an API-key request has instead of a gateway conversation id. Without
+ * it the lane used to be keyed by the first two messages of the transcript, which is a
+ * different value on the second turn than on the first — so every continuation looked
+ * like a new conversation and Cursor reported a cache-read of zero.
+ */
+export function threadOf(
+  headers: Record<string, string | string[] | undefined>,
+  body: unknown,
+): string | undefined {
+  const header = headers['x-claude-code-session-id'];
+  const fromHeader = (Array.isArray(header) ? header[0] : header)?.trim();
+  if (fromHeader) return fromHeader;
+
+  const raw = (body as { metadata?: { user_id?: unknown } } | null)?.metadata?.user_id;
+  if (typeof raw !== 'string' || !raw.startsWith('{')) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { session_id?: unknown };
+    return typeof parsed.session_id === 'string' && parsed.session_id ? parsed.session_id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The first user turn, which is the one thing a thread keeps for as long as it is itself */
+function openingFingerprint(messages: Turn[]): string {
+  const first = messages.find((m) => m.role === 'user') ?? messages[0];
+  return crypto.createHash('sha256').update(JSON.stringify(first ?? '')).digest('hex').slice(0, 20);
+}
+
+/**
  * Which conversation this request is, as far as this end can tell.
  *
- * The thread is the gateway's own conversation id, out of the runtime token: the one identifier
- * that actually says "these requests belong together". Traffic from a plain API key carries
- * none, and there the opening of the transcript stands in — stable for as long as the thread
- * keeps its first exchange, which is exactly as long as its state is worth anything.
+ * Preference:
+ *   1. the gateway's own conversation id, out of the runtime token
+ *   2. Claude Code's session id, out of the header or metadata
+ *   3. a hash of the first *user* message, namespaced by who sent it
+ *
+ * (3) used to hash the first two messages of the transcript. The second turn of a
+ * conversation is `[user, assistant, user]`, so that hash changed after the first
+ * reply and the checkpoint was never found again.
  */
 export function identify(opts: {
   conversationId?: string;
+  userId?: string;
   model: { id: string; parameters: { [k: string]: unknown }[]; max: boolean };
   messages: Turn[];
 }): Identity {
+  const who = opts.userId ? `u:${opts.userId}:` : '';
   const thread = opts.conversationId
-    ? `cid:${opts.conversationId}`
-    : `open:${crypto
-        .createHash('sha256')
-        .update(JSON.stringify(opts.messages.slice(0, 2)))
-        .digest('hex')
-        .slice(0, 20)}`;
+    ? `${who}cid:${opts.conversationId}`
+    : `${who}open:${openingFingerprint(opts.messages)}`;
   const lane = `${thread}::${configuration(opts.model)}`;
   return { lane, id: idFrom(`cursor-conversation:${lane}`), groupId: idFrom(`cursor-group:${thread}`) };
+}
+
+/**
+ * The conversation an aside is, beside the thread `identify()` named.
+ *
+ * Same group, so Cursor's accounting still sees one piece of work. A different lane and a
+ * different conversation id, so the checkpoint it writes cannot stand where the thread's
+ * belongs — and a second turn of the same classifier can still continue it.
+ *
+ * The system prompt and the opening user turn are in the key: two asides that happen to
+ * share a model (a title-generator and a classifier) are not one conversation, and a later
+ * naming of the same thread is not a continuation of an earlier one.
+ */
+export function asideOf(identity: Identity, now: Turn[], system: string): Identity {
+  const sys = crypto.createHash('sha256').update(system).digest('hex').slice(0, 12);
+  const lane = `${identity.lane}::aside:${sys}:${openingFingerprint(now)}`;
+  return { lane, id: idFrom(`cursor-conversation:${lane}`), groupId: identity.groupId };
 }
 
 /**
@@ -310,8 +380,9 @@ export function keep(sticky: Sticky | undefined, carried: { state: Uint8Array; b
 /** What this lane is holding, if it is still held */
 export function recall(lane: string): Conversation | undefined {
   expire();
-  const held = lanes.get(lane);
+  const held = lanes.get(lane) ?? loadStored(lane);
   if (!held) return undefined;
+  if (!lanes.has(lane)) lanes.set(lane, { ...held, blobs: new Map(held.blobs), at: Date.now() });
   // Copied on the way out: the caller hands these to a session, which goes on writing to its
   // own copy for the length of the turn
   return { ...held, blobs: new Map(held.blobs) };
@@ -321,14 +392,18 @@ export function recall(lane: string): Conversation | undefined {
 export function remember(lane: string, conversation: Conversation): void {
   expire();
   // Re-inserted rather than updated, so insertion order stays use order and the oldest lane
-  // evicted below is the one nobody has come back to
+  // evicted below is the one nobody has come back to. Evicting from the map does not delete
+  // the row: a later recall reads it back, which is the difference between a cache and a
+  // store.
   lanes.delete(lane);
   while (lanes.size >= MAX_LANES) {
     const oldest = lanes.keys().next().value;
     if (oldest === undefined) break;
     lanes.delete(oldest);
   }
-  lanes.set(lane, { ...conversation, blobs: new Map(conversation.blobs), at: Date.now() });
+  const held: Held = { ...conversation, blobs: new Map(conversation.blobs), at: Date.now() };
+  lanes.set(lane, held);
+  persist(lane, held);
 }
 
 function expire(): void {
@@ -338,10 +413,44 @@ function expire(): void {
   }
 }
 
-/** How many conversations are held, for a test and for anything watching this grow */
+function persist(lane: string, conversation: Conversation): void {
+  try {
+    stored.save(lane, conversation);
+    stored.dropOlderThan(Date.now() - TTL_MS);
+    while (stored.count() > MAX_STORED) {
+      const gone = stored.dropOldest();
+      if (!gone) break;
+      lanes.delete(gone);
+    }
+  } catch {
+    /* A missing table must not fail the turn that just finished */
+  }
+}
+
+function loadStored(lane: string): Conversation | undefined {
+  try {
+    const row = stored.load(lane);
+    if (!row) return undefined;
+    return { state: row.state, blobs: row.blobs, messages: row.messages, system: row.system };
+  } catch {
+    return undefined;
+  }
+}
+
+/** How many conversations are held in process, for a test and for anything watching this grow */
 export const laneCount = (): number => lanes.size;
+
+/** Forget the in-process copy, the way a restart does. The next recall reads the store. */
+export function unload(): void {
+  lanes.clear();
+}
 
 /** For tests, which must not inherit another test's conversations */
 export function clear(): void {
   lanes.clear();
+  try {
+    stored.dropAll();
+  } catch {
+    /* */
+  }
 }

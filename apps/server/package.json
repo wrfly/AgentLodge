@@ -43,6 +43,8 @@
     "test:events": "tsx src/core/events.test.ts",
     "test:translate": "tsx src/gateway/translate.test.ts",
     "test:cursor": "tsx src/gateway/cursor/cursor.test.ts",
+    "test:cursor-conversation": "tsx src/gateway/cursor/conversation.test.ts",
+    "test:cursor-balance": "tsx src/gateway/cursor/balance.test.ts",
     "test:cursor-relay": "tsx src/gateway/cursor/relay.test.ts",
     "cursor:probe": "tsx src/gateway/cursor/probe.ts",
     "test:relay": "tsx src/gateway/relay.test.ts",

@@ -83,11 +83,16 @@ export class ChatStream {
  * The turn's cost, as Cursor reported it.
  *
  * Agent mode ends every turn with the real counts, which is the difference between metering
- * this upstream and guessing at it. Two things are folded on the way through, because Chat
- * Completions has fewer places to put numbers than Cursor has numbers:
+ * this upstream and guessing at it. Cursor's `input_tokens` is the size of the prompt, and
+ * `cache_read_tokens` / `cache_write_tokens` say how much of that prompt was served from a
+ * checkpoint or stored into one — they are not extra tokens on top. Chat Completions has
+ * fewer places to put numbers, so they travel like this:
  *
- *   **cache writes** are billed as ordinary input. There is no field for them on this wire,
- *   and they are input that happened to also be stored.
+ *   **cache reads** sit in `prompt_tokens_details.cached_tokens`, the field this wire already
+ *   has. The translator turns that into Anthropic's `cache_read_input_tokens`.
+ *
+ *   **cache writes** sit next to them as `cache_write_tokens`. The field is not on the OpenAI
+ *   schema; without it they vanished into ordinary input and Claude Code never saw a write.
  *
  *   **reasoning** is reported but not added to the total. Whether `output_tokens` already
  *   counts it is not something this end can see, and charging twice for the same tokens is
@@ -95,13 +100,14 @@ export class ChatStream {
  */
 function chatUsage(usage?: Usage): Record<string, unknown> {
   const cached = usage?.cacheRead ?? 0;
-  const prompt = (usage?.input ?? 0) + cached + (usage?.cacheWrite ?? 0);
+  const wrote = usage?.cacheWrite ?? 0;
+  const prompt = usage?.input ?? 0;
   const completion = usage?.output ?? 0;
   return {
     prompt_tokens: prompt,
     completion_tokens: completion,
     total_tokens: prompt + completion,
-    prompt_tokens_details: { cached_tokens: cached },
+    prompt_tokens_details: { cached_tokens: cached, cache_write_tokens: wrote },
     ...(usage?.reasoning ? { completion_tokens_details: { reasoning_tokens: usage.reasoning } } : {}),
   };
 }

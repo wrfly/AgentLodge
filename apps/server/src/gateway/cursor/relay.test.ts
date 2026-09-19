@@ -66,6 +66,7 @@ const CATALOG: Message = {
     {
       name: 'claude-opus-5',
       legacy_slugs: ['claude-opus-4-6'],
+      id_aliases: ['opus', 'opus-5'],
       /*
        * The context window, which is a parameter and not a variant: no slug in the table below
        * selects one, so a caller asking for it can only be checked against this.
@@ -88,6 +89,50 @@ const CATALOG: Message = {
           // its own field that this variant happens not to set
           variant_string_representation: 'claude-opus-5-thinking-max',
           parameter_values: [{ id: 'thinking', value: 'true' }, { id: 'effort', value: 'max' }],
+        },
+      ],
+    },
+    {
+      name: 'claude-opus-4-8',
+      id_aliases: ['opus', 'opus-latest', 'opus-4-8'],
+      variants: [
+        {
+          variant_string_representation: 'claude-opus-4-8',
+          is_default_non_max_config: true,
+          parameter_values: [{ id: 'effort', value: 'high' }],
+        },
+      ],
+    },
+    {
+      name: 'claude-sonnet-5',
+      id_aliases: ['sonnet-5'],
+      variants: [
+        {
+          variant_string_representation: 'claude-sonnet-5',
+          is_default_non_max_config: true,
+          parameter_values: [{ id: 'effort', value: 'high' }],
+        },
+      ],
+    },
+    {
+      name: 'claude-sonnet-4-6',
+      id_aliases: ['sonnet', 'sonnet-latest', 'sonnet-4-6'],
+      variants: [
+        {
+          variant_string_representation: 'claude-sonnet-4-6',
+          is_default_non_max_config: true,
+          parameter_values: [],
+        },
+      ],
+    },
+    {
+      name: 'claude-haiku-4-5',
+      id_aliases: ['haiku', 'haiku-4-5'],
+      variants: [
+        {
+          variant_string_representation: 'claude-haiku-4-5',
+          is_default_non_max_config: true,
+          parameter_values: [{ id: 'thinking', value: 'true' }],
         },
       ],
     },
@@ -229,6 +274,7 @@ const users = await import('../../core/db/users.js');
 const providers = await import('../../core/db/providers.js');
 const models = await import('../../core/db/models.js');
 const usage = await import('../../core/db/usage.js');
+const apiKeys = await import('../../core/db/api-keys.js');
 const { signRuntimeToken } = await import('../../core/runtime-token.js');
 const { buildGateway } = await import('../index.js');
 const { fetchCursorModels } = await import('./index.js');
@@ -280,7 +326,7 @@ const asClaude = (payload: Record<string, unknown>) =>
     method: 'POST',
     url: '/v1/messages',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    payload: { model: 'cursor-model', max_tokens: 1024, ...payload },
+    payload: { model: 'cursor-model', max_tokens: 1024, stream: true, ...payload },
   });
 
 const asCodex = (payload: Record<string, unknown>) =>
@@ -297,7 +343,8 @@ async function run(): Promise<void> {
     reset((message, out) => {
       if (!message['run_request']) return;
       out(text('four'));
-      out(ended({ input_tokens: 120, output_tokens: 8, cache_read_tokens: 30 }));
+      // Cursor's input_tokens is the whole prompt; cache_read is how much of it was cached
+      out(ended({ input_tokens: 150, output_tokens: 8, cache_read_tokens: 30 }));
       endStream();
     });
 
@@ -360,6 +407,39 @@ async function run(): Promise<void> {
     );
   }
 
+  console.log('\n=== A /model probe gets a Message with usage, not SSE ===');
+  {
+    /*
+     * Claude Code validates `/model` with a non-streaming messages.create and then
+     * reads `_r.usage.input_tokens`. Cursor only answers in SSE; folding it is what
+     * stops that from throwing.
+     */
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(text('Hi'));
+      out(ended({ input_tokens: 12, output_tokens: 1 }));
+      endStream();
+    });
+    const res = await asClaude({
+      stream: false,
+      max_tokens: 1,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi', cache_control: { type: 'ephemeral' } }] }],
+    });
+    ok('the body is JSON, not an event stream', !res.body.includes('event:'), res.body.slice(0, 160));
+    const out = JSON.parse(res.body) as {
+      type?: string;
+      usage?: { input_tokens?: number; output_tokens?: number };
+      content?: Array<{ text?: string }>;
+    };
+    ok('it is an Anthropic Message', out.type === 'message', res.body);
+    ok(
+      'with usage.input_tokens, which is what the probe reads',
+      typeof out.usage?.input_tokens === 'number',
+      JSON.stringify(out.usage),
+    );
+    ok('carrying the text', out.content?.[0]?.text === 'Hi', res.body);
+  }
+
   console.log('\n=== The housekeeping a turn does not progress without ===');
   {
     const blobId = new Uint8Array([1, 2, 3]);
@@ -391,10 +471,69 @@ async function run(): Promise<void> {
     const env = ((context?.['success'] as Message)?.['request_context'] as Message)?.['env'] as Message;
     ok('the workspace question is answered', Boolean(env), JSON.stringify(context));
     ok('with somewhere to be', Array.isArray(env?.['workspace_paths']), JSON.stringify(env?.['workspace_paths']));
+    ok(
+      'and web search is on, so Cursor runs it rather than asking the caller',
+      ((context?.['success'] as Message)?.['request_context'] as Message)?.['web_search_enabled'] === true,
+      JSON.stringify(context),
+    );
 
     const returned = sentWith('get_blob_result')?.['get_blob_result'] as Message;
     ok('a blob the server stored comes back byte for byte', Buffer.from((returned?.['blob_data'] as Uint8Array) ?? []).equals(Buffer.from(blob)), JSON.stringify(returned));
     ok('and the turn gets to its answer', res.body.includes('context in hand'), res.body);
+  }
+
+  console.log('\n=== A web search is approved rather than left hanging ===');
+  {
+    reset((message, out) => {
+      if (message['run_request']) {
+        out(text('searching'));
+        out(frame({
+          interaction_query: { id: 7, web_search_request_query: { args: { search_term: 'who is president' } } },
+        }));
+        return;
+      }
+      const reply = message['interaction_response'] as Message | undefined;
+      if (reply?.['web_search_request_response']) {
+        out(text('the incumbent'));
+        out(ended({ input_tokens: 2, output_tokens: 3 }));
+        endStream();
+      }
+    });
+    const res = await asClaude({ messages: [{ role: 'user', content: 'who is president' }] });
+    ok('the turn finishes', res.body.includes('the incumbent'), res.body);
+    const reply = said.map((m) => m['interaction_response'] as Message | undefined).find(Boolean);
+    ok(
+      'the search was approved',
+      Boolean((reply?.['web_search_request_response'] as Message | undefined)?.['approved']),
+      JSON.stringify(reply),
+    );
+    ok('under the id that asked', reply?.['id'] === 7, JSON.stringify(reply));
+  }
+
+  console.log('\n=== A mode switch is approved the same way ===');
+  {
+    reset((message, out) => {
+      if (message['run_request']) {
+        out(frame({
+          interaction_query: { id: 3, switch_mode_request_query: { args: { target_mode_id: 'agent' } } },
+        }));
+        return;
+      }
+      const reply = message['interaction_response'] as Message | undefined;
+      if (reply?.['switch_mode_request_response']) {
+        out(text('switched'));
+        out(ended({ input_tokens: 1, output_tokens: 1 }));
+        endStream();
+      }
+    });
+    const res = await asClaude({ messages: [{ role: 'user', content: 'search then' }] });
+    ok('the turn finishes', res.body.includes('switched'), res.body);
+    const reply = said.map((m) => m['interaction_response'] as Message | undefined).find(Boolean);
+    ok(
+      'the switch was approved',
+      Boolean((reply?.['switch_mode_request_response'] as Message | undefined)?.['approved']),
+      JSON.stringify(reply),
+    );
   }
 
   console.log('\n=== A second turn continues the conversation rather than retelling it ===');
@@ -474,8 +613,10 @@ async function run(): Promise<void> {
 
   console.log('\n=== A classifier beside the thread does not take the thread with it ===');
   {
+    const asideCheckpoint = new TextEncoder().encode('aside-state');
     reset((message, out) => {
       if (!message['run_request']) return;
+      out(frame({ conversation_checkpoint_update: asideCheckpoint }));
       out(text('a sum'));
       out(ended({ input_tokens: 3, output_tokens: 1 }));
       endStream();
@@ -493,7 +634,31 @@ async function run(): Promise<void> {
     const sent = runRequest();
     ok('as a conversation of its own', ((sent['conversation_state'] as Uint8Array) ?? []).length === 0, JSON.stringify(sent['conversation_state']));
     ok('under the thread it happened beside', String(sent['conversation_group_id'] ?? '').length > 0, JSON.stringify(sent['conversation_group_id']));
-    ok('and it leaves the thread where it was', conversation.laneCount() === 1, String(conversation.laneCount()));
+    const asideId = String(sent['conversation_id'] ?? '');
+    ok('and the thread still has its own lane', conversation.laneCount() === 2, String(conversation.laneCount()));
+
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(text('a short name'));
+      out(ended({ input_tokens: 2, output_tokens: 1, cache_read_tokens: 3 }));
+      endStream();
+    });
+    const asideAgain = await asClaude({
+      system: 'name this conversation in four words',
+      messages: [
+        { role: 'user', content: 'what should this be called' },
+        { role: 'assistant', content: 'a sum' },
+        { role: 'user', content: 'shorter' },
+      ],
+    });
+    const continued = runRequest();
+    ok('a second turn of the aside continues it', String(continued['conversation_id']) === asideId, `${continued['conversation_id']} vs ${asideId}`);
+    ok(
+      'sending the state it left, not starting again',
+      Buffer.from((continued['conversation_state'] as Uint8Array) ?? []).equals(Buffer.from(asideCheckpoint)),
+      JSON.stringify(continued['conversation_state']),
+    );
+    ok('and is answered', asideAgain.body.includes('a short name'), asideAgain.body);
 
     reset((message, out) => {
       if (!message['run_request']) return;
@@ -514,6 +679,73 @@ async function run(): Promise<void> {
     const resumed = runRequest();
     ok('so the next real turn still continues it', ((resumed['conversation_state'] as Uint8Array) ?? []).length > 0, JSON.stringify(resumed['conversation_state']));
     ok('and gets its answer', third.body.includes('thirteen'), third.body);
+    conversation.clear();
+  }
+
+  console.log('\n=== An API-key session continues without a gateway conversation id ===');
+  {
+    /*
+     * Claude Code pointed at this gateway has no cid. The session header is the thread, and
+     * the checkpoint has to survive a process restart — otherwise every turn resends the
+     * transcript and Cursor reports a cache-read of zero.
+     */
+    const { plaintext } = apiKeys.create(user.id, 'cli');
+    const asKey = (payload: Record<string, unknown>) =>
+      app.inject({
+        method: 'POST',
+        url: '/v1/messages',
+        headers: {
+          authorization: `Bearer ${plaintext}`,
+          'content-type': 'application/json',
+          'x-claude-code-session-id': 'sess-cli-1',
+        },
+        payload: { model: 'cursor-model', max_tokens: 1024, stream: true, ...payload },
+      });
+
+    const checkpoint = new TextEncoder().encode('api-key-checkpoint');
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(frame({ conversation_checkpoint_update: checkpoint }));
+      out(text('noted'));
+      out(ended({ input_tokens: 20, output_tokens: 2 }));
+      endStream();
+    });
+    await asKey({ messages: [{ role: 'user', content: 'remember seven' }] });
+    const opened = runRequest();
+    ok(
+      'the first turn starts a conversation',
+      ((opened['conversation_state'] as Uint8Array) ?? []).length === 0,
+      JSON.stringify(opened['conversation_state']),
+    );
+
+    conversation.unload();
+    ok('a restart forgets the in-process copy', conversation.laneCount() === 0);
+
+    reset((message, out) => {
+      if (!message['run_request']) return;
+      out(text('ten'));
+      out(ended({ input_tokens: 4, output_tokens: 1, cache_read_tokens: 20 }));
+      endStream();
+    });
+    await asKey({
+      messages: [
+        { role: 'user', content: 'remember seven' },
+        { role: 'assistant', content: 'noted' },
+        { role: 'user', content: 'add three' },
+      ],
+    });
+    const carried = runRequest();
+    ok(
+      'the second turn still sends the checkpoint',
+      Buffer.from((carried['conversation_state'] as Uint8Array) ?? []).equals(Buffer.from(checkpoint)),
+      JSON.stringify(carried['conversation_state']),
+    );
+    const asked = ((carried['action'] as Message)?.['user_message_action'] as Message)?.['user_message'] as Message;
+    ok(
+      'and only what is new',
+      String(asked?.['text']).includes('add three') && !String(asked?.['text']).includes('remember seven'),
+      String(asked?.['text']),
+    );
     conversation.clear();
   }
 
@@ -714,6 +946,25 @@ async function run(): Promise<void> {
     const unknown = await catalog.resolveModel('some-model-cursor-never-heard-of-high', options);
     ok('a slug it has never heard of falls back to the suffixes', unknown.from === 'suffix', JSON.stringify(unknown));
     ok('and keeps what that can work out', unknown.id === 'some-model-cursor-never-heard-of', JSON.stringify(unknown));
+
+    const opus = await catalog.resolveModel('opus', options);
+    ok('the short name is the newest opus this account has', opus.id === 'claude-opus-5' && opus.from === 'catalog', JSON.stringify(opus));
+    const opusWindow = await catalog.resolveModel('opus[1m]', options);
+    ok('and a window on it still applies', opusWindow.id === 'claude-opus-5' && opusWindow.parameters.some((p) => p['id'] === 'context' && p['value'] === '1m'), JSON.stringify(opusWindow.parameters));
+
+    const sonnet = await catalog.resolveModel('sonnet', options);
+    ok("sonnet is Claude Code's sonnet, not Cursor's sonnet-latest", sonnet.id === 'claude-sonnet-5', JSON.stringify(sonnet));
+    const cursorLatest = await catalog.resolveModel('sonnet-latest', options);
+    ok("Cursor's own latest alias is left as Cursor listed it", cursorLatest.id === 'claude-sonnet-4-6', JSON.stringify(cursorLatest));
+
+    const dated = await catalog.resolveModel('claude-haiku-4-5-20251001', options);
+    ok('a dated Anthropic id finds the undated model', dated.id === 'claude-haiku-4-5' && dated.from === 'catalog', JSON.stringify(dated));
+    const haiku = await catalog.resolveModel('haiku', options);
+    ok('and so does the short name', haiku.id === 'claude-haiku-4-5', JSON.stringify(haiku));
+    const old = await catalog.resolveModel('claude-3-5-sonnet-20241022', options);
+    ok('an older Anthropic id takes the newest sonnet', old.id === 'claude-sonnet-5', JSON.stringify(old));
+    const missing = await catalog.resolveModel('claude-sonnet-4-5', options);
+    ok('a family id this account does not list still lands on that family', missing.id === 'claude-sonnet-5', JSON.stringify(missing));
   }
 
   console.log('\n=== The model list is every slug the account can choose ===');
@@ -726,6 +977,12 @@ async function run(): Promise<void> {
       JSON.stringify(out),
     );
     ok('a legacy name is offered too', out.models.includes('claude-opus-4-6'), JSON.stringify(out.models));
+    ok('and so is the short name Claude Code would have sent', out.models.includes('opus') && out.models.includes('sonnet'), JSON.stringify(out.models));
+    ok(
+      'a context window is a parameter, not a model to pull',
+      !out.models.includes('claude-opus-5[1m]') && !out.models.includes('opus[1m]'),
+      JSON.stringify(out.models.filter((n) => n.includes('['))),
+    );
   }
 
   console.log('\n=== A turn resolves its model before sending it ===');

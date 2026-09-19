@@ -13,9 +13,9 @@ import { fetchModels } from './models.js';
  *
  * Two decisions worth stating:
  *
- * - **The active provider only.** That is the one the picker draws from. Configuring another
- *   is a thing an administrator is doing at that moment, with the button in front of them;
- *   polling every upstream on the off chance is traffic and key exposure for nothing.
+ * - **Every upstream that can answer a list.** The picker is the union of those rows, so
+ *   refreshing only one would leave the rest frozen at whatever was typed in by hand. Mock
+ *   and local-agent have no list and are skipped.
  *
  * - **A failure changes nothing.** A compatibility layer that has no model list answers 404
  *   every hour; emptying the list on that would take a working picker away over a question

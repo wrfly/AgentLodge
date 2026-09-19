@@ -517,7 +517,7 @@ function migrateInTx(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
       console.log('     so they have not been written in. Per million tokens, in USD:');
       console.log('       deepseek-flash    in 0.15  cache read 0.003  cache write 0.15  out 0.60');
       console.log('       deepseek-v4-pro   in 0.66  cache read 0.022  cache write 0.66  out 1.98');
-      console.log(`     Convert at your own rate and add them under Settings → Price table.`);
+      console.log(`     Convert at your own rate and add them under Model setup → Price table.`);
     }
 
     for (const c of currency === 'USD' ? corrections : []) {
@@ -1209,7 +1209,7 @@ function migrateInTx(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         console.log(
           `[db] the '*' catch-all is in ${star.currency} and this deployment settles in `
             + `${settlement}. The seed prices it at $5/$25 per MTok; enter that in your own `
-            + 'currency under Settings → Price table.',
+            + 'currency under Model setup → Price table.',
         );
       } else {
         const now = new Date().toISOString();

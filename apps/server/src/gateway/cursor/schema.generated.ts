@@ -36,7 +36,7 @@ export interface FieldDesc {
 export type MessageDesc = readonly FieldDesc[];
 
 /** The CLI these tables were read out of */
-export const BUNDLE_VERSION = "2026.09.15-d2fe57e";
+export const BUNDLE_VERSION = "2026.09.18-9a7762b";
 
 export const MESSAGES: Record<string, MessageDesc> = {
   "agent.v1.AgentClientMessage": [
@@ -93,6 +93,32 @@ export const MESSAGES: Record<string, MessageDesc> = {
     {"no":7,"name":"interaction_query","kind":"message","type":"agent.v1.InteractionQuery","oneof":"message"},
     {"no":8,"name":"ttft_breakdown","kind":"message","type":"agent.v1.TtftBreakdown"},
   ],
+  "agent.v1.AskQuestionInteractionQuery": [
+    {"no":1,"name":"args","kind":"message","type":"agent.v1.AskQuestionArgs"},
+    {"no":2,"name":"tool_call_id","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.AskQuestionInteractionResponse": [
+    {"no":1,"name":"result","kind":"message","type":"agent.v1.AskQuestionResult"},
+  ],
+  "agent.v1.AskQuestionResult": [
+    {"no":1,"name":"success","kind":"message","type":"agent.v1.AskQuestionSuccess","oneof":"result"},
+    {"no":2,"name":"error","kind":"message","type":"agent.v1.AskQuestionError","oneof":"result"},
+    {"no":3,"name":"rejected","kind":"message","type":"agent.v1.AskQuestionRejected","oneof":"result"},
+    {"no":4,"name":"async","kind":"message","type":"agent.v1.AskQuestionAsync","oneof":"result"},
+  ],
+  "agent.v1.AskQuestionSuccess": [
+    {"no":1,"name":"answers","kind":"message","repeated":true,"type":"agent.v1.AskQuestionSuccess.Answer"},
+  ],
+  "agent.v1.ConnectScmRequestQuery": [
+    {"no":1,"name":"args","kind":"message","type":"agent.v1.ConnectScmArgs"},
+  ],
+  "agent.v1.ConnectScmRequestResponse": [
+    {"no":1,"name":"approved","kind":"message","type":"agent.v1.ConnectScmRequestResponse.Approved","oneof":"result"},
+    {"no":2,"name":"rejected","kind":"message","type":"agent.v1.ConnectScmRequestResponse.Rejected","oneof":"result"},
+    {"no":3,"name":"failed","kind":"message","type":"agent.v1.ConnectScmRequestResponse.Failed","oneof":"result"},
+  ],
+  "agent.v1.ConnectScmRequestResponse.Approved": [
+  ],
   "agent.v1.ConversationAction": [
     {"no":1,"name":"user_message_action","kind":"message","type":"agent.v1.UserMessageAction","oneof":"action"},
     {"no":2,"name":"resume_action","kind":"message","type":"agent.v1.ResumeAction","oneof":"action"},
@@ -112,6 +138,20 @@ export const MESSAGES: Record<string, MessageDesc> = {
     {"no":17,"name":"request_context_parts","kind":"message","opt":true,"type":"agent.v1.RequestContextPartReferences"},
     {"no":18,"name":"goal_continuation_action","kind":"message","type":"agent.v1.GoalContinuationAction","oneof":"action"},
     {"no":19,"name":"inject_context_action","kind":"message","type":"agent.v1.InjectContextAction","oneof":"action"},
+  ],
+  "agent.v1.CreatePlanRequestQuery": [
+    {"no":1,"name":"args","kind":"message","type":"agent.v1.CreatePlanArgs"},
+    {"no":2,"name":"tool_call_id","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.CreatePlanRequestResponse": [
+    {"no":1,"name":"result","kind":"message","type":"agent.v1.CreatePlanResult"},
+  ],
+  "agent.v1.CreatePlanResult": [
+    {"no":1,"name":"success","kind":"message","type":"agent.v1.CreatePlanSuccess","oneof":"result"},
+    {"no":2,"name":"error","kind":"message","type":"agent.v1.CreatePlanError","oneof":"result"},
+    {"no":3,"name":"plan_uri","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.CreatePlanSuccess": [
   ],
   "agent.v1.Error": [
     {"no":1,"name":"message","kind":"scalar","scalar":9},
@@ -225,12 +265,57 @@ export const MESSAGES: Record<string, MessageDesc> = {
     {"no":56,"name":"adopt_args","kind":"message","type":"agent.v1.AdoptArgs","oneof":"message"},
     {"no":57,"name":"machine_id","kind":"scalar","opt":true,"scalar":9},
   ],
+  "agent.v1.GenerateImageArgs": [
+    {"no":1,"name":"description","kind":"scalar","scalar":9},
+    {"no":2,"name":"file_path","kind":"scalar","opt":true,"scalar":9},
+    {"no":5,"name":"reference_image_paths","kind":"scalar","repeated":true,"scalar":9},
+    {"no":6,"name":"aspect_ratio","kind":"scalar","opt":true,"scalar":9},
+  ],
+  "agent.v1.GenerateImageRequestQuery": [
+    {"no":1,"name":"args","kind":"message","type":"agent.v1.GenerateImageArgs"},
+    {"no":2,"name":"tool_call_id","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.GenerateImageRequestResponse": [
+    {"no":1,"name":"approved","kind":"message","type":"agent.v1.GenerateImageRequestResponse.Approved","oneof":"result"},
+    {"no":2,"name":"rejected","kind":"message","type":"agent.v1.GenerateImageRequestResponse.Rejected","oneof":"result"},
+  ],
+  "agent.v1.GenerateImageRequestResponse.Approved": [
+    {"no":1,"name":"description","kind":"scalar","scalar":9},
+  ],
   "agent.v1.GetBlobArgs": [
     {"no":1,"name":"blob_id","kind":"scalar","scalar":12},
   ],
   "agent.v1.GetBlobResult": [
     {"no":1,"name":"blob_data","kind":"scalar","opt":true,"scalar":12},
     {"no":2,"name":"error","kind":"message","opt":true,"type":"agent.v1.Error"},
+  ],
+  "agent.v1.InteractionQuery": [
+    {"no":1,"name":"id","kind":"scalar","scalar":13},
+    {"no":2,"name":"web_search_request_query","kind":"message","type":"agent.v1.WebSearchRequestQuery","oneof":"query"},
+    {"no":3,"name":"ask_question_interaction_query","kind":"message","type":"agent.v1.AskQuestionInteractionQuery","oneof":"query"},
+    {"no":4,"name":"switch_mode_request_query","kind":"message","type":"agent.v1.SwitchModeRequestQuery","oneof":"query"},
+    {"no":7,"name":"create_plan_request_query","kind":"message","type":"agent.v1.CreatePlanRequestQuery","oneof":"query"},
+    {"no":8,"name":"setup_vm_environment_args","kind":"message","type":"agent.v1.SetupVmEnvironmentArgs","oneof":"query"},
+    {"no":9,"name":"web_fetch_request_query","kind":"message","type":"agent.v1.WebFetchRequestQuery","oneof":"query"},
+    {"no":10,"name":"pr_management_request_query","kind":"message","type":"agent.v1.PrManagementRequestQuery","oneof":"query"},
+    {"no":11,"name":"mcp_auth_request_query","kind":"message","type":"agent.v1.McpAuthRequestQuery","oneof":"query"},
+    {"no":12,"name":"generate_image_request_query","kind":"message","type":"agent.v1.GenerateImageRequestQuery","oneof":"query"},
+    {"no":13,"name":"replace_env_args","kind":"message","type":"agent.v1.ReplaceEnvArgs","oneof":"query"},
+    {"no":14,"name":"connect_scm_request_query","kind":"message","type":"agent.v1.ConnectScmRequestQuery","oneof":"query"},
+  ],
+  "agent.v1.InteractionResponse": [
+    {"no":1,"name":"id","kind":"scalar","scalar":13},
+    {"no":2,"name":"web_search_request_response","kind":"message","type":"agent.v1.WebSearchRequestResponse","oneof":"result"},
+    {"no":3,"name":"ask_question_interaction_response","kind":"message","type":"agent.v1.AskQuestionInteractionResponse","oneof":"result"},
+    {"no":4,"name":"switch_mode_request_response","kind":"message","type":"agent.v1.SwitchModeRequestResponse","oneof":"result"},
+    {"no":7,"name":"create_plan_request_response","kind":"message","type":"agent.v1.CreatePlanRequestResponse","oneof":"result"},
+    {"no":8,"name":"setup_vm_environment_result","kind":"message","type":"agent.v1.SetupVmEnvironmentResult","oneof":"result"},
+    {"no":9,"name":"web_fetch_request_response","kind":"message","type":"agent.v1.WebFetchRequestResponse","oneof":"result"},
+    {"no":10,"name":"pr_management_result","kind":"message","type":"agent.v1.PrManagementResult","oneof":"result"},
+    {"no":11,"name":"mcp_auth_request_response","kind":"message","type":"agent.v1.McpAuthRequestResponse","oneof":"result"},
+    {"no":12,"name":"generate_image_request_response","kind":"message","type":"agent.v1.GenerateImageRequestResponse","oneof":"result"},
+    {"no":13,"name":"replace_env_result","kind":"message","type":"agent.v1.ReplaceEnvResult","oneof":"result"},
+    {"no":14,"name":"connect_scm_request_response","kind":"message","type":"agent.v1.ConnectScmRequestResponse","oneof":"result"},
   ],
   "agent.v1.InteractionUpdate": [
     {"no":1,"name":"text_delta","kind":"message","type":"agent.v1.TextDeltaUpdate","oneof":"message"},
@@ -271,6 +356,17 @@ export const MESSAGES: Record<string, MessageDesc> = {
     {"no":3,"name":"set_blob_args","kind":"message","type":"agent.v1.SetBlobArgs","oneof":"message"},
     {"no":4,"name":"span_context","kind":"message","opt":true,"type":"agent.v1.SpanContext"},
   ],
+  "agent.v1.McpAllowlistPrecheckArgs": [
+    {"no":1,"name":"provider_identifier","kind":"scalar","scalar":9},
+    {"no":2,"name":"tool_name","kind":"scalar","scalar":9},
+    {"no":3,"name":"tool_call_id","kind":"scalar","opt":true,"scalar":9},
+    {"no":4,"name":"annotations_json","kind":"scalar","opt":true,"scalar":9},
+  ],
+  "agent.v1.McpAllowlistPrecheckResult": [
+    {"no":1,"name":"allowlisted","kind":"scalar","scalar":8},
+  ],
+  "agent.v1.McpApproved": [
+  ],
   "agent.v1.McpArgs": [
     {"no":1,"name":"name","kind":"scalar","scalar":9},
     {"no":2,"name":"args","kind":"map","mapKey":9,"mapValueKind":"message","type":"google.protobuf.Value"},
@@ -281,6 +377,15 @@ export const MESSAGES: Record<string, MessageDesc> = {
     {"no":7,"name":"smart_mode_approval_only","kind":"scalar","scalar":8},
     {"no":8,"name":"skip_approval","kind":"scalar","scalar":8},
     {"no":9,"name":"server_identifier","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.McpAuthRequestQuery": [
+    {"no":1,"name":"args","kind":"message","type":"agent.v1.McpAuthArgs"},
+  ],
+  "agent.v1.McpAuthRequestResponse": [
+    {"no":1,"name":"approved","kind":"message","type":"agent.v1.McpAuthRequestResponse.Approved","oneof":"result"},
+    {"no":2,"name":"rejected","kind":"message","type":"agent.v1.McpAuthRequestResponse.Rejected","oneof":"result"},
+  ],
+  "agent.v1.McpAuthRequestResponse.Approved": [
   ],
   "agent.v1.McpError": [
     {"no":1,"name":"error","kind":"scalar","scalar":9},
@@ -476,6 +581,18 @@ export const MESSAGES: Record<string, MessageDesc> = {
     {"no":7,"name":"output_blob_id","kind":"scalar","opt":true,"scalar":12},
     {"no":8,"name":"range_applied","kind":"scalar","scalar":8},
   ],
+  "agent.v1.ReplaceEnvArgs": [
+    {"no":1,"name":"config","kind":"message","type":"agent.v1.ReplaceEnvConfig"},
+    {"no":2,"name":"mode","kind":"enum","type":"agent.v1.ReplaceEnvMode"},
+    {"no":3,"name":"checkout_ref_overrides","kind":"message","repeated":true,"type":"agent.v1.RepoCheckoutRefOverride"},
+  ],
+  "agent.v1.ReplaceEnvResult": [
+    {"no":1,"name":"success","kind":"message","type":"agent.v1.ReplaceEnvSuccess","oneof":"result"},
+    {"no":2,"name":"failure","kind":"message","type":"agent.v1.ReplaceEnvFailure","oneof":"result"},
+  ],
+  "agent.v1.ReplaceEnvSuccess": [
+    {"no":1,"name":"setup_logs","kind":"scalar","scalar":9},
+  ],
   "agent.v1.RequestContext": [
     {"no":2,"name":"rules","kind":"message","repeated":true,"type":"agent.v1.CursorRule"},
     {"no":4,"name":"env","kind":"message","type":"agent.v1.RequestContextEnv"},
@@ -590,6 +707,26 @@ export const MESSAGES: Record<string, MessageDesc> = {
   "agent.v1.SetBlobResult": [
     {"no":1,"name":"error","kind":"message","opt":true,"type":"agent.v1.Error"},
   ],
+  "agent.v1.SetupVmEnvironmentArgs": [
+    {"no":2,"name":"install_command","kind":"scalar","scalar":9},
+    {"no":3,"name":"start_command","kind":"scalar","scalar":9},
+    {"no":4,"name":"dockerfile_contents","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.SetupVmEnvironmentResult": [
+    {"no":1,"name":"success","kind":"message","type":"agent.v1.SetupVmEnvironmentSuccess","oneof":"result"},
+  ],
+  "agent.v1.SetupVmEnvironmentSuccess": [
+  ],
+  "agent.v1.ShellAllowlistPrecheckArgs": [
+    {"no":1,"name":"command","kind":"scalar","scalar":9},
+    {"no":2,"name":"working_directory","kind":"scalar","scalar":9},
+    {"no":3,"name":"parsing_result","kind":"message","type":"agent.v1.ShellCommandParsingResult"},
+    {"no":4,"name":"classifier_result","kind":"message","opt":true,"type":"agent.v1.CommandClassifierResult"},
+    {"no":5,"name":"tool_call_id","kind":"scalar","opt":true,"scalar":9},
+  ],
+  "agent.v1.ShellAllowlistPrecheckResult": [
+    {"no":1,"name":"allowlisted","kind":"scalar","scalar":8},
+  ],
   "agent.v1.ShellArgs": [
     {"no":1,"name":"command","kind":"scalar","scalar":9},
     {"no":2,"name":"working_directory","kind":"scalar","scalar":9},
@@ -692,6 +829,20 @@ export const MESSAGES: Record<string, MessageDesc> = {
     {"no":16,"name":"output_tail","kind":"scalar","opt":true,"scalar":9},
     {"no":17,"name":"elided_chars","kind":"scalar","opt":true,"scalar":13},
   ],
+  "agent.v1.SwitchModeArgs": [
+    {"no":1,"name":"target_mode_id","kind":"scalar","scalar":9},
+    {"no":2,"name":"explanation","kind":"scalar","opt":true,"scalar":9},
+    {"no":3,"name":"tool_call_id","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.SwitchModeRequestQuery": [
+    {"no":1,"name":"args","kind":"message","type":"agent.v1.SwitchModeArgs"},
+  ],
+  "agent.v1.SwitchModeRequestResponse": [
+    {"no":1,"name":"approved","kind":"message","type":"agent.v1.SwitchModeRequestResponse.Approved","oneof":"result"},
+    {"no":2,"name":"rejected","kind":"message","type":"agent.v1.SwitchModeRequestResponse.Rejected","oneof":"result"},
+  ],
+  "agent.v1.SwitchModeRequestResponse.Approved": [
+  ],
   "agent.v1.TextDeltaUpdate": [
     {"no":1,"name":"text","kind":"scalar","scalar":9},
     {"no":2,"name":"is_server_notice","kind":"scalar","scalar":8},
@@ -741,6 +892,47 @@ export const MESSAGES: Record<string, MessageDesc> = {
     {"no":4,"name":"prepend_user_messages","kind":"message","repeated":true,"type":"agent.v1.UserMessage"},
     {"no":6,"name":"interrupted_pending_tool_call_resolutions","kind":"message","opt":true,"type":"agent.v1.InterruptedPendingToolCallResolutions"},
     {"no":7,"name":"conversation_history","kind":"message","opt":true,"type":"agent.v1.ConversationHistory"},
+  ],
+  "agent.v1.WebFetchAllowlistPrecheckArgs": [
+    {"no":1,"name":"url","kind":"scalar","scalar":9},
+    {"no":2,"name":"tool_call_id","kind":"scalar","opt":true,"scalar":9},
+  ],
+  "agent.v1.WebFetchAllowlistPrecheckResult": [
+    {"no":1,"name":"allowlisted","kind":"scalar","scalar":8},
+  ],
+  "agent.v1.WebFetchArgs": [
+    {"no":1,"name":"url","kind":"scalar","scalar":9},
+    {"no":2,"name":"tool_call_id","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.WebFetchRequestQuery": [
+    {"no":1,"name":"args","kind":"message","type":"agent.v1.WebFetchArgs"},
+    {"no":2,"name":"skip_approval","kind":"scalar","scalar":8},
+    {"no":3,"name":"smart_mode_approval","kind":"message","type":"agent.v1.SmartModeApproval"},
+  ],
+  "agent.v1.WebFetchRequestResponse": [
+    {"no":1,"name":"approved","kind":"message","type":"agent.v1.WebFetchRequestResponse.Approved","oneof":"result"},
+    {"no":2,"name":"rejected","kind":"message","type":"agent.v1.WebFetchRequestResponse.Rejected","oneof":"result"},
+  ],
+  "agent.v1.WebFetchRequestResponse.Approved": [
+  ],
+  "agent.v1.WebFetchRequestResponse.Rejected": [
+    {"no":1,"name":"reason","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.WebSearchArgs": [
+    {"no":1,"name":"search_term","kind":"scalar","scalar":9},
+    {"no":2,"name":"tool_call_id","kind":"scalar","scalar":9},
+  ],
+  "agent.v1.WebSearchRequestQuery": [
+    {"no":1,"name":"args","kind":"message","type":"agent.v1.WebSearchArgs"},
+  ],
+  "agent.v1.WebSearchRequestResponse": [
+    {"no":1,"name":"approved","kind":"message","type":"agent.v1.WebSearchRequestResponse.Approved","oneof":"result"},
+    {"no":2,"name":"rejected","kind":"message","type":"agent.v1.WebSearchRequestResponse.Rejected","oneof":"result"},
+  ],
+  "agent.v1.WebSearchRequestResponse.Approved": [
+  ],
+  "agent.v1.WebSearchRequestResponse.Rejected": [
+    {"no":1,"name":"reason","kind":"scalar","scalar":9},
   ],
   "agent.v1.WriteArgs": [
     {"no":1,"name":"path","kind":"scalar","scalar":9},

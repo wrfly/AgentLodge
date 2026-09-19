@@ -12,9 +12,9 @@ export const AGENTS: Array<{ id: AgentId; path: string; label: string }> = [
  * for. Usage, which was part of it, is the new id.
  */
 export type AdminTab =
-  | 'overview' | 'user_usage' | 'users' | 'invites' | 'settings' | 'trace_logs' | 'audit';
+  | 'overview' | 'user_usage' | 'users' | 'invites' | 'models' | 'settings' | 'trace_logs' | 'audit';
 const ADMIN_TABS: AdminTab[] =
-  ['overview', 'user_usage', 'users', 'invites', 'settings', 'trace_logs', 'audit'];
+  ['overview', 'user_usage', 'users', 'invites', 'models', 'settings', 'trace_logs', 'audit'];
 
 export type Route =
   | { name: 'chat'; agent: AgentId }

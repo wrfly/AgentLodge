@@ -129,9 +129,15 @@ export function CredentialsCard() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
                     <span className="truncate text-[13px] font-medium">{c.id}</span>
-                    <span className="shrink-0 text-[11px] text-faint">{c.kind}</span>
+                    {c.kind !== c.id && (
+                      <span className="shrink-0 text-[11px] text-faint">{c.kind}</span>
+                    )}
                     {c.renewable === false && (
-                      <span className="shrink-0 text-[11px] text-danger">{t('cannot be renewed — sign in again')}</span>
+                      <span className={clsx('shrink-0 text-[11px]', !c.expiresAt || c.expiresAt <= Date.now() ? 'text-danger' : 'text-faint')}>
+                        {!c.expiresAt || c.expiresAt <= Date.now()
+                          ? t('cannot be renewed — sign in again')
+                          : t('usable until expiry — then sign in again')}
+                      </span>
                     )}
                   </div>
                   <div className="truncate font-mono text-[11px] text-faint">

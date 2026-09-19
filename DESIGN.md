@@ -426,16 +426,17 @@ Cursor 自己的客户端里就有出路，因为它在企业代理后面遇到�
 id 是这边生成的 uuid，两个请求的 `x-request-id` 都是它 —— Cursor 自己的客户端就是从这个头里读的。
 两个调用都只是「POST 一个 protobuf」，所以审计代理、egress 闸门、abort 信号全都跟别的上游一样有效。
 
-> ⚠️ **这条上游要出两个域名。** 有 egress allowlist 的部署要同时放开 `api2.cursor.sh` 和
-> agent host（默认 `agentn.us.api5.cursor.sh`，Cursor 通过 `GetServerConfig` 公布，这里按当前值写死）。
-> 上游配了 Base URL 的话两个都走那一个地址。
+> ⚠️ **这条上游要出两个域名。** 一个 turn 分两个调用：消息发到 `api2.cursor.sh`（HTTP/1.1 即可），回来的流从 agent host（默认 `agentn.us.api5.cursor.sh`）读。**agent host 只讲 HTTP/2** —— Node 的 `fetch` 走 HTTP/1.1，连上去会直接 `fetch failed`，所以 RunSSE 走 `node:http2`。有 egress allowlist 的部署两个域名都要放。上游填了 Base URL 的话两个都走那一个地址。审计代理默认出网也是 HTTP/1.1，前面挂代理时要开 `PROXY_HTTP2=1`，否则代理会把同样的 HTTP/1.1 打到 agent host 上，一样过不去。
 
 #### 这段是对着真客户端校准过的
 
 `--endpoint` 可以把 `cursor-agent` 指到本地，于是拿它自己的登录打一次 turn、用**本仓库的 schema**
 解出来，就能回答「读 bundle 读不出来」的那几个问题。把 `GetServerConfig` 的 `http2_config` 回成
-`FORCE_BIDI_DISABLED`，真客户端就会走 HTTP/1.1，也就是上面这条 BidiAppend + RunSSE 的路 ——
+`FORCE_BIDI_DISABLED`，真客户端就会走 BidiAppend + RunSSE 而不是 HTTP/2 双向流 ——
 它自己就支持这条路，这点本身就是这个设计的第一个确认。
+
+那次校准对着的是本地假端点，假端点讲 HTTP/1.1；**真实的 agent host 不讲 HTTP/1.1**。请求形状
+仍然是那一次对齐的，运输层 RunSSE 必须是 HTTP/2。
 
 抓到的和改掉的：
 
@@ -447,14 +448,15 @@ id 是这边生成的 uuid，两个请求的 `x-request-id` 都是它 —— Cur
 | 单条消息的 prompt | 就是那句话 | 前面挂了 `User: ` |
 
 请求结构 13 个字段里 10 个一致，剩下 3 个是故意的：`mode` 我们在调用方没带工具时发 ASK 而不是
-AGENT，`exclude_workspace_context` 发 true（这边真的没有工作区），`max_mode: false` 显式写出来
-（proto3 默认值，服务端读到的是一回事）。
+AGENT，`exclude_workspace_context` 发 false（`true` 会被服务端以 "Workspace context exclusion is
+not allowed" 拒掉，turn 在第一个 token 之前以 502 结束；没有工作区的那部分由 session.ts 应答），
+`max_mode` 按模型表显式写出（proto3 默认值，服务端读到的是一回事）。
 
 还没对齐的两个，都判断成可以不发：`x-blob-encryption-key`（blob 在这边只是原样存取的字节，没有
 要加密的东西）和 `connect-content-encoding: gzip`（不压也是合法的）。
 
-**仍然没有验证的是 Cursor 的服务端会不会接受这些字节** —— 上面这些都是在本地对着真客户端比对
-出来的，没有一次请求真的出网。`cursor:probe` 就是问这一个问题的。
+`cursor:probe` 是对着真服务端打一轮的工具。模型清单和 turn 都已经出过网：清单走 API host 的
+HTTP/1.1，turn 的 RunSSE 必须走 HTTP/2。
 
 #### 一个 turn 会反过来要三样东西（`cursor/session.ts`）
 
@@ -504,7 +506,7 @@ Cursor 在等工具结果时把 turn 挂着，而网关对外的协议在工具�
 |---|---|---|
 | 凭据 | Cursor API key → `/auth/exchange_user_api_key` 换访问令牌 | 令牌几小时就过期，key 是人能创建和吊销的那个。令牌只在内存里，401 时强制重换一次 |
 | schema | 从 CLI bundle 里提取，提取结果进版本库 | 字段号挪了是**静默**的：请求照样被接受，只是意思变了。所以产物提交上来，diff 就是报警 |
-| 模型名 | 拿 slug 去 `AvailableModels` 的 variant 表里查，查出 `model_id` + `parameters` + `max_mode` | `claude-opus-5-thinking-high` **不是模型名**，是模型 `claude-opus-5` 的一个 variant，这三样只有那张表说得准。按后缀猜（`cursor/request.ts` 的 `splitModel`）只在查不到时兜底：`-max` 看着像 `-low/-medium/-high/-xhigh` 那一档的第五档，但它是不是同时开 max_mode 是另一个字段、另一个价钱；`-fast` 在有的模型上是 parameter，在有的模型上就是名字的一部分（`cursor-grok-4.6-high-fast` vs `composer-2.5-fast`）。表按凭据缓存 5 分钟，查不到不让 turn 失败 |
+| 模型名 | 拿 slug 去 `AvailableModels` 的 variant 表里查，查出 `model_id` + `parameters` + `max_mode` | `claude-opus-5-thinking-high` **不是模型名**，是模型 `claude-opus-5` 的一个 variant，这三样只有那张表说得准。Claude Code 的名字对不上这张表时也要落到一个能发的模型上：短名 `opus`/`sonnet`/`haiku`/`fable` 和带日期的 Anthropic id（`claude-haiku-4-5-20251001`）取这个账号里该家族最新的那个，而不是 Cursor 自己的 `opus-latest`（那是 4.8）。按后缀猜（`cursor/request.ts` 的 `splitModel`）只在查不到时兜底：`-max` 看着像 `-low/-medium/-high/-xhigh` 那一档的第五档，但它是不是同时开 max_mode 是另一个字段、另一个价钱；`-fast` 在有的模型上是 parameter，在有的模型上就是名字的一部分（`cursor-grok-4.6-high-fast` vs `composer-2.5-fast`）。表按凭据缓存 5 分钟，查不到不让 turn 失败 |
 | 出错的 code | Connect 的 code 翻成 HTTP status | `resource_exhausted` 变成 429，闸门才会真的退让；一律 502 的话 AIMD 和客户端重试都失效 |
 | thinking | 丢掉 | Cursor 单独一条 channel 发（这点比聊天 RPC 好），但 Chat Completions 没有这个字段。掺进 `content` 更糟：推理会以答案的口气混在答案里，还没有边界 |
 | 一次一个工具调用 | 交出去一个就挂起等 | 接回来时要能把结果对上，一个 id 一个答案最省事。模型想同时叫两个，就被问两次 |
@@ -1823,7 +1825,7 @@ agent-net  agent 容器 ↔ gateway
 | `/v1/messages/count_tokens` 支不支持 | 支持，网关单独实现了这个端点（不占并发 slot、不计费，但**必须鉴权** —— 它是拿真 key 往外转发的） |
 | `--resume` 跨容器重启可不可靠 | 可靠，前提是 `~/.claude` 落在持久卷上。所以整个 HOME 都挂出来了（§6.2），写入层随 `rm` 消失而会话记录不能 |
 | 上游真实限流阈值 | 3 是保守初值；AIMD 熔断器会自动适应，后台也能改。见 §7.4 |
-| 当前模型价格 | 价格表里是占位值，**部署后必须按上游官网单价核对一遍**（后台 → 系统设置 → 价格表） |
+| 当前模型价格 | 价格表里是占位值，**部署后必须按上游官网单价核对一遍**（后台 → 模型配置 → 价格表） |
 | 挂 `/etc/localtime` 能不能给容器换时区 | **不能，而且会骗过验证**。宿主机那是符号链接，绑上去覆盖的是镜像里的 `/usr/share/zoneinfo/Etc/UTC`：容器内 `date` 显示 +08 是对的，Node/ICU 仍按区名 `Etc/UTC` 查自己的数据，还是 UTC。用 `TZ` 环境变量 |
 | Claude Code 会不会主动写记忆 | **会**。没说「记住」，只在对话里提了偏好，它就写了两个 `type: feedback` 文件 + 索引，还把相对日期转成了绝对日期，并交叉引用 `[[...]]` |
 | 记忆能不能跨会话召回 | 能。换会话、换工作目录，照样读得到并照着执行 |

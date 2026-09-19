@@ -37,7 +37,7 @@ const { initDb } = await import('../core/db/index.js');
 initDb();
 const providers = await import('../core/db/providers.js');
 const models = await import('../core/db/models.js');
-const { resolveUpstream } = await import('./upstream.js');
+const { resolveUpstream, requestedModel } = await import('./upstream.js');
 
 let pass = 0;
 let fail = 0;
@@ -68,6 +68,22 @@ console.log('\n=== One name, one upstream ===');
   ok('goes to the provider its row names', target?.provider.id === cheap.id, target?.provider.name);
   ok('with that provider\'s credential', target?.apiKey === 'sk-key-a', target?.apiKey);
   ok('and no rewrite of the model', target?.upstreamModel === undefined, String(target?.upstreamModel));
+
+  // A name that would win the fallback if the suffix were treated as unknown
+  models.create({ name: 'aaa-first', providerId: dear.id });
+  const windowed = await resolveUpstream('anthropic', '/v1/messages', 'claude-opus-5[1m]');
+  ok('a Claude Code window suffix still finds that row', windowed?.provider.id === cheap.id, windowed?.provider.name);
+  ok('and is forwarded as written, so the window is not dropped', windowed?.upstreamModel === undefined, String(windowed?.upstreamModel));
+  ok(
+    'GET /v1/models advertises the window form Claude Code will look up',
+    models.advertisedNames().includes('claude-opus-5[1m]'),
+    models.advertisedNames().join(','),
+  );
+
+  models.create({ name: 'claude-haiku-4-5', providerId: cheap.id });
+  const dated = await resolveUpstream('anthropic', '/v1/messages', 'claude-haiku-4-5-20251001');
+  ok('a dated Anthropic snapshot still finds the undated row', dated?.provider.id === cheap.id, dated?.provider.name);
+  ok('and is forwarded as written, so the date is not dropped', dated?.upstreamModel === undefined, String(dated?.upstreamModel));
 }
 
 console.log('\n=== One name, two upstreams ===');
@@ -101,6 +117,13 @@ console.log('\n=== An upstream that calls it something else ===');
   models.create({ name: 'deepseek-v4-flash', providerId: cheap.id, upstreamName: 'deepseek-chat' });
   const target = await resolveUpstream('anthropic', '/v1/messages', 'deepseek-v4-flash');
   ok('the body gets the upstream\'s own name', target?.upstreamModel === 'deepseek-chat', String(target?.upstreamModel));
+}
+
+console.log('\n=== The conversation\'s model outranks the harness ===');
+{
+  ok('a Cursor pick wins over Claude Code\'s Default', requestedModel('claude-opus-5[1m]', 'composer-2.5[fast=false]') === 'composer-2.5[fast=false]');
+  ok('and with no conversation choice the body is used', requestedModel('claude-opus-5[1m]', undefined) === 'claude-opus-5[1m]');
+  ok('an empty conversation model is not a choice', requestedModel('claude-opus-5', '') === 'claude-opus-5');
 }
 
 console.log('\n=== Nothing configured ===');

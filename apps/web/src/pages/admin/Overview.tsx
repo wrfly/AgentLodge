@@ -9,6 +9,7 @@ import clsx from 'clsx';
 import {
   admin,
   type AdminOverview,
+  type BalanceResult,
   type GateStatus,
   type PlatformPreset,
   type PlatformUsage,
@@ -31,9 +32,30 @@ import { PLATFORM_PRESETS } from './shared';
 
 /* ---------------- Overview ---------------- */
 
+type TFn = (source: string, vars?: Record<string, string | number>) => string;
+type BalanceRow = NonNullable<BalanceResult['balances']>[number];
+
+function balanceSub(t: TFn, b: BalanceRow): string | undefined {
+  const parts: string[] = [];
+  if (b.used && b.limit) {
+    parts.push(
+      t('{used} used of {limit} prepaid', {
+        used: `${b.used} ${b.currency}`,
+        limit: `${b.limit} ${b.currency}`,
+      }),
+    );
+  } else if (b.used) {
+    parts.push(t('{used} used', { used: `${b.used} ${b.currency}` }));
+  }
+  if (b.planName) parts.push(b.planName);
+  if (b.billedHere) parts.push(t('counted from this platform'));
+  return parts.join(' · ') || undefined;
+}
+
 export function Overview() {
   const t = useT();
   const [data, setData] = useState<AdminOverview | null>(null);
+  const [balance, setBalance] = useState<BalanceResult | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
@@ -44,6 +66,13 @@ export function Overview() {
   }, []);
   // Fetched once, but the window it describes ends; the card asks for a fresh one when it does
   useEffect(reload, [reload]);
+  /*
+   * Cursor's prepaid is several dashboard RPCs. The landing page used to wait for them
+   * inside `/api/admin/overview`; they load on their own now, the way the gate card does.
+   */
+  useEffect(() => {
+    void admin.balance().then(setBalance).catch(() => setBalance(null));
+  }, []);
 
   if (error) return <Banner tone="error">{error}</Banner>;
   if (!data) return <Spinner />;
@@ -59,18 +88,33 @@ export function Overview() {
           {...statMoney(data.allTime, data.currency)}
           sub={t('{n} turns', { n: data.allTime.turns })}
         />
-        <Stat
-          label={t('Upstream balance')}
-          value={
-            data.balance?.balances[0]
-              ? `${data.balance.balances[0].totalBalance} ${data.balance.balances[0].currency}`
-              : '—'
-          }
-          sub={data.balance ? undefined : t('No API key configured')}
-        />
+        {balance === undefined ? (
+          <Stat label={t('Upstream balance')} value="…" />
+        ) : balance?.balances.length ? (
+          balance.balances.map((b, i) => (
+            <Stat
+              key={`${b.source ?? 'bal'}-${b.label ?? i}`}
+              label={
+                b.source === 'cursor'
+                  ? t('{name} prepaid', { name: b.label || 'Cursor' })
+                  : b.label
+                    ? t('{name} balance', { name: b.label })
+                    : t('Upstream balance')
+              }
+              value={b.totalBalance ? `${b.totalBalance} ${b.currency}` : '—'}
+              sub={balanceSub(t, b)}
+            />
+          ))
+        ) : (
+          <Stat
+            label={t('Upstream balance')}
+            value="—"
+            sub={balance?.error ?? t('No API key configured')}
+          />
+        )}
       </div>
 
-      <UpstreamAllowanceCard />
+      <UpstreamAllowanceCard prepaid={balance?.balances} />
 
       <PlatformUsageCard />
 
@@ -417,7 +461,7 @@ function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () =>
  * serves every tenant and the pool's numbers are nobody's allowance in
  * particular.
  */
-function UpstreamAllowanceCard() {
+function UpstreamAllowanceCard({ prepaid }: { prepaid?: BalanceRow[] }) {
   const t = useT();
   const [view, setView] = useState<UpstreamAllowanceView | null>(null);
   const [showRaw, setShowRaw] = useState(false);
@@ -429,78 +473,127 @@ function UpstreamAllowanceCard() {
     return () => clearInterval(timer);
   }, []);
 
-  if (!view) return null;
+  const pots = (prepaid ?? []).filter(
+    (b) => b.source === 'cursor' && (b.limit || b.totalBalance),
+  );
 
-  const a = view.allowance;
+  if (!view && !pots.length) return null;
+
+  const a = view?.allowance;
   const windows = Object.entries(a?.windows ?? {}).filter(
     ([, w]) => w.utilization !== null || w.resetsAt !== null,
   );
+  const showWindows = Boolean(view && !view.unreachable && !view.error && a && windows.length);
+  const showEmptyHeaders = Boolean(view && !view.unreachable && !view.error && a && !windows.length && !pots.length);
+  const showNothingYet = Boolean(view && !view.unreachable && !view.error && !a && !pots.length);
+  const gatewayFailed = Boolean((view?.unreachable || view?.error) && !pots.length);
 
   return (
-    <Card title={t('Upstream plan allowance')}>
-      {view.unreachable || view.error ? (
-        <Banner tone="warn">{view.error ?? t('Cannot reach the gateway')}</Banner>
-      ) : !a ? (
+    <Card title={pots.length && !showWindows ? t('Prepaid credit') : t('Upstream plan allowance')}>
+      {gatewayFailed ? (
+        <Banner tone="warn">{view?.error ?? t('Cannot reach the gateway')}</Banner>
+      ) : showNothingYet ? (
         <Empty text={t('Nothing observed yet — it fills in on the next upstream response.')} />
+      ) : showEmptyHeaders ? (
+        <Empty text={t('The upstream sent no limit windows')} />
       ) : (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[12px] text-muted">
-            <span className="font-mono text-ink">{a.provider}</span>
-            {a.status && <span>{a.status}</span>}
-            <span className="text-faint">{t('as of {t}', { t: fmtDate(a.observedAt) })}</span>
-          </div>
-
-          {windows.length === 0 ? (
-            <Empty text={t('The upstream sent no limit windows')} />
-          ) : (
-            windows.map(([key, w]) => (
-              <div key={key}>
+          {pots.map((b) => {
+            const used = Number(b.used);
+            const limit = Number(b.limit);
+            const pct = limit > 0 && Number.isFinite(used) ? Math.min(Math.max(used / limit, 0), 1) : 0;
+            return (
+              <div key={`${b.label}-${b.totalBalance}`}>
                 <div className="mb-1 flex items-baseline justify-between text-[12.5px]">
-                  <span>{t(WINDOW_LABEL[key] ?? key)}</span>
+                  <span>{b.label || 'Cursor'}</span>
                   <span className="font-mono tabular-nums">
-                    {w.utilization === null ? '—' : `${Math.round(w.utilization * 100)}%`}
+                    {b.totalBalance
+                      ? t('{amount} remaining', { amount: `${b.totalBalance} ${b.currency}` })
+                      : '—'}
                   </span>
                 </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-line">
-                  <div
-                    className={clsx(
-                      'h-full rounded-full',
-                      (w.utilization ?? 0) >= 0.9 ? 'bg-red-500' : (w.utilization ?? 0) >= 0.75 ? 'bg-amber-500' : 'bg-accent',
-                    )}
-                    style={{ width: `${Math.min(Math.max((w.utilization ?? 0) * 100, 0), 100)}%` }}
-                  />
-                </div>
+                {limit > 0 && Number.isFinite(used) && (
+                  <div className="h-1.5 overflow-hidden rounded-full bg-line">
+                    <div
+                      className={clsx(
+                        'h-full rounded-full',
+                        pct >= 0.9 ? 'bg-red-500' : pct >= 0.75 ? 'bg-amber-500' : 'bg-accent',
+                      )}
+                      style={{ width: `${pct * 100}%` }}
+                    />
+                  </div>
+                )}
                 <div className="mt-1 flex flex-wrap gap-x-2 text-[11.5px] text-faint">
-                  {w.resetsAt && <span>{t('resets {t}', { t: fmtDate(w.resetsAt) })}</span>}
-                  {/* Only when this window is older than the reading it sits in: a window
-                      the upstream did not mention this time is somebody else's last turn,
-                      and how old it is decides whether the number means anything */}
-                  {w.observedAt && a.observedAt && w.observedAt !== a.observedAt && (
-                    <span>{t('read {t}', { t: fmtDate(w.observedAt) })}</span>
+                  {b.used && b.limit && (
+                    <span>
+                      {t('{used} used of {limit} prepaid', {
+                        used: `${b.used} ${b.currency}`,
+                        limit: `${b.limit} ${b.currency}`,
+                      })}
+                    </span>
                   )}
+                  {b.planName && <span>{b.planName}</span>}
+                  {b.billedHere && <span>{t('counted from this platform')}</span>}
+                  {b.resetsAt && <span>{t('resets {t}', { t: fmtDate(b.resetsAt) })}</span>}
                 </div>
               </div>
-            ))
-          )}
+            );
+          })}
 
-          {a.codex !== undefined && a.codex !== null && (
-            <pre className="overflow-x-auto rounded-lg bg-bubble/60 p-2.5 text-[11.5px]">
-              {JSON.stringify(a.codex, null, 2)}
-            </pre>
-          )}
+          {showWindows && a && (
+            <>
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[12px] text-muted">
+                <span className="font-mono text-ink">{a.provider}</span>
+                {a.status && <span>{a.status}</span>}
+                <span className="text-faint">{t('as of {t}', { t: fmtDate(a.observedAt) })}</span>
+              </div>
 
-          <div>
-            <Button variant="ghost" onClick={() => setShowRaw((v) => !v)}>
-              {showRaw ? t('Hide headers') : t('All headers')}
-            </Button>
-            {showRaw && (
-              <pre className="mt-2 overflow-x-auto rounded-lg bg-bubble/60 p-2.5 text-[11.5px] leading-relaxed">
-                {Object.entries(a.raw)
-                  .map(([k, v]) => `${k}: ${v}`)
-                  .join('\n')}
-              </pre>
-            )}
-          </div>
+              {windows.map(([key, w]) => (
+                <div key={key}>
+                  <div className="mb-1 flex items-baseline justify-between text-[12.5px]">
+                    <span>{t(WINDOW_LABEL[key] ?? key)}</span>
+                    <span className="font-mono tabular-nums">
+                      {w.utilization === null ? '—' : `${Math.round(w.utilization * 100)}%`}
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-line">
+                    <div
+                      className={clsx(
+                        'h-full rounded-full',
+                        (w.utilization ?? 0) >= 0.9 ? 'bg-red-500' : (w.utilization ?? 0) >= 0.75 ? 'bg-amber-500' : 'bg-accent',
+                      )}
+                      style={{ width: `${Math.min(Math.max((w.utilization ?? 0) * 100, 0), 100)}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-2 text-[11.5px] text-faint">
+                    {w.resetsAt && <span>{t('resets {t}', { t: fmtDate(w.resetsAt) })}</span>}
+                    {w.observedAt && a.observedAt && w.observedAt !== a.observedAt && (
+                      <span>{t('read {t}', { t: fmtDate(w.observedAt) })}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {a.codex !== undefined && a.codex !== null && (
+                <pre className="overflow-x-auto rounded-lg bg-bubble/60 p-2.5 text-[11.5px]">
+                  {JSON.stringify(a.codex, null, 2)}
+                </pre>
+              )}
+
+              <div>
+                <Button variant="ghost" onClick={() => setShowRaw((v) => !v)}>
+                  {showRaw ? t('Hide headers') : t('All headers')}
+                </Button>
+                {showRaw && (
+                  <pre className="mt-2 overflow-x-auto rounded-lg bg-bubble/60 p-2.5 text-[11.5px] leading-relaxed">
+                    {Object.entries(a.raw)
+                      .map(([k, v]) => `${k}: ${v}`)
+                      .join('\n')}
+                  </pre>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
     </Card>
