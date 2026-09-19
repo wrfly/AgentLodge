@@ -3,10 +3,10 @@
  *
  * Split out of AdminPage.tsx, which had grown to 2700 lines; one file per tab now.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Gauge, ShieldCheck } from 'lucide-react';
 import { admin, type GateStatus } from '../../lib/api';
-import { Button, Card, Input, Stat, Toggle } from '../../components/ui';
+import { Banner, Button, Card, Input, Stat, Toggle } from '../../components/ui';
 import { useT } from '../../lib/i18n';
 
 /** Live state of the concurrency gate. The upstream's rate limit is a black box; this shows where AIMD has settled */
@@ -15,8 +15,33 @@ export function GateCard() {
   const [gate, setGate] = useState<GateStatus | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  /**
+   * Whether the box holds a number somebody is part-way through typing.
+   *
+   * The poll below refills it from the gate, and it used to do that unconditionally — every
+   * five seconds, which is less time than it takes to type a limit and reach for the button.
+   * So a typed 12 was overwritten by the limit already in force, and because the button is
+   * disabled while the box and the gate agree, it went grey at the same moment: the page read
+   * as "the limit turns itself back into 3", and the stored setting behind it was never even
+   * asked to hold anything.
+   *
+   * A ref rather than state because the poll has to read the current value without being torn
+   * down and restarted for it, and nothing renders differently.
+   */
+  const editing = useRef(false);
 
-  const load = () => admin.gate().then((g) => { setGate(g); setDraft(String(g.max)); }).catch(() => {});
+  const load = () =>
+    admin
+      .gate()
+      .then((g) => {
+        setGate(g);
+        // A change made from another console still lands in the box; only a half-typed one is
+        // left alone. `max` is absent when the gateway container cannot be reached, and
+        // `String(undefined)` in a numeric field is worse than leaving it as it was.
+        if (!editing.current && typeof g.max === 'number') setDraft(String(g.max));
+      })
+      .catch(() => {});
 
   useEffect(() => {
     void load();
@@ -43,8 +68,25 @@ export function GateCard() {
     const n = Number(draft);
     if (!Number.isFinite(n)) return;
     setBusy(true);
+    setErr(null);
     try {
-      setGate(await admin.setGateConcurrency(n));
+      const next = await admin.setGateConcurrency(n);
+      setGate(next);
+      /*
+       * Saved, so what is in the box is the gate's own answer again and the poll may refill
+       * it. Only on success: a refused write has to leave the number where the administrator
+       * typed it, or the page throws away the thing it is asking them to correct.
+       */
+      editing.current = false;
+      if (typeof next.max === 'number') setDraft(String(next.max));
+    } catch (e) {
+      /*
+       * Said out loud rather than swallowed. A rejected PATCH used to do nothing visible at
+       * all — the box simply went back to the old limit on the next poll — which is
+       * indistinguishable from a limit that does not persist, and is the first thing anybody
+       * chasing that would want to see.
+       */
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -52,8 +94,11 @@ export function GateCard() {
 
   const setPinned = async (v: boolean) => {
     setBusy(true);
+    setErr(null);
     try {
       setGate(await admin.setGatePinned(v));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -83,16 +128,26 @@ export function GateCard() {
           <div className="w-16">
             <Input
               value={draft}
-              onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, ''))}
+              onChange={(e) => {
+                editing.current = true;
+                setDraft(e.target.value.replace(/[^\d]/g, ''));
+              }}
               inputMode="numeric"
             />
           </div>
-          <Button onClick={() => void save()} loading={busy} disabled={draft === String(gate.max)}>
+          {/* An empty box is not a limit: without this the button offers to save NaN, which
+              the route refuses and save() drops on the floor */}
+          <Button
+            onClick={() => void save()}
+            loading={busy}
+            disabled={!draft || draft === String(gate.max)}
+          >
             {t('Change limit')}
           </Button>
         </div>
       }
     >
+      {err && <Banner tone="error">{err}</Banner>}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label={t('In flight')} value={String(active)} tone="accent" />
         <Stat label={t('Queued')} value={String(queued)} tone={queued > 0 ? 'danger' : undefined} />
