@@ -160,15 +160,21 @@ const CLAUDE_FAMILY = 'opus|sonnet|haiku|fable';
  */
 function anthropicId(id: string): string {
   const cursor = new RegExp(`^claude-(\\d+(?:[.-]\\d+)*)-(${CLAUDE_FAMILY})$`).exec(id);
-  if (cursor) {
-    const major = Number(cursor[1].split(/[.-]/)[0]);
+  const cursorVer = cursor?.[1];
+  const cursorFamily = cursor?.[2];
+  if (cursorVer && cursorFamily) {
+    const major = Number(cursorVer.split(/[.-]/)[0]);
     // Family-first starts at Claude 4 (`claude-sonnet-4-5`). `claude-3-5-sonnet` stays.
-    if (major >= 4) return `claude-${cursor[2]}-${cursor[1].replace(/\./g, '-')}`;
+    if (major >= 4) return `claude-${cursorFamily}-${cursorVer.replace(/\./g, '-')}`;
   }
   const short = new RegExp(`^(${CLAUDE_FAMILY})-(\\d+(?:[.-]\\d+)*)$`).exec(id);
-  if (short) return `claude-${short[1]}-${short[2].replace(/\./g, '-')}`;
+  const shortFamily = short?.[1];
+  const shortVer = short?.[2];
+  if (shortFamily && shortVer) return `claude-${shortFamily}-${shortVer.replace(/\./g, '-')}`;
   const familyFirst = new RegExp(`^claude-(${CLAUDE_FAMILY})-(\\d+(?:[.-]\\d+)*)$`).exec(id);
-  if (familyFirst) return `claude-${familyFirst[1]}-${familyFirst[2].replace(/\./g, '-')}`;
+  const family = familyFirst?.[1];
+  const ver = familyFirst?.[2];
+  if (family && ver) return `claude-${family}-${ver.replace(/\./g, '-')}`;
   return id;
 }
 
@@ -193,8 +199,9 @@ function preferVersioned(id: string, pool: string[]): string {
     if (stem === family) continue;
     if (!stem.startsWith(`${family}-`)) {
       const claude = new RegExp(`^claude-${family}-([\\d-]+)$`).exec(stem);
-      if (claude && /^(opus|sonnet|haiku|fable)$/.test(family)) {
-        const ver = claude[1].split('-').map(Number);
+      const claudeVer = claude?.[1];
+      if (claudeVer && /^(opus|sonnet|haiku|fable)$/.test(family)) {
+        const ver = claudeVer.split('-').map(Number);
         if (!best || cmpVer(ver, bestVer) > 0) {
           best = candidate;
           bestVer = ver;
