@@ -483,11 +483,11 @@ function jsonError(status: number, message: string): Response {
 /**
  * What models this account can use.
  *
- * Every slug rather than every model name: on this upstream a model is chosen by its variant
- * (`claude-opus-5-thinking-high`), so a list of bare names would hide the choice that matters.
- * A context window (`[1m]`) is not a slug — it is a parameter on the request — so it is not
- * pulled into the table. See catalog.ts, which holds the answer for the length of its TTL
- * and is the same table the relay resolves a request's model through.
+ * The catalogue's model names, not every variant slug. Effort and thinking are parameters
+ * on a model (`claude-sonnet-5`), not extra rows, so they are not pulled into the table.
+ * A context window (`[1m]`) is the same kind of parameter. See catalog.ts, which holds the
+ * answer for the length of its TTL and is the same table the relay resolves a request's
+ * model through.
  */
 export async function fetchCursorModels(
   secret: string,

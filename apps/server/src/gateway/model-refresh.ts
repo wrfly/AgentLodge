@@ -58,15 +58,16 @@ async function refreshOnce(
     // Only additions. A name somebody turned off stays off, an order somebody set stays,
     // and a name that vanished upstream for a minute does not empty anybody's picker.
     const added = modelsRepo.addMissing(provider.id, result.models);
-    if (added === 0) continue;
+    const collapsed = modelsRepo.collapseVariantRows(provider.id);
+    if (added === 0 && collapsed === 0) continue;
 
     audit.log({
       action: 'provider.models.refresh',
       targetType: 'provider',
       targetId: provider.id,
-      detail: { added, models: result.models },
+      detail: { added, collapsed, models: result.models },
     });
-    log(`model refresh: ${provider.name} — ${added} new model(s)`);
+    log(`model refresh: ${provider.name} — ${added} new model(s)${collapsed ? `, ${collapsed} variant(s) collapsed` : ''}`);
   }
 }
 

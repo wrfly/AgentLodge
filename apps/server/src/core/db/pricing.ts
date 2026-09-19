@@ -1,4 +1,5 @@
 import { all, get, nowIso, run } from './index.js';
+import { identityOf } from './models.js';
 import { getString, setSetting } from './settings.js';
 import { isPeakAt, parsePeak, WEEKDAYS, type PeakWindows } from '../peak-hours.js';
 
@@ -189,7 +190,9 @@ export function resolve(
   at = nowIso(),
   providerId?: string | null,
 ): Pricing | undefined {
-  const m = (model ?? '').trim();
+  const asked = (model ?? '').trim();
+  const identity = asked ? identityOf(asked) : asked;
+  const looks = identity && identity !== asked ? [asked, identity] : [asked];
   const rows = all<Row>(
     'select * from model_pricing where effective_from <= ? order by effective_from desc',
     at,
@@ -205,13 +208,31 @@ export function resolve(
   const moment = new Date(at);
 
   const pass = (candidates: Pricing[]): Pricing | undefined => {
-    const exact = candidates.find((r) => r.model === m);
-    if (exact) return exact;
+    for (const m of looks) {
+      const exact = candidates.find((r) => r.model === m);
+      if (exact) return exact;
+    }
+    /*
+     * Fast is a suffix that can sit after other tokens: `cursor-grok-4.6-high-fast`
+     * must not pick the standard `cursor-grok-4.6` row just because that string is a
+     * prefix. Prefer a `-fast` price whose stem is the longest prefix of this stem.
+     * `composer-2.5-fast` is an exact name and is already handled above.
+     */
+    for (const m of looks) {
+      if (!hasFastToken(m)) continue;
+      const stem = withoutFast(m);
+      const fast = candidates
+        .filter((r) => r.model !== '*' && hasFastToken(r.model) && stem.startsWith(withoutFast(r.model)))
+        .sort((a, b) => withoutFast(b.model).length - withoutFast(a.model).length);
+      if (fast[0]) return fast[0];
+    }
     // Longest prefix wins: deepseek-v4-pro matches deepseek-v4, not deepseek
-    const prefixes = candidates
-      .filter((r) => r.model !== '*' && m.startsWith(r.model))
-      .sort((a, b) => b.model.length - a.model.length);
-    if (prefixes[0]) return prefixes[0];
+    for (const m of looks) {
+      const prefixes = candidates
+        .filter((r) => r.model !== '*' && m.startsWith(r.model))
+        .sort((a, b) => b.model.length - a.model.length);
+      if (prefixes[0]) return prefixes[0];
+    }
     return candidates.find((r) => r.model === '*');
   };
 
@@ -281,6 +302,22 @@ export const formatMoney = (micro: number, currency = 'USD'): string =>
   `${currency === 'CNY' ? '¥' : '$'}${(micro / MICRO).toFixed(4)}`;
 
 /**
+ * Fast is a hyphen- or dot-delimited token, not the letters sitting inside another word.
+ *
+ * `cursor-grok-4.6-high-fast` and `composer-2.5-fast` are Fast. `claude-fable-5` is not,
+ * and `composer-2.5[fast=false]` is a parameter on the standard model rather than the
+ * Fast slug — the brackets keep it from matching.
+ */
+function hasFastToken(model: string): boolean {
+  return /(^|[-.])fast($|[-.])/.test(model);
+}
+
+/** `cursor-grok-4.6-high-fast` → `cursor-grok-4.6-high`, so a `cursor-grok-4.6-fast` row can still match */
+function withoutFast(model: string): string {
+  return model.replace(/[-.]fast(?=$|[-.])/g, '');
+}
+
+/**
  * What every DeepSeek row has to say, because the number in it is only true for part of
  * the week. Shared so that correcting one row cannot leave another explaining itself
  * differently.
@@ -319,9 +356,96 @@ export const DEEPSEEK_RETIRED =
  * carries the currency of the row that priced it, so the amounts are never added across.
  *
  * Cache writes are the standard 1.25× input on Anthropic and free on DeepSeek — a miss there
- * is simply the input price. Cache reads are **not** a standard multiple, which is exactly the
- * sort of thing a table can hold and one global weight cannot.
+ * is simply the input price. Cursor, OpenAI and Google list no separate write fee either, so
+ * a miss is the input price; GPT-5.6 is the exception that publishes 1.25× and is spelled out.
+ * Cache reads are **not** a standard multiple, which is exactly the sort of thing a table can
+ * hold and one global weight cannot.
  */
+function rate(
+  input: number,
+  output: number,
+  cacheRead = input / 10,
+  // Anthropic charges a premium to write the cache. DeepSeek does not — a miss is simply
+  // the input price — so that one is a parameter rather than a constant.
+  cacheWrite = input * 1.25,
+) {
+  return {
+    priceInput: Math.round(input * 1_000_000),
+    priceCacheRead: Math.round(cacheRead * 1_000_000),
+    priceCacheWrite: Math.round(cacheWrite * 1_000_000),
+    priceOutput: Math.round(output * 1_000_000),
+  };
+}
+
+/**
+ * Cursor's published on-demand list, as of cursor.com/docs/models-and-pricing (read 2026-09-20).
+ *
+ * Claude names are seeded separately and inherit them by prefix. Cursor's word order
+ * (`claude-4.5-sonnet`) is the same model as the Anthropic id (`claude-sonnet-4-5`);
+ * resolve() looks up the identity rather than seeding both. These are the families a
+ * Cursor pull adds that would otherwise fall through to `*` — Composer, Grok, GPT-5.x,
+ * Gemini, and the other third-party lines on that page. Fast is a separate row because it
+ * is not a uniform multiple (Composer Fast is 6×, Grok 4.5 Fast output is 3×).
+ *
+ * Cache write is the input price unless the vendor publishes otherwise: Cursor's table
+ * leaves it blank, which is a miss, not Anthropic's 1.25×.
+ *
+ * Kept in its own function so a deployment that already ran the Claude/DeepSeek backfill
+ * can still receive these rows once, without putting back a Claude row an operator deleted.
+ */
+function cursorCatalogSeed(): UpsertInput[] {
+  return [
+    { model: 'composer-2.5-fast', ...rate(3, 15, 0.5, 3) },
+    { model: 'composer-2.5', ...rate(0.5, 2.5, 0.2, 0.5) },
+    { model: 'composer-1', ...rate(1.25, 10, 0.125, 1.25) },
+    { model: 'cursor-grok-4.6-fast', ...rate(4, 12, 1, 4) },
+    { model: 'cursor-grok-4.6', ...rate(2, 6, 0.5, 2) },
+    { model: 'grok-4.6-fast', ...rate(4, 12, 1, 4) },
+    { model: 'grok-4.6', ...rate(2, 6, 0.5, 2) },
+    { model: 'cursor-grok-4.5-fast', ...rate(4, 18, 1, 4) },
+    { model: 'cursor-grok-4.5', ...rate(2, 6, 0.5, 2) },
+    { model: 'grok-4.5-fast', ...rate(4, 18, 1, 4) },
+    { model: 'grok-4.5', ...rate(2, 6, 0.5, 2) },
+    { model: 'gpt-5-fast', ...rate(2.5, 20, 0.25, 2.5) },
+    { model: 'gpt-5-mini', ...rate(0.25, 2, 0.025, 0.25) },
+    { model: 'gpt-5-codex', ...rate(1.25, 10, 0.125, 1.25) },
+    { model: 'gpt-5', ...rate(1.25, 10, 0.125, 1.25) },
+    { model: 'gpt-5.1-codex-mini', ...rate(0.25, 2, 0.025, 0.25) },
+    { model: 'gpt-5.1-codex-max', ...rate(1.25, 10, 0.125, 1.25) },
+    { model: 'gpt-5.1-codex', ...rate(1.25, 10, 0.125, 1.25) },
+    { model: 'gpt-5.2-codex', ...rate(1.75, 14, 0.175, 1.75) },
+    { model: 'gpt-5.2-fast', ...rate(3.5, 28, 0.35, 3.5) },
+    { model: 'gpt-5.2', ...rate(1.75, 14, 0.175, 1.75) },
+    { model: 'gpt-5.3-codex-fast', ...rate(3.5, 28, 0.35, 3.5) },
+    { model: 'gpt-5.3-codex', ...rate(1.75, 14, 0.175, 1.75) },
+    { model: 'gpt-5.4-mini', ...rate(0.75, 4.5, 0.075, 0.75) },
+    { model: 'gpt-5.4-nano', ...rate(0.2, 1.25, 0.02, 0.2) },
+    { model: 'gpt-5.4-fast', ...rate(5, 30, 0.5, 5) },
+    { model: 'gpt-5.4', ...rate(2.5, 15, 0.25, 2.5) },
+    { model: 'gpt-5.5-fast', ...rate(10, 60, 1, 10) },
+    { model: 'gpt-5.5', ...rate(5, 30, 0.5, 5) },
+    { model: 'gpt-5.6-luna-fast', ...rate(0.4, 2.4, 0.04, 0.5) },
+    { model: 'gpt-5.6-luna', ...rate(0.2, 1.2, 0.02, 0.25) },
+    { model: 'gpt-5.6-sol-fast', ...rate(8, 40, 0.8, 10) },
+    { model: 'gpt-5.6-sol', ...rate(4, 20, 0.4, 5) },
+    { model: 'gpt-5.6-terra-fast', ...rate(4, 24, 0.4, 5) },
+    { model: 'gpt-5.6-terra', ...rate(2, 12, 0.2, 2.5) },
+    { model: 'gemini-2.5-flash', ...rate(0.3, 2.5, 0.03, 0.3) },
+    { model: 'gemini-3-flash', ...rate(0.5, 3, 0.05, 0.5) },
+    { model: 'gemini-3-pro', ...rate(2, 12, 0.2, 2) },
+    { model: 'gemini-3.1-pro', ...rate(2, 12, 0.2, 2) },
+    { model: 'gemini-3.5-flash', ...rate(1.5, 9, 0.15, 1.5) },
+    { model: 'gemini-3.6-flash', ...rate(1.5, 7.5, 0.15, 1.5) },
+    { model: 'gemini-3.7-flash', ...rate(0.75, 3.5, 0.075, 0.75) },
+    { model: 'gemini-3.8-flash', ...rate(0.75, 3.5, 0.075, 0.75) },
+    { model: 'glm-5.2', ...rate(1.4, 4.4, 0.26, 1.4) },
+    { model: 'kimi-k2.7', ...rate(0.95, 4, 0.19, 0.95) },
+    { model: 'kimi-k3', ...rate(3, 15, 0.3, 3) },
+    { model: 'muse-spark-1.3', ...rate(1.25, 4.25, 0.15, 1.25) },
+    { model: 'codex-5.3', ...rate(1.75, 14, 0.175, 1.75) },
+  ];
+}
+
 function seedRows(): UpsertInput[] {
   const now = nowIso();
   /*
@@ -336,19 +460,6 @@ function seedRows(): UpsertInput[] {
    * exception spelled out: Claude Fable reads its cache at a fortieth. That exception is
    * the reason quota reads a table instead of a global weight, so the table has to hold it.
    */
-  const rate = (
-    input: number,
-    output: number,
-    cacheRead = input / 10,
-    // Anthropic charges a premium to write the cache. DeepSeek does not — a miss is simply
-    // the input price — so that one is a parameter rather than a constant.
-    cacheWrite = input * 1.25,
-  ) => ({
-    priceInput: Math.round(input * 1_000_000),
-    priceCacheRead: Math.round(cacheRead * 1_000_000),
-    priceCacheWrite: Math.round(cacheWrite * 1_000_000),
-    priceOutput: Math.round(output * 1_000_000),
-  });
   const seed: UpsertInput[] = [
     /*
      * The 0.025× cache read is **5.1's alone** — the pricing table's own footnote says so:
@@ -369,6 +480,7 @@ function seedRows(): UpsertInput[] {
     { model: 'claude-sonnet-5', ...rate(2, 10) },
     { model: 'claude-sonnet-4-6', ...rate(3, 15) },
     { model: 'claude-sonnet-4-5', ...rate(3, 15) },
+    { model: 'claude-sonnet-4', ...rate(3, 15) },
     { model: 'claude-haiku-4-5', ...rate(1, 5) },
     /*
      * DeepSeek, as of 2026-09-10. Two things here are off the Anthropic pattern and both
@@ -388,6 +500,7 @@ function seedRows(): UpsertInput[] {
     // this model used to have. Written on one line like the rest because check-pricing.mjs
     // reads this shape, and a row it cannot parse is a row it silently stops comparing.
     { model: 'deepseek-v4-flash', currency: 'CNY', ...rate(1, 4, 0.02, 1), ...PEAK, note: DEEPSEEK_RETIRED },
+    ...cursorCatalogSeed(),
     {
       model: '*',
       ...rate(5, 25),
@@ -422,12 +535,16 @@ export function seedDefaults(): void {
   if (get('select 1 as x from model_pricing limit 1')) {
     // Non-empty is not the same as complete; see ensureSeedRows
     ensureSeedRows();
+    // A second mark: the first backfill ran before Cursor was an upstream.
+    ensureCursorFamilyRows();
+    collapseAliasRows();
   } else {
     for (const s of seedRows()) add(s);
     seedMark('done');
+    cursorMark('done');
     console.log(
-      "[pricing] price table seeded — Claude in USD and DeepSeek in CNY, each at its vendor's own list. " +
-        'Check the rates in the console, and add a row for any upstream that is neither.',
+      "[pricing] price table seeded — Claude and Cursor's catalogue in USD, DeepSeek in CNY, each at its vendor's own list. " +
+        'Check the rates in the console.',
     );
   }
   /*
@@ -545,4 +662,84 @@ export function ensureSeedRows(): void {
         `(${missing.map((m) => `${m.model} ${m.currency ?? 'USD'}`).join(', ')}). Check them in the console.`,
     );
   }
+}
+
+/**
+ * The first seed ran before Cursor was an upstream. Pulling that catalogue then costed
+ * Composer and Grok at the catch-all — $5/$25, which is Opus, against Composer at $0.50.
+ *
+ * A new mark, not a reuse of `pricing.backfilledAt`. That flag already means "the Claude
+ * and DeepSeek rows have been offered"; clearing it to run this would put back a haiku
+ * row an operator deleted, and leaving it set would skip these names forever.
+ *
+ * Same rule as ensureSeedRows: only a name with no row at all is added, and only once.
+ */
+const CURSOR_KEY = 'pricing.cursorCatalogAt';
+
+function cursorMark(value?: string): string {
+  if (value !== undefined) {
+    run(
+      `insert into settings (key, value, updated_at) values (?, ?, ?)
+       on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+      CURSOR_KEY, value, nowIso(),
+    );
+    return value;
+  }
+  return get<{ value: string }>('select value from settings where key = ?', CURSOR_KEY)?.value ?? '';
+}
+
+export function ensureCursorFamilyRows(): void {
+  if (cursorMark() === 'done') return;
+  const have = new Set(all<{ model: string }>('select model from model_pricing').map((r) => r.model));
+  const missing = cursorCatalogSeed()
+    .map((r) => ({ currency: 'USD' as const, ...r }))
+    .filter((r) => !have.has(r.model));
+  const backfilled = missing.map((m) => ({
+    ...m,
+    effectiveFrom: '1970-01-01T00:00:00.000Z',
+    note: [m.note, 'Backfilled: this model had no row, so its usage was costed at the catch-all.']
+      .filter(Boolean).join(' '),
+  }));
+  for (const m of backfilled) add(m);
+  cursorMark('done');
+  if (missing.length) {
+    console.log(
+      `[pricing] ${missing.length} Cursor catalogue price row(s) had never been seeded and were added ` +
+        `(${missing.map((m) => m.model).join(', ')}). Check them in the console.`,
+    );
+  }
+}
+
+/**
+ * Drop alias price rows that name the same model as another row.
+ *
+ * Cursor writes `claude-4.5-sonnet` and `composer-2-5`; the picker and the Anthropic
+ * ids are `claude-sonnet-4-5` and `composer-2.5`. The seed used to carry both, so the
+ * console listed them twice at the same rate. The identity is kept (renamed if the
+ * canonical row was never seeded); the alias goes. Fast stays, because it is a
+ * different price.
+ *
+ * Returns how many rows were removed or renamed.
+ */
+export function collapseAliasRows(): number {
+  const rows = all<Row>('select * from model_pricing');
+  const have = new Set(rows.map((r) => `${r.provider_id ?? ''}\0${r.model}`));
+  let n = 0;
+  for (const r of rows) {
+    if (r.model === '*') continue;
+    const identity = identityOf(r.model);
+    if (identity === r.model) continue;
+    const key = `${r.provider_id ?? ''}\0${identity}`;
+    if (have.has(key)) {
+      remove(r.id);
+    } else {
+      run('update model_pricing set model = ? where id = ?', identity, r.id);
+      have.add(key);
+    }
+    n++;
+  }
+  if (n) {
+    console.log(`[pricing] ${n} alias price row(s) collapsed to the model they belong to`);
+  }
+  return n;
 }

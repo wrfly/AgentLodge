@@ -17,7 +17,7 @@ export function register(app: FastifyInstance): void {
   app.get('/api/admin/models', guard, async () => {
     const providers = providersRepo.list();
     return {
-      models: modelsRepo.list(),
+      models: modelsRepo.listVisible(),
       /** So the console can name the upstream behind each row without a second request */
       providers: providers.map((p) => ({ id: p.id, name: p.name, kind: p.kind })),
     };
@@ -88,7 +88,7 @@ export function register(app: FastifyInstance): void {
     }
     return {
       added,
-      models: modelsRepo.list(),
+      models: modelsRepo.listVisible(),
       providers: pulled,
       ...(providerId ? { offered: pulled[0]?.offered ?? [] } : {}),
     };
@@ -114,13 +114,14 @@ async function pullProvider(
   }
   const names = Array.isArray(res['models']) ? (res['models'] as string[]) : [];
   const added = modelsRepo.addMissing(provider.id, names);
-  if (added > 0) {
+  const collapsed = modelsRepo.collapseVariantRows(provider.id);
+  if (added > 0 || collapsed > 0) {
     audit.log({
       actorId: req.user!.id,
       action: 'admin.model.pull',
       targetType: 'provider',
       targetId: provider.id,
-      detail: { added, offered: names.length },
+      detail: { added, collapsed, offered: names.length },
       ip: req.ip,
     });
   }

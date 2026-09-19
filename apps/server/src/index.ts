@@ -10,6 +10,7 @@ import { importLegacy } from './core/db/import-legacy.js';
 import * as pricing from './core/db/pricing.js';
 import * as usageRepo from './core/db/usage.js';
 import * as providersRepo from './core/db/providers.js';
+import * as modelsRepo from './core/db/models.js';
 import * as usersRepo from './core/db/users.js';
 import * as invitesRepo from './core/db/invites.js';
 import * as sessionsRepo from './core/db/sessions.js';
@@ -154,6 +155,10 @@ if (config.role !== 'gateway') {
    * both processes pass at once — the same race, two lines further down.
    */
   providersRepo.seedFromSettings();
+  const collapsed = modelsRepo.collapseVariantRows();
+  if (collapsed) {
+    console.log(`[models] ${collapsed} effort/thinking variant row(s) collapsed to the model they belong to`);
+  }
 }
 // Move the model list from global settings onto the provider (idempotent; the old rows are
 // deleted afterwards)

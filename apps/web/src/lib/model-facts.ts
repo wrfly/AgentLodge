@@ -13,6 +13,9 @@
  *                                 — the line-up changed on 09-10 and the aggregator sites
  *                                 still carry the old numbers, so only the official page
  *                                 counts here
+ *   cursor catalogue              cursor.com/docs/models-and-pricing, read 2026-09-20
+ *                                 — Composer, Grok, GPT-5.x, Gemini, and the other lines a
+ *                                 Cursor pull adds; Fast is a separate entry, not a multiple
  *   swe                           llm-stats.com/benchmarks/swe-bench-verified, updated 2026-08-25
  *
  * The prices are list prices for the vendor's own endpoint, per million tokens, and are
@@ -63,6 +66,7 @@ const FACTS: Record<string, ModelFacts> = {
   'claude-sonnet-5': { context: M, maxOutput: 128 * K, inPrice: 2, outPrice: 10, swe: 85.2 },
   'claude-sonnet-4-6': { context: M, maxOutput: 128 * K, inPrice: 3, outPrice: 15, swe: 79.6 },
   'claude-sonnet-4-5': { context: 200 * K, maxOutput: 64 * K, inPrice: 3, outPrice: 15 },
+  'claude-sonnet-4': { context: 200 * K, inPrice: 3, outPrice: 15 },
   'claude-haiku-4-5': { context: 200 * K, maxOutput: 64 * K, inPrice: 1, outPrice: 5, swe: 73.3 },
   // The prices below are the off-peak ones, which is exactly what `note` is for: a reader
   // comparing $0.15 against Claude's $3 has to know the number is conditional, and a
@@ -80,12 +84,80 @@ const FACTS: Record<string, ModelFacts> = {
     currency: 'CNY',
     note: `retired — served by V4.1-Flash; ${PEAK}`,
   },
+  // Cursor's on-demand list. Fast is its own price, not 2× — Composer Fast is 6×,
+  // Grok 4.5 Fast output is 3×. Cache figures live in the seed; the picker shows in/out.
+  'composer-2.5-fast': { context: 200 * K, inPrice: 3, outPrice: 15 },
+  'composer-2.5': { context: 200 * K, inPrice: 0.5, outPrice: 2.5 },
+  'composer-1': { context: 200 * K, inPrice: 1.25, outPrice: 10 },
+  'cursor-grok-4.6-fast': { context: 256 * K, inPrice: 4, outPrice: 12 },
+  'cursor-grok-4.6': { context: 256 * K, inPrice: 2, outPrice: 6 },
+  'grok-4.6-fast': { context: 256 * K, inPrice: 4, outPrice: 12 },
+  'grok-4.6': { context: 256 * K, inPrice: 2, outPrice: 6 },
+  'cursor-grok-4.5-fast': { context: 256 * K, inPrice: 4, outPrice: 18 },
+  'cursor-grok-4.5': { context: 256 * K, inPrice: 2, outPrice: 6 },
+  'grok-4.5-fast': { context: 256 * K, inPrice: 4, outPrice: 18 },
+  'grok-4.5': { context: 256 * K, inPrice: 2, outPrice: 6 },
+  'gpt-5-fast': { context: 400 * K, inPrice: 2.5, outPrice: 20 },
+  'gpt-5-mini': { context: 400 * K, inPrice: 0.25, outPrice: 2 },
+  'gpt-5-codex': { context: 400 * K, inPrice: 1.25, outPrice: 10 },
+  'gpt-5': { context: 400 * K, inPrice: 1.25, outPrice: 10 },
+  'gpt-5.1-codex-mini': { context: 400 * K, inPrice: 0.25, outPrice: 2 },
+  'gpt-5.1-codex-max': { context: 400 * K, inPrice: 1.25, outPrice: 10 },
+  'gpt-5.1-codex': { context: 400 * K, inPrice: 1.25, outPrice: 10 },
+  'gpt-5.2-codex': { context: 400 * K, inPrice: 1.75, outPrice: 14 },
+  'gpt-5.2-fast': { context: 400 * K, inPrice: 3.5, outPrice: 28 },
+  'gpt-5.2': { context: 400 * K, inPrice: 1.75, outPrice: 14 },
+  'gpt-5.3-codex-fast': { context: 400 * K, inPrice: 3.5, outPrice: 28 },
+  'gpt-5.3-codex': { context: 400 * K, inPrice: 1.75, outPrice: 14 },
+  'gpt-5.4-mini': { context: M, inPrice: 0.75, outPrice: 4.5 },
+  'gpt-5.4-nano': { context: M, inPrice: 0.2, outPrice: 1.25 },
+  'gpt-5.4-fast': { context: M, inPrice: 5, outPrice: 30 },
+  'gpt-5.4': { context: M, inPrice: 2.5, outPrice: 15 },
+  'gpt-5.5-fast': { context: M, inPrice: 10, outPrice: 60 },
+  'gpt-5.5': { context: M, inPrice: 5, outPrice: 30 },
+  'gpt-5.6-luna-fast': { context: M, inPrice: 0.4, outPrice: 2.4 },
+  'gpt-5.6-luna': { context: M, inPrice: 0.2, outPrice: 1.2 },
+  'gpt-5.6-sol-fast': { context: M, inPrice: 8, outPrice: 40 },
+  'gpt-5.6-sol': { context: M, inPrice: 4, outPrice: 20 },
+  'gpt-5.6-terra-fast': { context: M, inPrice: 4, outPrice: 24 },
+  'gpt-5.6-terra': { context: M, inPrice: 2, outPrice: 12 },
+  'gemini-2.5-flash': { context: M, inPrice: 0.3, outPrice: 2.5 },
+  'gemini-3-flash': { context: M, inPrice: 0.5, outPrice: 3 },
+  'gemini-3-pro': { context: M, inPrice: 2, outPrice: 12 },
+  'gemini-3.1-pro': { context: M, inPrice: 2, outPrice: 12 },
+  'gemini-3.5-flash': { context: M, inPrice: 1.5, outPrice: 9 },
+  'gemini-3.6-flash': { context: M, inPrice: 1.5, outPrice: 7.5 },
+  'gemini-3.7-flash': { context: M, inPrice: 0.75, outPrice: 3.5 },
+  'gemini-3.8-flash': { context: M, inPrice: 0.75, outPrice: 3.5 },
+  'glm-5.2': { context: 200 * K, inPrice: 1.4, outPrice: 4.4 },
+  'kimi-k2.7': { context: 256 * K, inPrice: 0.95, outPrice: 4 },
+  'kimi-k3': { context: M, inPrice: 3, outPrice: 15 },
+  'muse-spark-1.3': { context: M, inPrice: 1.25, outPrice: 4.25 },
+  'codex-5.3': { context: 400 * K, inPrice: 1.75, outPrice: 14 },
 };
 
 const KEYS = Object.keys(FACTS).sort((a, b) => b.length - a.length);
 
+/** Same rule as the price table: Fast is a token, not the letters inside another word. */
+function hasFastToken(id: string): boolean {
+  return /(^|[-.])fast($|[-.])/.test(id);
+}
+
+function withoutFast(id: string): string {
+  return id.replace(/[-.]fast(?=$|[-.])/g, '');
+}
+
 export function factsFor(name: string): ModelFacts | undefined {
   const id = name.trim().toLowerCase();
+  /*
+   * `cursor-grok-4.6-high-fast` is Grok Fast, not the standard Grok row that happens to
+   * be a prefix. Prefer a `-fast` key whose stem is the longest prefix of this stem.
+   */
+  if (hasFastToken(id)) {
+    const stem = withoutFast(id);
+    const fastKey = KEYS.find((k) => hasFastToken(k) && stem.startsWith(withoutFast(k)));
+    if (fastKey) return FACTS[fastKey];
+  }
   const key = KEYS.find((k) => id.startsWith(k));
   return key ? FACTS[key] : undefined;
 }
