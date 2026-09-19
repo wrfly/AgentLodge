@@ -1,5 +1,25 @@
-import { accessToken } from './auth.js';
-import { BUNDLE_VERSION } from './schema.generated.js';
+/**
+ * Dashboard reads live in app, not gateway: Overview asks from the application
+ * process, and app must not import gateway. The token exchange here is the same
+ * POST as gateway/cursor/auth.ts; the cache is not shared because the two
+ * processes do not share memory once ROLE is split.
+ */
+
+async function dashboardToken(secret: string, base: string): Promise<string> {
+  if (/^ey[\w-]*\.[\w-]+\.[\w-]*$/.test(secret)) return secret;
+  const res = await fetch(`${base}/auth/exchange_user_api_key`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: '{}',
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Cursor refused the API key (HTTP ${res.status})`);
+  }
+  const body = (await res.json()) as { accessToken?: string };
+  if (!body.accessToken) throw new Error('Cursor exchanged the key but sent no token');
+  return body.accessToken;
+}
 
 /**
  * What Cursor will still honour on this credential.
@@ -122,7 +142,7 @@ async function rpc<T>(base: string, token: string, method: string, body: unknown
       'content-type': 'application/json',
       'user-agent': 'connect-es/1.6.1',
       'x-cursor-client-type': 'cli',
-      'x-cursor-client-version': `cli-${BUNDLE_VERSION}`,
+      'x-cursor-client-version': 'cli-agentlodge',
       'x-ghost-mode': 'true',
       'x-request-id': crypto.randomUUID(),
     },
@@ -245,7 +265,7 @@ export function readCursorBalance(input: {
 
 export async function fetchCursorBalance(secret: string, baseUrl?: string): Promise<CursorBalance> {
   const base = (baseUrl || DEFAULT_API).replace(/\/+$/, '') || DEFAULT_API;
-  const token = await accessToken(secret, base);
+  const token = await dashboardToken(secret, base);
   const [period, plan, grants, stripe, me] = await Promise.all([
     rpc<Period>(base, token, 'GetCurrentPeriodUsage'),
     rpc<Plan>(base, token, 'GetPlanInfo'),

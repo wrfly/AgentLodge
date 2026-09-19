@@ -7,7 +7,7 @@
  *
  * Run: npm -w @agentlodge/server run test:cursor-balance
  */
-import { readCursorBalance, seatFromTeamSpend } from './balance.js';
+import { readCursorBalance, seatFromTeamSpend } from './cursor-balance.js';
 
 let pass = 0;
 let fail = 0;
