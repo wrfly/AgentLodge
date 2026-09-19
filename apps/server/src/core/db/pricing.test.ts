@@ -120,6 +120,56 @@ console.log('\n=== a price with a time of day ===');
   ok('and never applies', resolve('half-set', PEAK)?.priceInput === 500);
 }
 
+console.log('\n=== Fast is a suffix that can sit after other tokens ===');
+{
+  add({ model: 'cursor-grok-4.6', priceInput: 2, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 6 });
+  add({ model: 'cursor-grok-4.6-fast', priceInput: 4, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 12 });
+  add({ model: 'gpt-5', priceInput: 125, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 1000 });
+  add({ model: 'gpt-5-fast', priceInput: 250, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 2000 });
+  add({ model: 'gpt-5.4', priceInput: 250, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 1500 });
+  add({ model: 'gpt-5.4-fast', priceInput: 500, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 3000 });
+
+  ok(
+    'a Grok Fast slug does not pick the standard Grok prefix',
+    resolve('cursor-grok-4.6-high-fast')?.model === 'cursor-grok-4.6-fast',
+    String(resolve('cursor-grok-4.6-high-fast')?.model),
+  );
+  ok(
+    'the same family without Fast still uses the standard row',
+    resolve('cursor-grok-4.6-high')?.model === 'cursor-grok-4.6',
+    String(resolve('cursor-grok-4.6-high')?.model),
+  );
+  ok(
+    'GPT-5.4 Fast is not GPT-5 Fast',
+    resolve('gpt-5.4-high-fast')?.model === 'gpt-5.4-fast',
+    String(resolve('gpt-5.4-high-fast')?.model),
+  );
+}
+
+console.log('\n=== Cursor word order is the Anthropic id ===');
+{
+  const { collapseAliasRows } = await import('./pricing.js');
+  add({ model: 'claude-sonnet-4-5', priceInput: 3, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 15 });
+  add({ model: 'claude-4.5-sonnet', priceInput: 3, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 15 });
+  add({ model: 'sonnet-4.5', priceInput: 3, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 15 });
+  add({ model: 'composer-2-5', priceInput: 1, priceCacheRead: 0, priceCacheWrite: 0, priceOutput: 2 });
+  const n = collapseAliasRows();
+  ok('collapsing drops the alias rows', n >= 3, String(n));
+  ok(
+    'the Anthropic id is kept',
+    list().some((p) => p.model === 'claude-sonnet-4-5') && !list().some((p) => p.model === 'claude-4.5-sonnet' || p.model === 'sonnet-4.5'),
+  );
+  ok(
+    'a hyphenated Composer name is renamed rather than dropped',
+    list().some((p) => p.model === 'composer-2.5') && !list().some((p) => p.model === 'composer-2-5'),
+  );
+  ok(
+    'and a Cursor slug still resolves to that row',
+    resolve('claude-4.5-sonnet')?.model === 'claude-sonnet-4-5',
+    String(resolve('claude-4.5-sonnet')?.model),
+  );
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✓ all passed' : '✗ failures'}: ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

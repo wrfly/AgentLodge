@@ -1,3 +1,4 @@
+import { canonicalOf, identityOf } from '../../core/db/models.js';
 import { accessToken } from './auth.js';
 import { decode, encode, type Message } from './codec.js';
 import { parseSlug, splitModel } from './request.js';
@@ -148,6 +149,12 @@ function variantsOf(model: Message, into: Map<string, ResolvedModel>): ResolvedM
     from: 'catalog',
   };
   if (!into.has(name)) into.set(name, fallback);
+  /*
+   * Cursor writes `claude-4.5-sonnet`; Anthropic writes `claude-sonnet-4-5`. Same model, and
+   * the picker keeps the Anthropic id, so a request using that id has to find this row.
+   */
+  const identity = identityOf(name);
+  if (identity && identity !== name && !into.has(identity)) into.set(identity, fallback);
 
   /*
    * Names that are not a variant of their own still have to resolve to *something*. An empty
@@ -373,8 +380,10 @@ export async function resolveModel(slug: string, opts: CatalogOptions): Promise<
     const catalog = await catalogOf(opts);
     const stem = undated(base);
     const family = familyOf(stem);
+    const identity = identityOf(stem);
     const hit = catalog.slugs.get(base)
       ?? catalog.slugs.get(stem)
+      ?? catalog.slugs.get(identity)
       ?? (family && isFamilyIdentity(stem) ? catalog.slugs.get(family) : undefined);
     if (hit) {
       const resolved = asked.size ? withParameters(hit, asked, catalog.parameters.get(hit.id)) : hit;
@@ -404,10 +413,16 @@ export async function resolveModel(slug: string, opts: CatalogOptions): Promise<
 /** Every model this account can use, for the console's list */
 export async function listModels(opts: CatalogOptions): Promise<{ models: string[]; error?: string }> {
   try {
-    const { names } = await catalogOf(opts);
-    // Brackets carry parameters (`[1m]`, `[fast=false]`), not a model identity. Pulling
-    // them as rows floods the picker and hands Claude Code a `--model` it will refuse.
-    const models = names.filter((n) => !n.includes('['));
+    const { slugs } = await catalogOf(opts);
+    /*
+     * The catalogue's model name, not every variant slug. `claude-sonnet-5-high` and
+     * `claude-sonnet-5-thinking-high` are the same model with different parameters; pulling
+     * them as rows filled the picker with effort knobs. Fast stays when it is the name
+     * (`composer-2.5-fast`), because that is a different model. Brackets (`[1m]`) are
+     * parameters on the request, not a row.
+     */
+    const ids = [...new Set([...slugs.values()].map((r) => r.id))].filter((n) => n && !n.includes('['));
+    const models = [...new Set(ids.map((n) => canonicalOf(n, ids)))].sort();
     return models.length ? { models } : { models: [], error: 'Cursor returned an empty model list' };
   } catch (e) {
     return { models: [], error: (e as Error).message };

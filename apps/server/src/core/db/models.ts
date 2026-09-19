@@ -78,9 +78,17 @@ export function candidates(name: string): Model[] {
 
 /** The names on offer, in the order the picker should show them */
 export function names(): string[] {
-  return all<{ name: string }>(
+  const listed = all<{ name: string }>(
     'select name from models where enabled = 1 group by name order by min(priority), name',
   ).map((r) => r.name);
+  return listed.filter((n) => canonicalOf(n, listed) === n);
+}
+
+/** The picker and the console: identities only, not Cursor's effort/thinking slugs */
+export function listVisible(): Model[] {
+  const rows = list();
+  const pool = rows.map((m) => m.name);
+  return rows.filter((m) => canonicalOf(m.name, pool) === m.name);
 }
 
 /**
@@ -93,6 +101,129 @@ export function names(): string[] {
  */
 export function stemOf(name: string): string {
   return name.replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, '').trim();
+}
+
+/**
+ * Effort, thinking, max-mode and `-latest` are not models.
+ *
+ * Cursor lists `claude-sonnet-5-high` beside `-low` and `composer-latest` beside
+ * `composer-2.5`. The picker is keyed by the model; those suffixes go out on the request
+ * after the catalogue resolves them. Fast is different: `composer-2.5-fast` costs more, so
+ * it stays on the name.
+ *
+ * Hyphenated versions (`composer-2-5`, `gpt-5-6-luna`) are the same model as the dotted
+ * form. Anthropic ids (`claude-opus-4-5`) keep their hyphens — that is how those names
+ * are published. Cursor's word order (`claude-4.5-sonnet`) is the same id.
+ */
+const VARIANT_SUFFIXES = [
+  '-thinking-xhigh',
+  '-thinking-high',
+  '-thinking-medium',
+  '-thinking-low',
+  '-thinking',
+  '-xhigh',
+  '-high',
+  '-medium',
+  '-low',
+  '-minimal',
+  '-max',
+  '-latest',
+];
+
+export function identityOf(name: string): string {
+  let id = stemOf(name);
+  if (!id) return id;
+  const fast = id.endsWith('-fast') && id.length > '-fast'.length;
+  if (fast) id = id.slice(0, -'-fast'.length);
+  for (let again = true; again; ) {
+    again = false;
+    for (const suffix of VARIANT_SUFFIXES) {
+      if (!id.endsWith(suffix) || id.length <= suffix.length) continue;
+      // Codex Max is a model (`gpt-5.1-codex-max`), not Claude's max-mode suffix
+      if (suffix === '-max' && id.endsWith('codex-max')) continue;
+      id = id.slice(0, -suffix.length);
+      again = true;
+      break;
+    }
+  }
+  if (!id.startsWith('claude-')) id = id.replace(/(\d+)-(\d+)/g, '$1.$2');
+  id = anthropicId(id);
+  return fast ? `${id}-fast` : id;
+}
+
+const CLAUDE_FAMILY = 'opus|sonnet|haiku|fable';
+
+/**
+ * Cursor writes `claude-4.5-sonnet`; Anthropic writes `claude-sonnet-4-5`. Same model.
+ * Short names (`sonnet-4.5`, `opus-5`) are the same again. The Anthropic id is the one
+ * the price table and the picker already use.
+ */
+function anthropicId(id: string): string {
+  const cursor = new RegExp(`^claude-(\\d+(?:[.-]\\d+)*)-(${CLAUDE_FAMILY})$`).exec(id);
+  if (cursor) {
+    const major = Number(cursor[1].split(/[.-]/)[0]);
+    // Family-first starts at Claude 4 (`claude-sonnet-4-5`). `claude-3-5-sonnet` stays.
+    if (major >= 4) return `claude-${cursor[2]}-${cursor[1].replace(/\./g, '-')}`;
+  }
+  const short = new RegExp(`^(${CLAUDE_FAMILY})-(\\d+(?:[.-]\\d+)*)$`).exec(id);
+  if (short) return `claude-${short[1]}-${short[2].replace(/\./g, '-')}`;
+  const familyFirst = new RegExp(`^claude-(${CLAUDE_FAMILY})-(\\d+(?:[.-]\\d+)*)$`).exec(id);
+  if (familyFirst) return `claude-${familyFirst[1]}-${familyFirst[2].replace(/\./g, '-')}`;
+  return id;
+}
+
+/**
+ * An unversioned alias prefers the newest versioned sibling on the same provider.
+ *
+ * `composer-latest` and `composer` are Composer 2.5, not a fourth model beside
+ * `composer-2.5`. Fast stays on its own side: `composer-2.5-fast` is not a candidate
+ * for the standard alias. `gemini-flash` has no versioned `gemini-flash-2.x`, so it
+ * stays `gemini-flash`.
+ */
+function preferVersioned(id: string, pool: string[]): string {
+  const fast = id.endsWith('-fast');
+  const family = fast ? id.slice(0, -'-fast'.length) : id;
+  if (/\d/.test(family)) return id;
+
+  let best: string | undefined;
+  let bestVer: number[] = [];
+  for (const candidate of pool) {
+    if (candidate.endsWith('-fast') !== fast) continue;
+    const stem = candidate.endsWith('-fast') ? candidate.slice(0, -'-fast'.length) : candidate;
+    if (stem === family) continue;
+    if (!stem.startsWith(`${family}-`)) {
+      const claude = new RegExp(`^claude-${family}-([\\d-]+)$`).exec(stem);
+      if (claude && /^(opus|sonnet|haiku|fable)$/.test(family)) {
+        const ver = claude[1].split('-').map(Number);
+        if (!best || cmpVer(ver, bestVer) > 0) {
+          best = candidate;
+          bestVer = ver;
+        }
+      }
+      continue;
+    }
+    const rest = stem.slice(family.length);
+    if (!/^-[\d.]+$/.test(rest)) continue;
+    const ver = rest.slice(1).split('.').map(Number);
+    if (!best || cmpVer(ver, bestVer) > 0) {
+      best = candidate;
+      bestVer = ver;
+    }
+  }
+  return best ?? id;
+}
+
+/** Positive when `a` is newer. `5` beats `4.8`; `2.5` beats `2`. */
+function cmpVer(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+export function canonicalOf(name: string, pool: string[]): string {
+  return preferVersioned(identityOf(name), pool.map(identityOf));
 }
 
 /**
@@ -200,4 +331,39 @@ export function addMissing(providerId: string, names: string[]): number {
     added++;
   }
   return added;
+}
+
+/**
+ * Drop alias slugs that were pulled as if they were models.
+ *
+ * A Cursor catalogue answers with every variant string and every `-latest` alias. Those
+ * used to land as rows, so the picker filled with `claude-sonnet-5-high` beside `-low`
+ * and `composer-latest` beside `composer-2.5`. The identity is kept (created if the pull
+ * never added it); the suffix rows go. Fast stays, because it is a different price.
+ *
+ * Returns how many rows were removed.
+ */
+export function collapseVariantRows(providerId?: string): number {
+  const rows = providerId ? list().filter((m) => m.providerId === providerId) : list();
+  const have = new Set(rows.map((m) => `${m.providerId}\0${m.name}`));
+  const removeIds: string[] = [];
+  for (const m of rows) {
+    const identity = canonicalOf(m.name, rows.map((r) => r.name));
+    if (identity === m.name) continue;
+    const key = `${m.providerId}\0${identity}`;
+    if (!have.has(key)) {
+      create({
+        name: identity,
+        providerId: m.providerId,
+        upstreamName: m.upstreamName,
+        enabled: m.enabled,
+        priority: m.priority,
+        note: m.note,
+      });
+      have.add(key);
+    }
+    removeIds.push(m.id);
+  }
+  for (const id of removeIds) remove(id);
+  return removeIds.length;
 }

@@ -30,7 +30,7 @@ const box = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'al-seed-')));
 process.env.DATA_DIR = box;
 process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 
-const { initDb, get } = await import('./index.js');
+const { initDb, get, run } = await import('./index.js');
 initDb();
 const pricing = await import('./pricing.js');
 
@@ -60,6 +60,7 @@ console.log('\n=== a new database is seeded, not half-populated ===');
   );
   ok('Claude models are priced', rows.filter((r) => r.model.startsWith('claude')).length >= 5);
   ok('DeepSeek models are priced', rows.filter((r) => r.model.startsWith('deepseek')).length >= 2);
+  ok('Cursor catalogue models are priced', rows.some((r) => r.model === 'composer-2.5') && rows.some((r) => r.model === 'gpt-5'));
 
   // The specific way it broke: a data-writing migration got there first, so the table was
   // not empty and the seed declined to run. Any subset of the seed is a failure, not a
@@ -93,6 +94,37 @@ console.log('\n=== and every lookup a running deployment makes answers ===');
 {
   ok("a Claude model resolves", pricing.resolve('claude-opus-5')?.model === 'claude-opus-5');
   ok('a DeepSeek model resolves', pricing.resolve('deepseek-flash')?.model === 'deepseek-flash');
+  ok('a Composer model resolves', pricing.resolve('composer-2.5')?.model === 'composer-2.5');
+  ok(
+    'Composer Fast is not billed as standard Composer',
+    (pricing.resolve('composer-2.5-fast')?.priceInput ?? 0)
+      > (pricing.resolve('composer-2.5')?.priceInput ?? 0),
+  );
+  ok(
+    'a Cursor Grok Fast slug uses the Fast row, not the standard prefix',
+    pricing.resolve('cursor-grok-4.6-high-fast')?.model === 'cursor-grok-4.6-fast',
+    String(pricing.resolve('cursor-grok-4.6-high-fast')?.model),
+  );
+  ok(
+    'GPT-5.4 is not billed as GPT-5',
+    pricing.resolve('gpt-5.4-high')?.model === 'gpt-5.4',
+    String(pricing.resolve('gpt-5.4-high')?.model),
+  );
+  ok(
+    "Cursor's Claude slug is priced as the Anthropic id, not the catch-all",
+    pricing.resolve('claude-4.5-haiku')?.model === 'claude-haiku-4-5',
+    String(pricing.resolve('claude-4.5-haiku')?.model),
+  );
+  ok(
+    'and the hyphenated Composer name is the dotted one',
+    pricing.resolve('composer-2-5')?.model === 'composer-2.5',
+    String(pricing.resolve('composer-2-5')?.model),
+  );
+  ok(
+    'the table does not keep both names',
+    !pricing.list().some((r) => r.model === 'claude-4.5-haiku' || r.model === 'composer-2-5' || r.model === 'sonnet-4.5'),
+    pricing.list().filter((r) => /4\.5-haiku|composer-2-5|sonnet-4/.test(r.model)).map((r) => r.model).join(','),
+  );
   ok("an unknown model falls to '*'", pricing.resolve('a-model-nobody-configured')?.model === '*');
 
   // Every model nobody has priced is costed by this row. Zero here does not throw — it
@@ -137,6 +169,44 @@ console.log('\n=== so the same tokens cost what the model costs ===');
   ok('an unpriced model still costs something',
     pricing.costMicro('a-model-nobody-configured', u) > 0,
     String(pricing.costMicro('a-model-nobody-configured', u)));
+  ok(
+    'Composer costs less than Opus for the same tokens',
+    pricing.costMicro('composer-2.5', u) < dear,
+    `${pricing.costMicro('composer-2.5', u)} vs ${dear}`,
+  );
+}
+
+console.log('\n=== Cursor prices arrive on a table that was already seeded ===');
+{
+  /*
+   * Production already ran the Claude/DeepSeek backfill. Pulling Cursor then left
+   * Composer and Grok at the catch-all until this second pass. The first mark staying
+   * set is the point: clearing it would put a deleted haiku row back.
+   */
+  const catalogue = pricing.list().filter((r) =>
+    /^(composer|cursor-grok|grok-|gpt-|gemini-|glm-|kimi-|muse-)/.test(r.model),
+  );
+  for (const r of catalogue) pricing.remove(r.id);
+  run("delete from settings where key = 'pricing.cursorCatalogAt'");
+
+  pricing.seedDefaults();
+  ok(
+    'the Cursor backfill prices Composer without touching the first seed mark',
+    pricing.resolve('composer-2.5')?.model === 'composer-2.5',
+  );
+  ok(
+    'and a Fast Grok slug is no longer the catch-all',
+    pricing.resolve('cursor-grok-4.6-high-fast')?.model === 'cursor-grok-4.6-fast',
+    String(pricing.resolve('cursor-grok-4.6-high-fast')?.model),
+  );
+
+  const composer = pricing.list().find((r) => r.model === 'composer-2.5');
+  pricing.remove(composer!.id);
+  pricing.seedDefaults();
+  ok(
+    'a Cursor price an operator deleted stays deleted',
+    !pricing.list().some((r) => r.model === 'composer-2.5'),
+  );
 }
 
 fs.rmSync(box, { recursive: true, force: true });

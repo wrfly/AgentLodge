@@ -104,6 +104,17 @@ const CATALOG: Message = {
       ],
     },
     {
+      name: 'claude-4.5-sonnet',
+      id_aliases: ['sonnet-4.5', 'sonnet-4-5'],
+      variants: [
+        {
+          variant_string_representation: 'claude-4.5-sonnet',
+          is_default_non_max_config: true,
+          parameter_values: [],
+        },
+      ],
+    },
+    {
       name: 'claude-sonnet-5',
       id_aliases: ['sonnet-5'],
       variants: [
@@ -963,21 +974,41 @@ async function run(): Promise<void> {
     ok('and so does the short name', haiku.id === 'claude-haiku-4-5', JSON.stringify(haiku));
     const old = await catalog.resolveModel('claude-3-5-sonnet-20241022', options);
     ok('an older Anthropic id takes the newest sonnet', old.id === 'claude-sonnet-5', JSON.stringify(old));
-    const missing = await catalog.resolveModel('claude-sonnet-4-5', options);
+    const ordered = await catalog.resolveModel('claude-sonnet-4-5', options);
+    ok("Anthropic's id finds Cursor's word order", ordered.id === 'claude-4.5-sonnet', JSON.stringify(ordered));
+    const missing = await catalog.resolveModel('claude-sonnet-4-1', options);
     ok('a family id this account does not list still lands on that family', missing.id === 'claude-sonnet-5', JSON.stringify(missing));
   }
 
-  console.log('\n=== The model list is every slug the account can choose ===');
+  console.log('\n=== The model list is the models, not every variant slug ===');
   {
     catalog.forget();
     const out = await fetchCursorModels('cursor-api-key-cursor', cursorUrl);
     ok(
-      'the variants are listed, not just the base names',
-      out.models.includes('claude-opus-5-thinking-high') && out.models.includes('claude-opus-5'),
+      'the base name is offered',
+      out.models.includes('claude-opus-5') && out.models.includes('claude-sonnet-5'),
       JSON.stringify(out),
     );
-    ok('a legacy name is offered too', out.models.includes('claude-opus-4-6'), JSON.stringify(out.models));
-    ok('and so is the short name Claude Code would have sent', out.models.includes('opus') && out.models.includes('sonnet'), JSON.stringify(out.models));
+    ok(
+      "Cursor's word order is pulled as the Anthropic id",
+      out.models.includes('claude-sonnet-4-5') && !out.models.includes('claude-4.5-sonnet'),
+      JSON.stringify(out.models.filter((n) => n.includes('sonnet'))),
+    );
+    ok(
+      'effort and thinking slugs are not pulled as models',
+      !out.models.includes('claude-opus-5-thinking-high') && !out.models.includes('claude-opus-5-high'),
+      JSON.stringify(out.models.filter((n) => n.includes('thinking') || n.endsWith('-high'))),
+    );
+    ok(
+      'Fast stays when it is the model name',
+      out.models.includes('composer-2.5-fast'),
+      JSON.stringify(out.models),
+    );
+    ok(
+      'aliases and short names are not extra rows',
+      !out.models.includes('opus') && !out.models.includes('sonnet'),
+      JSON.stringify(out.models),
+    );
     ok(
       'a context window is a parameter, not a model to pull',
       !out.models.includes('claude-opus-5[1m]') && !out.models.includes('opus[1m]'),

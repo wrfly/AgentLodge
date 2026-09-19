@@ -73,6 +73,21 @@ function route(model?: string): { model?: models.Model; rename: boolean } | unde
       const [loose] = models.candidates(stem);
       if (loose) return { model: loose, rename: false };
     }
+    /*
+     * `claude-sonnet-5-thinking-high` is the model `claude-sonnet-5`. The picker no longer
+     * carries a row per effort, but a request that still names the slug has to find the
+     * same upstream; the slug itself still goes out so the catalogue can resolve it.
+     */
+    const identity = models.identityOf(name);
+    if (identity && identity !== name && identity !== stem) {
+      const [row] = models.candidates(identity);
+      if (row) return { model: row, rename: false };
+    }
+    const canon = models.canonicalOf(name, models.names());
+    if (canon && canon !== name && canon !== identity) {
+      const [row] = models.candidates(canon);
+      if (row) return { model: row, rename: false };
+    }
   }
   const [fallback] = models.candidates(models.names()[0] ?? '');
   return fallback ? { model: fallback, rename: false } : undefined;
