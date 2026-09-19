@@ -190,8 +190,11 @@ function dollars(n: number | null | undefined): string {
  * subtract and is left as Cursor reported it.
  */
 function billedHereUsd(providerId: string, from: string | null): number {
+  // No cycle window means we cannot know which of our rows belong to this remaining.
+  // Counting from 1970 would show lifetime spend against a monthly pot.
+  if (!from) return 0;
   const totals = usageRepo.totalsAllInRange(
-    { from: from ?? '1970-01-01T00:00:00.000Z', to: new Date().toISOString() },
+    { from, to: new Date().toISOString() },
     providerId,
   );
   return (totals.cost.USD ?? 0) / 1_000_000;

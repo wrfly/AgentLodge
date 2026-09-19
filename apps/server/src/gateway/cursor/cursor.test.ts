@@ -20,6 +20,7 @@ import { argsOf, clientName, fromValue, toDefinitions, toValue, wireName } from 
 import { buildRunRequest, flatten, parseSlug, splitModel, toolResults, type ChatRequest } from './request.js';
 import { MESSAGES } from './schema.generated.js';
 import { ChatStream } from './stream.js';
+import * as turns from './turns.js';
 
 let pass = 0;
 let fail = 0;
@@ -656,6 +657,23 @@ console.log('\n=== Claude Code names that miss the variant table still resolve =
   ok('a shorter 4 does not beat 4-8, and neither beats 5', catalog.slugs.get('opus')?.id === 'claude-opus-5');
   ok('a dated snapshot id is the undated model', undated('claude-haiku-4-5-20251001') === 'claude-haiku-4-5');
   ok('and a date is not stripped off a version', undated('claude-opus-4-8') === 'claude-opus-4-8');
+}
+
+console.log('\n=== A parked turn belongs to the user who started it ===');
+{
+  const dummy = () => ({
+    session: { close: async () => {}, submit: async () => {} },
+    events: (async function* () {})(),
+    controller: new AbortController(),
+    model: 'm',
+  });
+  turns.clear();
+  turns.park({ ...dummy(), callId: 'c1', userId: 'alice' });
+  ok('the owner can resume it', turns.resume(['c1'], 'alice')?.callId === 'c1');
+  turns.park({ ...dummy(), callId: 'c1', userId: 'alice' });
+  ok('another user cannot', turns.resume(['c1'], 'bob') === undefined);
+  ok('and it is still parked for the owner', turns.resume(['c1'], 'alice')?.callId === 'c1');
+  turns.clear();
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);

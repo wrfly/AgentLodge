@@ -13,6 +13,10 @@ import type { AgentEvent, AgentSession } from './session.js';
  * which is what every other upstream here does on every request — but it costs the agent's
  * server-side context and another request against the plan, so they are worth keeping.
  *
+ * The map is keyed by call id because that is what the next request names. Resume still
+ * checks the user: a call id that leaked (logs, a client, a guessed fallback) must not let
+ * someone else's authenticated request inject a tool result into this turn.
+ *
  * ## Why this is bounded
  *
  * A parked turn is an open HTTP stream to Cursor that outlives the request that made it, so
@@ -45,6 +49,11 @@ export interface ParkedTurn {
    * picks up a turn that was already running. Absent where the turn had no lane to begin with.
    */
   lane?: string;
+  /**
+   * Who started this turn. Resume refuses a match whose caller is anyone else — the call
+   * id is not a capability, it is a name, and names leak.
+   */
+  userId?: string;
   parkedAt: number;
   /**
    * The session's own lifetime, which is not the request's.
@@ -77,14 +86,14 @@ export function park(turn: Omit<ParkedTurn, 'parkedAt'>): void {
  * Several ids because a client can answer more than one call in a request; the first that
  * matches a parked turn is the one being resumed.
  */
-export function resume(callIds: string[]): ParkedTurn | undefined {
+export function resume(callIds: string[], userId?: string): ParkedTurn | undefined {
   expire();
   for (const id of callIds) {
     const turn = parked.get(id);
-    if (turn) {
-      parked.delete(id);
-      return turn;
-    }
+    if (!turn) continue;
+    if (turn.userId !== userId) continue;
+    parked.delete(id);
+    return turn;
   }
   return undefined;
 }

@@ -140,7 +140,7 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
    * a wrong one.
    */
   const results = toolResults(messages);
-  const parked = results.length ? resume(results.map((r) => r.callId)) : undefined;
+  const parked = results.length ? resume(results.map((r) => r.callId), opts.userId) : undefined;
 
   if (parked) {
     const answer = results.find((r) => r.callId === parked.callId)!;
@@ -441,7 +441,7 @@ function relay(
          * turn's to keep yet — it is still running, and the request that resumes it cannot work
          * the lane out for itself, because it never resolves a model.
          */
-        park({ session, events, controller, callId: event.callId, model, lane: sticky?.lane });
+        park({ session, events, controller, callId: event.callId, model, lane: sticky?.lane, userId: opts.userId });
         controllerOut.close();
         finish();
         return;
