@@ -63,5 +63,7 @@ export function register(app: FastifyInstance): void {
     return { ok: true, to };
   });
 
-  app.get('/api/admin/balance', guard, async () => (await fetchBalance()) ?? { configured: false });
+  app.get('/api/admin/balance', guard, async () =>
+    (await fetchBalance()) ?? { available: false, balances: [], fetchedAt: new Date().toISOString() },
+  );
 }

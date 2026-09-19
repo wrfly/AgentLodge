@@ -90,7 +90,7 @@ export function Overview() {
         />
         {balance === undefined ? (
           <Stat label={t('Upstream balance')} value="…" />
-        ) : balance?.balances.length ? (
+        ) : balance?.balances?.length ? (
           balance.balances.map((b, i) => (
             <Stat
               key={`${b.source ?? 'bal'}-${b.label ?? i}`}
@@ -135,7 +135,7 @@ export function Overview() {
                   : (a.availability.reason ?? t('unavailable'))}
               </span>
               <span className="shrink-0 text-[11.5px] text-faint">
-                {t('{n} models', { n: a.models.length })}
+                {t('{n} models', { n: a.models?.length ?? 0 })}
               </span>
             </div>
           ))}
