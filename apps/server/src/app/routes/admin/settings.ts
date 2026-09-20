@@ -3,7 +3,6 @@ import type { FastifyInstance } from 'fastify';
 import * as usersRepo from '../../../core/db/users.js';
 import * as audit from '../../../core/db/audit.js';
 import { listSettings, setSetting } from '../../../core/db/settings.js';
-import { fetchBalance } from '../../agents/provider.js';
 import * as mail from '../../mail.js';
 import { callGateway, guard } from './shared.js';
 import { tr } from '../../../core/i18n/locale.js';
@@ -63,7 +62,14 @@ export function register(app: FastifyInstance): void {
     return { ok: true, to };
   });
 
-  app.get('/api/admin/balance', guard, async () =>
-    (await fetchBalance()) ?? { available: false, balances: [], fetchedAt: new Date().toISOString() },
+  /**
+   * Prepaid remaining on Cursor / DeepSeek. Forwarded: only the gateway mounts the
+   * credential manager, and asking from this process comes back empty.
+   *
+   * Cursor's dashboard is several RPCs, so this wait is longer than the other forwards.
+   * The card loads it itself rather than blocking overview.
+   */
+  app.get('/api/admin/balance', guard, async (req) =>
+    callGateway('GET', '/balance', req.headers.authorization, undefined, 30_000),
   );
 }

@@ -430,6 +430,8 @@ export const fr: Record<string, string> = {
   'Previewing three configured subscriptions. This is not live data.': 'Aperçu avec trois abonnements configurés. Ce ne sont pas des données en direct.',
   'Spent this window': 'Consommé dans cette fenêtre',
   'No subscriptions configured.': 'Aucun abonnement configuré.',
+  'Reading remaining…': 'Lecture du reste…',
+  'Could not read remaining from this subscription.': 'Impossible de lire le reste de cet abonnement.',
   'This 7-day window': 'Fenêtre de 7 jours en cours',
   'Per 5 hours': 'Par 5 heures',
   'empty = unlimited': 'vide = sans limite',

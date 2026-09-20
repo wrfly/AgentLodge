@@ -280,6 +280,7 @@ export function Overview() {
         allowanceView={allowance}
         balanceError={preview ? undefined : balance?.error}
         loading={!preview && (providers === null || windowSpend === null || balance === undefined)}
+        balanceLoading={!preview && balance === undefined}
       />
 
       <PlatformUsageCard />
@@ -730,6 +731,7 @@ function SubscriptionsCard({
   allowanceView,
   balanceError,
   loading,
+  balanceLoading,
 }: {
   providers: Provider[];
   spends: UpstreamUsage[];
@@ -740,6 +742,7 @@ function SubscriptionsCard({
   allowanceView: UpstreamAllowanceView | null;
   balanceError?: string;
   loading: boolean;
+  balanceLoading: boolean;
 }) {
   const t = useT();
   const [gate, setGate] = useState<GateStatus | null>(null);
@@ -828,6 +831,19 @@ function SubscriptionsCard({
                     ))}
                     {row.balance.resetsAt && <span>{t('resets {t}', { t: fmtDate(row.balance.resetsAt) })}</span>}
                   </div>
+                </div>
+              )}
+
+              {!row.balance && (row.provider.kind === 'cursor' || /deepseek/i.test(row.provider.name)) && (
+                <div className="mb-3">
+                  <p className="text-[12px] text-muted">
+                    {row.provider.kind === 'cursor' ? t('Prepaid credit') : t('Upstream balance')}
+                  </p>
+                  <p className="text-[12.5px] text-faint">
+                    {balanceLoading
+                      ? t('Reading remaining…')
+                      : (balanceError ?? t('Could not read remaining from this subscription.'))}
+                  </p>
                 </div>
               )}
 

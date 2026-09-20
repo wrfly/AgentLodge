@@ -4,6 +4,7 @@ import { auditProxyBase, auditProxyEnabled, requiresAuditProxy } from '../core/e
 import * as usageRepo from '../core/db/usage.js';
 import * as quota from '../core/quota.js';
 import * as trace from '../core/trace.js';
+import { fetchBalance } from '../core/upstream-balance.js';
 import { hasListeners, publish } from '../core/events.js';
 import {
   GatePool,
@@ -1194,6 +1195,14 @@ export function buildGateway(): FastifyInstance {
     allowance: allowance.snapshot(),
     allowances: allowance.snapshots(),
   }));
+
+  /**
+   * Prepaid remaining on Cursor / DeepSeek. This process holds the credential
+   * manager socket; the console's /api/admin/balance forwards here.
+   */
+  app.get('/balance', adminOnly, async () =>
+    (await fetchBalance()) ?? { available: false, balances: [], fetchedAt: new Date().toISOString() },
+  );
 
   /**
    * The same question, for a named provider rather than the active one.

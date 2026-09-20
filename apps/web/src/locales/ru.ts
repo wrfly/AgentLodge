@@ -455,6 +455,8 @@ export const ru: Record<string, string> = {
   'Previewing three configured subscriptions. This is not live data.': 'Предпросмотр с тремя настроенными подписками. Это не живые данные.',
   'Spent this window': 'Потрачено в этом окне',
   'No subscriptions configured.': 'Подписки не настроены.',
+  'Reading remaining…': 'Читаем остаток…',
+  'Could not read remaining from this subscription.': 'Не удалось прочитать остаток этой подписки.',
   'This 7-day window': 'Текущее 7-дневное окно',
   'Per 5 hours': 'За 5 часов',
   'empty = unlimited': 'пусто = без ограничений',

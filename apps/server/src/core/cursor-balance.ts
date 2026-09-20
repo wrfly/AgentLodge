@@ -1,8 +1,7 @@
 /**
- * Dashboard reads live in app, not gateway: Overview asks from the application
- * process, and app must not import gateway. The token exchange here is the same
- * POST as gateway/cursor/auth.ts; the cache is not shared because the two
- * processes do not share memory once ROLE is split.
+ * Cursor's dashboard remaining. The token exchange is the same POST as
+ * gateway/cursor/auth.ts. Asked from the gateway process, which is the one that
+ * can mint a credential.
  */
 
 async function dashboardToken(secret: string, base: string): Promise<string> {

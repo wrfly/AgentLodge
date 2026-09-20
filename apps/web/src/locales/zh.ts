@@ -455,6 +455,8 @@ export const zh: Record<string, string> = {
   'Previewing three configured subscriptions. This is not live data.': '预览三份已配置订阅同时在线时的总览。这不是实时数据。',
   'Spent this window': '本窗口已用',
   'No subscriptions configured.': '还没有配置订阅。',
+  'Reading remaining…': '正在读取余量…',
+  'Could not read remaining from this subscription.': '读不到这份订阅的余量。',
   'This 7-day window': '当前 7 天窗口',
   'Per 5 hours': '每 5 小时',
   'empty = unlimited': '留空 = 不限',
