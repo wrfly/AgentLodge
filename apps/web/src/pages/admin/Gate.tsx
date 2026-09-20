@@ -13,33 +13,39 @@ import { useT } from '../../lib/i18n';
 export function GateCard() {
   const t = useT();
   const [gate, setGate] = useState<GateStatus | null>(null);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState({ max: '', perUser: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   /**
-   * Whether the box holds a number somebody is part-way through typing.
+   * Which boxes hold a number somebody is part-way through typing.
    *
-   * The poll below refills it from the gate, and it used to do that unconditionally — every
+   * The poll below refills them from the gate, and it used to do that unconditionally — every
    * five seconds, which is less time than it takes to type a limit and reach for the button.
    * So a typed 12 was overwritten by the limit already in force, and because the button is
    * disabled while the box and the gate agree, it went grey at the same moment: the page read
    * as "the limit turns itself back into 3", and the stored setting behind it was never even
    * asked to hold anything.
    *
-   * A ref rather than state because the poll has to read the current value without being torn
-   * down and restarted for it, and nothing renders differently.
+   * Tracked per box rather than for the pair, so editing one limit does not also freeze the
+   * other at whatever it said when the typing started. A ref rather than state because the
+   * poll has to read the current value without being torn down and restarted for it, and
+   * nothing renders differently.
    */
-  const editing = useRef(false);
+  const editing = useRef({ max: false, perUser: false });
 
   const load = () =>
     admin
       .gate()
       .then((g) => {
         setGate(g);
-        // A change made from another console still lands in the box; only a half-typed one is
-        // left alone. `max` is absent when the gateway container cannot be reached, and
-        // `String(undefined)` in a numeric field is worse than leaving it as it was.
-        if (!editing.current && typeof g.max === 'number') setDraft(String(g.max));
+        // A change made from another console still lands in the boxes; only a half-typed one
+        // is left alone. Both fields are absent when the gateway container cannot be reached,
+        // and `String(undefined)` in a numeric field is worse than leaving it as it was.
+        setDraft((d) => ({
+          max: !editing.current.max && typeof g.max === 'number' ? String(g.max) : d.max,
+          perUser:
+            !editing.current.perUser && typeof g.perUser === 'number' ? String(g.perUser) : d.perUser,
+        }));
       })
       .catch(() => {});
 
@@ -64,21 +70,45 @@ export function GateCard() {
     );
   }
 
+  /**
+   * What each box would write, or undefined where it still holds what the gate says.
+   *
+   * An empty box is not a limit either: without that guard the button offers to save NaN,
+   * which the route refuses and `save()` would drop on the floor.
+   */
+  const pending = {
+    maxConcurrency: draft.max && draft.max !== String(gate.max) ? Number(draft.max) : undefined,
+    perUserInflightMax:
+      draft.perUser && draft.perUser !== String(gate.perUser) ? Number(draft.perUser) : undefined,
+  };
+  const changed =
+    pending.maxConcurrency !== undefined || pending.perUserInflightMax !== undefined;
+
   const save = async () => {
-    const n = Number(draft);
-    if (!Number.isFinite(n)) return;
+    if (!changed) return;
     setBusy(true);
     setErr(null);
     try {
-      const next = await admin.setGateConcurrency(n);
+      // Only what moved. Sending both would file an audit entry claiming a limit was changed
+      // to the value it already had, and one of the two is often deliberately left alone.
+      const next = await admin.setGateLimits({
+        ...(pending.maxConcurrency !== undefined ? { maxConcurrency: pending.maxConcurrency } : {}),
+        ...(pending.perUserInflightMax !== undefined
+          ? { perUserInflightMax: pending.perUserInflightMax }
+          : {}),
+      });
       setGate(next);
       /*
-       * Saved, so what is in the box is the gate's own answer again and the poll may refill
-       * it. Only on success: a refused write has to leave the number where the administrator
-       * typed it, or the page throws away the thing it is asking them to correct.
+       * Saved, so what is in the boxes is the gate's own answer again and the poll may refill
+       * them. Only on success: a refused write has to leave the numbers where the
+       * administrator typed them, or the page throws away the thing it is asking them to
+       * correct.
        */
-      editing.current = false;
-      if (typeof next.max === 'number') setDraft(String(next.max));
+      editing.current = { max: false, perUser: false };
+      setDraft((d) => ({
+        max: typeof next.max === 'number' ? String(next.max) : d.max,
+        perUser: typeof next.perUser === 'number' ? String(next.perUser) : d.perUser,
+      }));
     } catch (e) {
       /*
        * Said out loud rather than swallowed. A rejected PATCH used to do nothing visible at
@@ -104,6 +134,24 @@ export function GateCard() {
     }
   };
 
+  /** One of the two limits: its name over a narrow numeric box. Digits only, as before. */
+  const limitBox = (key: 'max' | 'perUser', label: string) => (
+    <label className="block">
+      <span className="mb-1 block text-[12px] font-medium text-muted">{label}</span>
+      <div className="w-16">
+        <Input
+          value={draft[key]}
+          onChange={(e) => {
+            editing.current[key] = true;
+            const v = e.target.value.replace(/[^\d]/g, '');
+            setDraft((d) => ({ ...d, [key]: v }));
+          }}
+          inputMode="numeric"
+        />
+      </div>
+    </label>
+  );
+
   // One pool per upstream, so a busy one cannot make the others queue. The totals are the
   // sum across them, which is what "how loaded is this deployment" means.
   const pools = gate.pools ?? [];
@@ -123,31 +171,36 @@ export function GateCard() {
           ? t('Every agent request upstream goes through it: per-call accounting, a hard quota gate, and a rate limit per upstream')
           : t('No model is configured, so conversations cannot start. Add an upstream and pull its models — the host CLI login is not used.')
       }
-      actions={
-        <div className="flex items-center gap-1.5">
-          <div className="w-16">
-            <Input
-              value={draft}
-              onChange={(e) => {
-                editing.current = true;
-                setDraft(e.target.value.replace(/[^\d]/g, ''));
-              }}
-              inputMode="numeric"
-            />
-          </div>
-          {/* An empty box is not a limit: without this the button offers to save NaN, which
-              the route refuses and save() drops on the floor */}
-          <Button
-            onClick={() => void save()}
-            loading={busy}
-            disabled={!draft || draft === String(gate.max)}
-          >
-            {t('Change limit')}
-          </Button>
-        </div>
-      }
     >
       {err && <Banner tone="error">{err}</Banner>}
+      {/*
+        * The gate's two limits, together and above the counters they explain.
+        *
+        * The per-user cap used to live on the System settings page, behind that page's
+        * batched "N unsaved changes" save, while the ceiling had a box of its own up in this
+        * card's header. One gate, two numbers, two pages and two save models — and the one
+        * that is usually binding was the one a tab away from the in-flight and queued counts
+        * that are the only way to watch it bind. A pool of twenty with two in flight and
+        * eight queued is not a broken gate, it is one user at their own cap of two, and that
+        * is only legible with both numbers in view.
+        */}
+      <div className="mb-3 rounded-lg border border-line px-2.5 py-2">
+        <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+          {limitBox('max', t('Slots per upstream'))}
+          {limitBox('perUser', t('Slots one user may hold'))}
+          <Button onClick={() => void save()} loading={busy} disabled={!changed}>
+            {t('Save')}
+          </Button>
+        </div>
+        {/* The two hints in the order of the two boxes, taken from the settings the boxes
+            write — so the wording an administrator reads here is the wording that was on the
+            settings page, rather than a second description of the same numbers */}
+        <p className="mt-1.5 text-[11.5px] text-faint">
+          {t('How many requests may be in flight to one upstream at once.')}
+          {' · '}
+          {t('Per upstream, so a busy conversation cannot take the whole pool.')}
+        </p>
+      </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label={t('In flight')} value={String(active)} tone="accent" />
         <Stat label={t('Queued')} value={String(queued)} tone={queued > 0 ? 'danger' : undefined} />

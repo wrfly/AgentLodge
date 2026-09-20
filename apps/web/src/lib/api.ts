@@ -1039,6 +1039,13 @@ export interface GateStatus {
   error?: string;
   /** The ceiling every pool starts from. Stored, so it survives a restart of the gateway */
   max: number;
+  /**
+   * How many of that ceiling one user may hold, per upstream. Stored the same way.
+   *
+   * Usually the binding one: a pool of twenty with two in flight and eight queued is one
+   * user at their own cap of two, not a gate that has gone wrong.
+   */
+  perUser: number;
   /** True while the upstream is not allowed to narrow the pools below that ceiling */
   pinned: boolean;
   /** One per upstream that has seen traffic since the gateway started */
@@ -1264,10 +1271,24 @@ export const admin = {
   /** What the upstream itself says it has. Errors come back in the body — see gateway/models.ts */
   providerModels: (id: string) =>
     request<{ models: string[]; error?: string }>(`/api/admin/providers/${id}/models`),
-  setGateConcurrency: (maxConcurrency: number) =>
+  /**
+   * Both of the gate's limits, in one write.
+   *
+   * One call rather than one per field so that changing the two together is one round trip
+   * and one audit entry — they are usually adjusted as a pair, because what a deployment is
+   * really choosing is the relationship between them. Send only what changed; the route
+   * reads each field independently and refuses a body with nothing in it.
+   *
+   * `perUserInflightMax` used to go through `saveSettings` with everything else on the
+   * System settings page. Same row either way — the route writes
+   * `gateway.perUserInflightMax` — but sent from here it also reaches the gateway's
+   * `reschedule`, so a raise lets the people already queued through instead of leaving them
+   * to wait for a release that may be minutes away.
+   */
+  setGateLimits: (patch: { maxConcurrency?: number; perUserInflightMax?: number }) =>
     request<GateStatus>('/api/admin/gate', {
       method: 'PATCH',
-      body: JSON.stringify({ maxConcurrency }),
+      body: JSON.stringify(patch),
     }),
   /** Pinned, the gate runs at the configured limit and a 429 no longer narrows it */
   setGatePinned: (pinned: boolean) =>

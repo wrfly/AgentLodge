@@ -289,7 +289,6 @@ export const ja: Record<string, string> = {
   'Concurrency gate': '同時実行ゲート',
   'This is what it looks like when the gateway container is not up. Rate limiting still applies on that side; only the status is unreadable here.': 'ゲートウェイのコンテナが起動していないときの表示です。レート制限はゲートウェイ側で有効なままで、ここから状態が読めないだけです。',
   'Metering gateway': '計測ゲートウェイ',
-  'Change limit': '上限を変更',
   'In flight': '実行中',
   Queued: '待機中',
   'throttled upstream — reduced from {n}': '上流にスロットルされ、{n} から下げました',

@@ -1178,6 +1178,9 @@ export function buildGateway(): FastifyInstance {
 
   app.get('/gate', adminOnly, async () => ({
     max: gate.max(),
+    // The gate's other limit, read here for the same reason `max` is: this process is the
+    // one that applies it, and the console draws both of them in one place now
+    perUser: gate.perUser(),
     pinned: gate.pinned(),
     // One row per upstream that has seen traffic since this process started. An upstream
     // with no row has had no request go to it, which is different from having a limit of
@@ -1237,7 +1240,7 @@ export function buildGateway(): FastifyInstance {
      * already queued would otherwise wait for a release that may be minutes away.
      */
     gate.reschedule();
-    return { max: gate.max(), pinned: gate.pinned(), pools: gate.stats() };
+    return { max: gate.max(), perUser: gate.perUser(), pinned: gate.pinned(), pools: gate.stats() };
   });
 
   /**

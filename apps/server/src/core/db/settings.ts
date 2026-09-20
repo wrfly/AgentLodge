@@ -351,12 +351,20 @@ export const SETTING_SPECS: SettingSpec[] = [
      * Read fresh on each admission pass, because the gate lives in the gateway container
      * and this is written from the console in the app one. The environment variable stays
      * as the fallback for a deployment that never opens the page.
+     *
+     * Hidden for the same reason the ceiling above is: the Metering gateway card owns both
+     * now. It used to be here, on the generic page, which put one gate's two limits behind
+     * two different save models — a batched draft with an "N unsaved changes" bar on this
+     * page, a button of its own on that card — and left the number that is usually the
+     * binding one a tab away from the in-flight and queued counts that are the only way to
+     * see it binding.
      */
     key: 'gateway.perUserInflightMax',
     span: 2,
     label: 'Slots one user may hold',
     group: 'gateway',
     type: 'number',
+    hidden: true,
     default: '2',
     envFallback: 'PER_USER_INFLIGHT_MAX',
     hint: 'Per upstream, so a busy conversation cannot take the whole pool.',

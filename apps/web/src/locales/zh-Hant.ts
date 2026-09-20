@@ -273,7 +273,6 @@ export const zhHant: Record<string, string> = {
   'Concurrency gate': '並行閘門',
   'This is what it looks like when the gateway container is not up. Rate limiting still applies on that side; only the status is unreadable here.': '網關容器沒起來時就是這個樣子。限流在那一側照常生效，只是這裡讀不到狀態。',
   'Metering gateway': '計量網關',
-  'Change limit': '修改上限',
   'In flight': '進行中',
   Queued: '排隊中',
   'throttled upstream — reduced from {n}': '上游限流——已從 {n} 降下來',

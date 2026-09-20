@@ -117,6 +117,15 @@ t "gate status: containers ready" "True" "$(echo "$GATE" | jq_ "d['containers'][
 t "concurrency limit is changeable (forwarded over HTTP to the gateway)" "5" "$(curl -s -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"maxConcurrency":5}' | jq_ "d.get('max', d.get('effectiveMax'))")"
 curl -s -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"maxConcurrency":3}' -o /dev/null
 t "an out-of-range concurrency limit is refused" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"maxConcurrency":999}')"
+# The gate's other limit, on the same route since it left the generic settings page. Read
+# back from the gateway process, which resolves it from the row rather than from anything it
+# was told — the same thing the pin check below rests on
+t "the per-user cap is changeable on the same route" "4" "$(curl -s -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"perUserInflightMax":4}' | jq_ "d['perUser']")"
+t "and comes back from the gateway, not from the request" "4" "$(curl -s $API/api/admin/gate -H "authorization: Bearer $AT" | jq_ "d['perUser']")"
+curl -s -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"perUserInflightMax":2}' -o /dev/null
+# A fraction used to pass the route's isFinite check and be refused by setSetting's, which
+# throws — so it came back a 500. Both limits answer 400 now, the way the settings page does
+t "a fractional limit is a 400, not a 500" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"maxConcurrency":2.5}')"
 t "the gate can be pinned" "True" "$(curl -s -X PATCH $API/api/admin/gate -H "authorization: Bearer $AT" -H 'content-type: application/json' -d '{"pinned":true}' | jq_ "d['pinned']")"
 # Nothing in the gateway process holds the pin — it is read from the settings row on every
 # admission pass — so a GET that still says true has read it back out of the database. That

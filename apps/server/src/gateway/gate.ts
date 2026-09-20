@@ -65,6 +65,27 @@ function adaptiveIn(cfg: GateConfig): boolean {
   return cfg.readAdaptiveConcurrency?.() ?? true;
 }
 
+/**
+ * The per-user cap: what the console says now, or the configured value when it says nothing.
+ *
+ * Alongside `ceilingOf` rather than inside the gate because the console has to be able to
+ * draw it before any upstream has seen traffic — the two limits are configured together, and
+ * a page that can only show one of them until somebody sends a request is the page that made
+ * "the limit says twelve and the pools say two" hard to read in the first place.
+ */
+function perUserOf(cfg: GateConfig): number {
+  const live = cfg.readPerUserInflightMax?.();
+  if (live !== undefined && live > 0) return live;
+  /*
+   * A floor on the fallback, because it comes from an environment variable and nothing
+   * validates one. `PER_USER_INFLIGHT_MAX=0` — a reasonable-looking way to ask for "no
+   * per-user limit" — made `inflight < 0` false for everyone, so every request on every
+   * upstream queued and failed two minutes later. `unlimited` gave NaN and the same
+   * outage. Zero is not a limit anybody can mean here; one is the smallest that is.
+   */
+  return cfg.perUserInflightMax >= 1 ? cfg.perUserInflightMax : 1;
+}
+
 export interface Lease {
   release(): void;
   readonly waitedMs: number;
@@ -235,16 +256,7 @@ export class UpstreamGate {
    * deep queue would otherwise be one database read per person in it.
    */
   private perUserMax(): number {
-    const live = this.cfg.readPerUserInflightMax?.();
-    if (live !== undefined && live > 0) return live;
-    /*
-     * A floor on the fallback, because it comes from an environment variable and nothing
-     * validates one. `PER_USER_INFLIGHT_MAX=0` — a reasonable-looking way to ask for "no
-     * per-user limit" — made `inflight < 0` false for everyone, so every request on every
-     * upstream queued and failed two minutes later. `unlimited` gave NaN and the same
-     * outage. Zero is not a limit anybody can mean here; one is the smallest that is.
-     */
-    return this.cfg.perUserInflightMax >= 1 ? this.cfg.perUserInflightMax : 1;
+    return perUserOf(this.cfg);
   }
 
   private canGrantNow(userId: string, perUserMax: number, effectiveMax: number): boolean {
@@ -512,6 +524,18 @@ export class GatePool {
   /** The ceiling every pool starts from */
   max(): number {
     return ceilingOf(this.cfg);
+  }
+
+  /**
+   * How many of that ceiling one user may hold, on each upstream.
+   *
+   * The gate's second limit, and usually the binding one: a pool of twenty with two in
+   * flight and eight queued is not a contradiction, it is one user at their own cap of two.
+   * Reported next to `max()` so the console can say so rather than leaving an operator to
+   * work it out from the rows.
+   */
+  perUser(): number {
+    return perUserOf(this.cfg);
   }
 
   /**
