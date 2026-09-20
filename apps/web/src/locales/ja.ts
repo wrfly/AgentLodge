@@ -455,6 +455,8 @@ export const ja: Record<string, string> = {
   'Previewing three configured subscriptions. This is not live data.': '設定済みサブスクリプションが3つある配置のプレビューです。ライブデータではありません。',
   'Spent this window': 'このウィンドウの使用量',
   'No subscriptions configured.': 'サブスクリプションが設定されていません。',
+  'Reading remaining…': '残量を読み取り中…',
+  'Could not read remaining from this subscription.': 'このサブスクリプションの残量を読めませんでした。',
   'This 7-day window': '現在の 7 日ウィンドウ',
   'Per 5 hours': '5 時間あたり',
   'empty = unlimited': '空欄 = 無制限',

@@ -430,6 +430,8 @@ export const pt: Record<string, string> = {
   'Previewing three configured subscriptions. This is not live data.': 'Pré-visualização com três assinaturas configuradas. Não são dados ao vivo.',
   'Spent this window': 'Gasto nesta janela',
   'No subscriptions configured.': 'Não há assinaturas configuradas.',
+  'Reading remaining…': 'A ler o resto…',
+  'Could not read remaining from this subscription.': 'Não foi possível ler o resto desta assinatura.',
   'This 7-day window': 'Janela de 7 dias atual',
   'Per 5 hours': 'Por 5 horas',
   'empty = unlimited': 'vazio = sem limite',

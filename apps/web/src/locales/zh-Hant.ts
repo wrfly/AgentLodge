@@ -431,6 +431,8 @@ export const zhHant: Record<string, string> = {
   'Previewing three configured subscriptions. This is not live data.': '預覽三份已設定訂閱同時在線時的總覽。這不是即時資料。',
   'Spent this window': '本視窗已用',
   'No subscriptions configured.': '還沒有設定訂閱。',
+  'Reading remaining…': '正在讀取餘量…',
+  'Could not read remaining from this subscription.': '讀不到這份訂閱的餘量。',
   'This 7-day window': '目前 7 天視窗',
   'Per 5 hours': '每 5 小時',
   'empty = unlimited': '留空 = 不限',
