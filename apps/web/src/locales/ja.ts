@@ -241,9 +241,6 @@ export const ja: Record<string, string> = {
   'Heaviest conversations': '消費が最も多い会話',
 
   // Admin: overview, providers, audit proxy, gate
-  Users: 'ユーザー',
-  '{n} active': 'アクティブ {n}',
-  'Billed all time': '累計の課金',
   'Upstream balance': '上流の残高',
   '{used} used of {limit} prepaid': '使用 {used} / 枠 {limit}',
   '{used} used': '使用 {used}',

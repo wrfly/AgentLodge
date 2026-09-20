@@ -241,9 +241,6 @@ export const ru: Record<string, string> = {
   'Heaviest conversations': 'Самые затратные беседы',
 
   // Admin: overview, providers, audit proxy, gate
-  Users: 'Пользователи',
-  '{n} active': 'активных: {n}',
-  'Billed all time': 'Начислено за всё время',
   'Upstream balance': 'Баланс у провайдера',
   '{used} used of {limit} prepaid': 'израсходовано {used} из {limit}',
   '{used} used': 'израсходовано {used}',

@@ -165,7 +165,7 @@ export async function fetchBalance(): Promise<BalanceResult | null> {
     if (p.kind !== 'cursor') continue;
     const key = await providers.secretOf(p.id);
     if (!key) {
-      errors.push(`${p.name}: no credential`);
+      if (p.hasKey) errors.push(`${p.name}: no credential`);
       continue;
     }
     asked = true;
@@ -180,7 +180,7 @@ export async function fetchBalance(): Promise<BalanceResult | null> {
     if (!isDeepSeek(p.baseUrl)) continue;
     const key = await providers.secretOf(p.id);
     if (!key) {
-      errors.push(`${p.name}: no credential`);
+      if (p.hasKey) errors.push(`${p.name}: no credential`);
       continue;
     }
     asked = true;

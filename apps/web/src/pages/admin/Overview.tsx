@@ -27,12 +27,11 @@ import {
   Card,
   Empty,
   Spinner,
-  Stat,
   fmtDate,
 } from '../../components/ui';
 import { TokenCells, TokenHeaders, TokenSplit } from '../../components/TokenSplit';
 import { useT } from '../../lib/i18n';
-import { Money, MoneyCell, statMoney } from '../../components/Money';
+import { Money, MoneyCell } from '../../components/Money';
 import { PLATFORM_PRESETS } from './shared';
 
 /* ---------------- Overview ---------------- */
@@ -260,15 +259,6 @@ export function Overview() {
         <Banner tone="info">{t('Previewing three configured subscriptions. This is not live data.')}</Banner>
       )}
       <LiveWindowCard data={data} onStale={reload} totals={preview ? sumSpend(demoSpend()) : undefined} />
-
-      <div className="mb-4 grid grid-cols-2 gap-3">
-        <Stat label={t('Users')} value={String(data.users.total)} sub={t('{n} active', { n: data.users.active })} />
-        <Stat
-          label={t('Billed all time')}
-          {...statMoney(data.allTime, data.currency)}
-          sub={t('{n} turns', { n: data.allTime.turns })}
-        />
-      </div>
 
       <SubscriptionsCard
         providers={preview ? demoProviders() : (providers ?? [])}
@@ -668,14 +658,34 @@ function sameName(a: string, b: string) {
   return Boolean(x) && Boolean(y) && (x === y || x.includes(y) || y.includes(x));
 }
 
+function isDeepSeekUrl(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname;
+    return host === 'api.deepseek.com' || host.endsWith('.deepseek.com');
+  } catch {
+    return false;
+  }
+}
+
 function matchBalance(p: Provider, balances: BalanceRow[]): BalanceRow | undefined {
-  if (p.kind === 'cursor') return balances.find((b) => b.source === 'cursor');
-  const n = p.name.toLowerCase();
   return balances.find((b) => {
+    if (p.kind === 'cursor') return b.source === 'cursor' && (!b.label || sameName(p.name, b.label));
     if (b.source === 'cursor') return false;
-    const label = (b.label || b.source || '').toLowerCase();
-    return sameName(n, label);
+    if (b.label) return sameName(p.name, b.label);
+    return b.source === 'deepseek' && isDeepSeekUrl(p.baseUrl);
   });
+}
+
+/** A leftover seed row with no credential and no traffic is not a subscription. */
+function isLiveSubscription(p: Provider, spend?: UpstreamUsage): boolean {
+  const used = Boolean(spend?.turns || spend?.costSettled);
+  if (p.kind === 'mock' || p.kind === 'local-agent') return used;
+  return p.hasKey || used;
+}
+
+function expectsRemaining(p: Provider): boolean {
+  if (!p.hasKey) return false;
+  return p.kind === 'cursor' || isDeepSeekUrl(p.baseUrl);
 }
 
 function matchAllowance(p: Provider, allowances: UpstreamAllowance[]): UpstreamAllowance | undefined {
@@ -685,10 +695,11 @@ function matchAllowance(p: Provider, allowances: UpstreamAllowance[]): UpstreamA
 /**
  * One card per configured subscription, not per last upstream response.
  *
- * The skeleton is the provider list: a Claude / Cursor / DeepSeek that has been added
- * is on the landing page even before it has spoken. Spend is this platform's metering
- * of that subscription in the current quota window; remaining is whatever that plan
- * reports about itself.
+ * The skeleton is the provider list: a Claude / Cursor / DeepSeek that has a
+ * credential is on the landing page even before it has spoken. A seed leftover
+ * with no key and no traffic is not a subscription. Spend is this platform's
+ * metering of that subscription in the current quota window; remaining is
+ * whatever that plan reports about itself.
  */
 function collectSubscriptions(
   providers: Provider[],
@@ -702,10 +713,7 @@ function collectSubscriptions(
   const rows: SubscriptionRow[] = [];
   for (const provider of providers) {
     const spend = spendById.get(provider.id);
-    const silentLab = (provider.kind === 'mock' || provider.kind === 'local-agent')
-      && !spend?.turns
-      && !spend?.costSettled;
-    if (silentLab) continue;
+    if (!isLiveSubscription(provider, spend)) continue;
     rows.push({
       provider,
       spend,
@@ -834,7 +842,7 @@ function SubscriptionsCard({
                 </div>
               )}
 
-              {!row.balance && (row.provider.kind === 'cursor' || /deepseek/i.test(row.provider.name)) && (
+              {!row.balance && expectsRemaining(row.provider) && (
                 <div className="mb-3">
                   <p className="text-[12px] text-muted">
                     {row.provider.kind === 'cursor' ? t('Prepaid credit') : t('Upstream balance')}

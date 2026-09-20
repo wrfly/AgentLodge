@@ -241,9 +241,6 @@ export const zh: Record<string, string> = {
   'Heaviest conversations': '消耗最多的会话',
 
   // Admin: overview, providers, audit proxy, gate
-  Users: '用户',
-  '{n} active': '{n} 个活跃',
-  'Billed all time': '累计计费',
   'Upstream balance': '上游余额',
   '{used} used of {limit} prepaid': '已用 {used} / 额度 {limit}',
   '{used} used': '已用 {used}',
