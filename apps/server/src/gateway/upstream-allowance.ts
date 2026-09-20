@@ -116,7 +116,15 @@ export function refusesOnlySomeModels(status: number, headers: Headers): boolean
   return overall === null || overall === 'rejected';
 }
 
+/** Last writer, for callers that still ask "what just came back" */
 let last: Allowance | null = null;
+/** One reading per upstream. Claude does not wipe Cursor when both are in use. */
+const byProvider = new Map<string, Allowance>();
+
+function store(next: Allowance): void {
+  byProvider.set(next.provider, next);
+  last = next;
+}
 
 export function record(provider: string, wire: Wire, headers: Headers): void {
   const raw: Record<string, string> = {};
@@ -133,7 +141,8 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
    * enough for anybody to see it. A window is dropped only when the upstream it belongs to
    * changes; until then the last reading stands with its own timestamp.
    */
-  const carried = last && last.provider === provider && last.wire === wire ? last.windows : {};
+  const prev = byProvider.get(provider);
+  const carried = prev && prev.wire === wire ? prev.windows : {};
   const windows: Record<string, AllowanceWindow> = { ...carried };
   const now = new Date().toISOString();
   for (const key of Object.keys(raw)) {
@@ -155,7 +164,7 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
     else w.status = raw[key] ?? null;
   }
 
-  last = {
+  store({
     provider,
     wire,
     observedAt: now,
@@ -164,8 +173,8 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
     representative: raw[`${PREFIX}representative-claim`] ?? null,
     windows,
     raw,
-    codex: last?.codex,
-  };
+    codex: prev?.codex,
+  });
 
   /*
    * These two resets are not only the administrator's business: they are the boundaries
@@ -200,26 +209,38 @@ function persist(key: string, reset: string | null | undefined): void {
  * the client, so this is the only place it survives.
  */
 export function recordCodex(provider: string, wire: Wire, rateLimits: unknown): void {
-  last = {
+  const prev = byProvider.get(provider);
+  store({
     provider,
     wire,
     observedAt: new Date().toISOString(),
-    status: last?.provider === provider ? last.status : null,
-    resetsAt: last?.provider === provider ? last.resetsAt : null,
-    representative: last?.provider === provider ? last.representative : null,
-    windows: last?.provider === provider ? last.windows : {},
-    raw: last?.provider === provider ? last.raw : {},
+    status: prev?.status ?? null,
+    resetsAt: prev?.resetsAt ?? null,
+    representative: prev?.representative ?? null,
+    windows: prev?.windows ?? {},
+    raw: prev?.raw ?? {},
     codex: rateLimits,
-  };
+  });
 }
 
-/** null means nothing has come back from an upstream since this process started */
+/** The most recent reading, whichever upstream answered last */
 export function snapshot(): Allowance | null {
   return last;
+}
+
+/** The reading for one upstream, or null if it has not spoken since this process started */
+export function snapshotFor(provider: string): Allowance | null {
+  return byProvider.get(provider) ?? null;
+}
+
+/** Every upstream that has reported, newest first so the console can show them all */
+export function snapshots(): Allowance[] {
+  return [...byProvider.values()].sort((a, b) => (a.observedAt < b.observedAt ? 1 : -1));
 }
 
 /** Test seam */
 export function reset(): void {
   last = null;
+  byProvider.clear();
   lastPersisted.clear();
 }

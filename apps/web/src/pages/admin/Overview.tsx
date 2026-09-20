@@ -10,11 +10,16 @@ import {
   admin,
   type AdminOverview,
   type BalanceResult,
+  type GatePool,
   type GateStatus,
   type PlatformPreset,
   type PlatformUsage,
+  type Provider,
   money,
+  type UpstreamAllowance,
   type UpstreamAllowanceView,
+  type UpstreamUsage,
+  type UsageTotals,
 } from '../../lib/api';
 import {
   Banner,
@@ -35,6 +40,155 @@ import { PLATFORM_PRESETS } from './shared';
 type TFn = (source: string, vars?: Record<string, string | number>) => string;
 type BalanceRow = NonNullable<BalanceResult['balances']>[number];
 
+function previewOn(): boolean {
+  if (typeof window === 'undefined') return false;
+  const v = new URLSearchParams(window.location.search).get('preview');
+  return v === 'upstreams' || v === 'subscriptions';
+}
+
+const ZERO_SPEND: UsageTotals = {
+  calls: 0,
+  cost: {},
+  costSettled: 0,
+  inputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  outputTokens: 0,
+  costUsd: 0,
+  turns: 0,
+};
+
+function demoProviders(): Provider[] {
+  return [
+    { id: 'claude', name: 'Claude', kind: 'anthropic-native', baseUrl: 'https://api.anthropic.com', hasKey: true, credentialId: 'claude' },
+    { id: 'cursor', name: 'Cursor', kind: 'cursor', baseUrl: '', hasKey: true, credentialId: 'cursor' },
+    { id: 'deepseek', name: 'DeepSeek', kind: 'anthropic-native', baseUrl: 'https://api.deepseek.com/anthropic', hasKey: true, credentialId: 'deepseek' },
+  ];
+}
+
+function sumSpend(rows: UpstreamUsage[]): UsageTotals {
+  const cost: Record<string, number> = {};
+  const out: UsageTotals = { ...ZERO_SPEND, cost };
+  for (const s of rows) {
+    out.calls += s.calls;
+    out.costSettled += s.costSettled;
+    out.costUsd += s.costUsd;
+    out.inputTokens += s.inputTokens;
+    out.cacheReadTokens += s.cacheReadTokens;
+    out.cacheCreationTokens += s.cacheCreationTokens;
+    out.outputTokens += s.outputTokens;
+    out.turns += s.turns;
+    for (const [c, n] of Object.entries(s.cost ?? {})) cost[c] = (cost[c] ?? 0) + n;
+  }
+  return out;
+}
+
+function demoSpend(): UpstreamUsage[] {
+  return [
+    {
+      providerId: 'claude',
+      name: 'Claude',
+      kind: 'anthropic-native',
+      credentialId: 'claude',
+      calls: 18,
+      cost: { USD: 820_000 },
+      costSettled: 820_000,
+      costUsd: 820_000,
+      inputTokens: 42_000,
+      cacheReadTokens: 180_000,
+      cacheCreationTokens: 8_000,
+      outputTokens: 6_200,
+      turns: 12,
+    },
+    {
+      providerId: 'cursor',
+      name: 'Cursor',
+      kind: 'cursor',
+      credentialId: 'cursor',
+      calls: 8,
+      cost: { USD: 310_000 },
+      costSettled: 310_000,
+      costUsd: 310_000,
+      inputTokens: 12_000,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 3_100,
+      turns: 5,
+    },
+    {
+      providerId: 'deepseek',
+      name: 'DeepSeek',
+      kind: 'anthropic-native',
+      credentialId: 'deepseek',
+      calls: 6,
+      cost: { CNY: 980_000 },
+      costSettled: 140_000,
+      costUsd: 140_000,
+      inputTokens: 9_400,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 2_200,
+      turns: 4,
+    },
+  ];
+}
+
+function demoBalances(): BalanceRow[] {
+  return [
+    {
+      currency: 'USD',
+      totalBalance: '42.10',
+      grantedBalance: '100.00',
+      toppedUpBalance: '0.00',
+      used: '57.90',
+      limit: '100.00',
+      source: 'cursor',
+      label: 'Cursor',
+      planName: 'Pro',
+      resetsAt: new Date(Date.now() + 11 * 86400_000).toISOString(),
+      billedHere: true,
+    },
+    {
+      currency: 'CNY',
+      totalBalance: '128.50',
+      grantedBalance: '150.00',
+      toppedUpBalance: '0.00',
+      source: 'deepseek',
+      label: 'DeepSeek',
+    },
+  ];
+}
+
+function demoAllowances(): UpstreamAllowance[] {
+  const now = new Date().toISOString();
+  const in4h = new Date(Date.now() + 4 * 3600_000).toISOString();
+  const in3d = new Date(Date.now() + 3 * 86400_000).toISOString();
+  return [
+    {
+      provider: 'Claude',
+      wire: 'anthropic',
+      observedAt: now,
+      status: 'allowed',
+      resetsAt: in4h,
+      representative: 'five_hour',
+      raw: {},
+      windows: {
+        '5h': { utilization: 0.22, resetsAt: in4h, status: 'allowed', observedAt: now },
+        '7d': { utilization: 0.59, resetsAt: in3d, status: 'allowed_warning', observedAt: now },
+        '7d_oi': { utilization: 0.12, resetsAt: in3d, status: 'allowed', observedAt: now },
+      },
+    },
+  ];
+}
+
+function demoPools(): GatePool[] {
+  return [
+    { providerId: 'claude', name: 'Claude', active: 1, queued: 0, effectiveMax: 3, max: 3, pinned: false, cooldownUntil: 0, totalGranted: 40, totalThrottled: 0, waitMsP50: 0, waitMsP95: 0 },
+    { providerId: 'cursor', name: 'Cursor', active: 0, queued: 0, effectiveMax: 3, max: 3, pinned: false, cooldownUntil: 0, totalGranted: 12, totalThrottled: 0, waitMsP50: 0, waitMsP95: 0 },
+    { providerId: 'deepseek', name: 'DeepSeek', active: 0, queued: 1, effectiveMax: 2, max: 3, pinned: false, cooldownUntil: 0, totalGranted: 8, totalThrottled: 2, waitMsP50: 120, waitMsP95: 800 },
+  ];
+}
+
 function balanceSub(t: TFn, b: BalanceRow): string | undefined {
   const parts: string[] = [];
   if (b.used && b.limit) {
@@ -54,8 +208,12 @@ function balanceSub(t: TFn, b: BalanceRow): string | undefined {
 
 export function Overview() {
   const t = useT();
+  const preview = previewOn();
   const [data, setData] = useState<AdminOverview | null>(null);
   const [balance, setBalance] = useState<BalanceResult | null | undefined>(undefined);
+  const [allowance, setAllowance] = useState<UpstreamAllowanceView | null>(null);
+  const [providers, setProviders] = useState<Provider[] | null>(null);
+  const [windowSpend, setWindowSpend] = useState<UpstreamUsage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
@@ -64,57 +222,65 @@ export function Overview() {
       .then(setData)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
-  // Fetched once, but the window it describes ends; the card asks for a fresh one when it does
   useEffect(reload, [reload]);
-  /*
-   * Cursor's prepaid is several dashboard RPCs. The landing page used to wait for them
-   * inside `/api/admin/overview`; they load on their own now, the way the gate card does.
-   */
   useEffect(() => {
     void admin.balance().then(setBalance).catch(() => setBalance(null));
+  }, []);
+  useEffect(() => {
+    const load = () => void admin.upstreamAllowance().then(setAllowance).catch(() => {});
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    void admin.providers().then((d) => setProviders(d.providers)).catch(() => setProviders([]));
+  }, []);
+  useEffect(() => {
+    void admin
+      .platformUsage('window')
+      .then((u) => setWindowSpend(u.byUpstream))
+      .catch(() => setWindowSpend([]));
   }, []);
 
   if (error) return <Banner tone="error">{error}</Banner>;
   if (!data) return <Spinner />;
 
+  const balances = preview ? demoBalances() : (balance?.balances ?? []);
+  const allowances = preview
+    ? demoAllowances()
+    : (allowance?.allowances?.length
+      ? allowance.allowances
+      : allowance?.allowance
+        ? [allowance.allowance]
+        : []);
+
   return (
     <>
-      <LiveWindowCard data={data} onStale={reload} />
+      {preview && (
+        <Banner tone="info">{t('Previewing three configured subscriptions. This is not live data.')}</Banner>
+      )}
+      <LiveWindowCard data={data} onStale={reload} totals={preview ? sumSpend(demoSpend()) : undefined} />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="mb-4 grid grid-cols-2 gap-3">
         <Stat label={t('Users')} value={String(data.users.total)} sub={t('{n} active', { n: data.users.active })} />
         <Stat
           label={t('Billed all time')}
           {...statMoney(data.allTime, data.currency)}
           sub={t('{n} turns', { n: data.allTime.turns })}
         />
-        {balance === undefined ? (
-          <Stat label={t('Upstream balance')} value="…" />
-        ) : balance?.balances?.length ? (
-          balance.balances.map((b, i) => (
-            <Stat
-              key={`${b.source ?? 'bal'}-${b.label ?? i}`}
-              label={
-                b.source === 'cursor'
-                  ? t('{name} prepaid', { name: b.label || 'Cursor' })
-                  : b.label
-                    ? t('{name} balance', { name: b.label })
-                    : t('Upstream balance')
-              }
-              value={b.totalBalance ? `${b.totalBalance} ${b.currency}` : '—'}
-              sub={balanceSub(t, b)}
-            />
-          ))
-        ) : (
-          <Stat
-            label={t('Upstream balance')}
-            value="—"
-            sub={balance?.error ?? t('No API key configured')}
-          />
-        )}
       </div>
 
-      <UpstreamAllowanceCard prepaid={balance?.balances} />
+      <SubscriptionsCard
+        providers={preview ? demoProviders() : (providers ?? [])}
+        spends={preview ? demoSpend() : (windowSpend ?? [])}
+        balances={balances}
+        allowances={allowances}
+        currency={data.currency}
+        preview={preview}
+        allowanceView={allowance}
+        balanceError={preview ? undefined : balance?.error}
+        loading={!preview && (providers === null || windowSpend === null || balance === undefined)}
+      />
 
       <PlatformUsageCard />
 
@@ -378,7 +544,15 @@ function untilText(endsAt: string, now: number): string {
  * 80% of a shared subscription's allowance 30% of the way in is the shape of trouble, and
  * neither figure says that alone.
  */
-function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () => void }) {
+function LiveWindowCard({
+  data,
+  onStale,
+  totals,
+}: {
+  data: AdminOverview;
+  onStale: () => void;
+  totals?: UsageTotals;
+}) {
   const t = useT();
   const [now, setNow] = useState(() => Date.now());
   // The countdown is the point of the card, so it has to actually count down
@@ -410,11 +584,14 @@ function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () =>
   const queued = gate?.pools?.reduce((n, p) => n + p.queued, 0) ?? 0;
 
   return (
-    <Card title={t('This 5-hour window')}>
+    <Card
+      title={t('This 5-hour window')}
+      description={t('The user quota window. Spend below is per configured subscription.')}
+    >
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <Money totals={w.totals} currency={data.currency} className="text-[22px]" />
-        <TokenSplit totals={w.totals} />
-        <span className="text-[12.5px] text-faint">{t('{n} turns', { n: w.totals.turns })}</span>
+        <Money totals={totals ?? w.totals} currency={data.currency} className="text-[22px]" />
+        <TokenSplit totals={totals ?? w.totals} />
+        <span className="text-[12.5px] text-faint">{t('{n} turns', { n: (totals ?? w.totals).turns })}</span>
         <span className="ml-auto text-[12.5px] text-muted">
           {rolled ? t('this window has ended') : t('resets in {d}', { d: untilText(w.endsAt, now) })}
         </span>
@@ -453,149 +630,251 @@ function LiveWindowCard({ data, onStale }: { data: AdminOverview; onStale: () =>
   );
 }
 
+function UtilBar({ value }: { value: number }) {
+  const pct = Math.min(Math.max(value, 0), 1);
+  return (
+    <div className="h-1.5 w-full max-w-full overflow-hidden rounded-full bg-line">
+      <div
+        className={clsx(
+          'h-full max-w-full rounded-full',
+          pct >= 0.9 ? 'bg-red-500' : pct >= 0.75 ? 'bg-amber-500' : 'bg-accent',
+        )}
+        style={{ width: `${pct * 100}%` }}
+      />
+    </div>
+  );
+}
+
+type SubscriptionRow = {
+  provider: Provider;
+  spend?: UpstreamUsage;
+  balance?: BalanceRow;
+  allowance?: UpstreamAllowance;
+  pool?: GatePool;
+};
+
+function rankName(name: string) {
+  const n = name.toLowerCase();
+  if (n.includes('claude') || n.includes('anthropic')) return 0;
+  if (n.includes('cursor')) return 1;
+  if (n.includes('deepseek')) return 2;
+  return 3;
+}
+
+function sameName(a: string, b: string) {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  return Boolean(x) && Boolean(y) && (x === y || x.includes(y) || y.includes(x));
+}
+
+function matchBalance(p: Provider, balances: BalanceRow[]): BalanceRow | undefined {
+  if (p.kind === 'cursor') return balances.find((b) => b.source === 'cursor');
+  const n = p.name.toLowerCase();
+  return balances.find((b) => {
+    if (b.source === 'cursor') return false;
+    const label = (b.label || b.source || '').toLowerCase();
+    return sameName(n, label);
+  });
+}
+
+function matchAllowance(p: Provider, allowances: UpstreamAllowance[]): UpstreamAllowance | undefined {
+  return allowances.find((a) => sameName(p.name, a.provider));
+}
+
 /**
- * The shared plan's own allowance.
+ * One card per configured subscription, not per last upstream response.
  *
- * The one screen where the upstream's figures are the right answer. Everywhere
- * else they are replaced with the asking user's quota, because one subscription
- * serves every tenant and the pool's numbers are nobody's allowance in
- * particular.
+ * The skeleton is the provider list: a Claude / Cursor / DeepSeek that has been added
+ * is on the landing page even before it has spoken. Spend is this platform's metering
+ * of that subscription in the current quota window; remaining is whatever that plan
+ * reports about itself.
  */
-function UpstreamAllowanceCard({ prepaid }: { prepaid?: BalanceRow[] }) {
+function collectSubscriptions(
+  providers: Provider[],
+  spends: UpstreamUsage[],
+  balances: BalanceRow[],
+  allowances: UpstreamAllowance[],
+  pools: GatePool[],
+): SubscriptionRow[] {
+  const spendById = new Map(spends.filter((s) => s.providerId).map((s) => [s.providerId, s]));
+  const poolById = new Map(pools.map((p) => [p.providerId, p]));
+  const rows: SubscriptionRow[] = [];
+  for (const provider of providers) {
+    const spend = spendById.get(provider.id);
+    const silentLab = (provider.kind === 'mock' || provider.kind === 'local-agent')
+      && !spend?.turns
+      && !spend?.costSettled;
+    if (silentLab) continue;
+    rows.push({
+      provider,
+      spend,
+      balance: matchBalance(provider, balances),
+      allowance: matchAllowance(provider, allowances),
+      pool: poolById.get(provider.id)
+        ?? pools.find((p) => sameName(p.name || '', provider.name)),
+    });
+  }
+  return rows.sort(
+    (a, b) => rankName(a.provider.name) - rankName(b.provider.name)
+      || a.provider.name.localeCompare(b.provider.name),
+  );
+}
+
+function SubscriptionsCard({
+  providers,
+  spends,
+  balances,
+  allowances,
+  currency,
+  preview,
+  allowanceView,
+  balanceError,
+  loading,
+}: {
+  providers: Provider[];
+  spends: UpstreamUsage[];
+  balances: BalanceRow[];
+  allowances: UpstreamAllowance[];
+  currency: string;
+  preview: boolean;
+  allowanceView: UpstreamAllowanceView | null;
+  balanceError?: string;
+  loading: boolean;
+}) {
   const t = useT();
-  const [view, setView] = useState<UpstreamAllowanceView | null>(null);
-  const [showRaw, setShowRaw] = useState(false);
+  const [gate, setGate] = useState<GateStatus | null>(null);
+  const [rawFor, setRawFor] = useState<string | null>(null);
 
   useEffect(() => {
-    const load = () => void admin.upstreamAllowance().then(setView).catch(() => {});
+    if (preview) return;
+    const load = () => void admin.gate().then(setGate).catch(() => setGate(null));
     load();
-    const timer = setInterval(load, 30_000);
+    const timer = setInterval(load, 15_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [preview]);
 
-  const pots = (prepaid ?? []).filter(
-    (b) => b.source === 'cursor' && (b.limit || b.totalBalance),
-  );
+  const pools = preview ? demoPools() : (gate?.pools ?? []);
+  const rows = collectSubscriptions(providers, spends, balances, allowances, pools);
+  const gatewayFailed = Boolean((allowanceView?.unreachable || allowanceView?.error) && !preview);
+  const title = t('Subscriptions');
+  const description = t('What this platform spent on each configured subscription this window, and what that plan still has left.');
 
-  if (!view && !pots.length) return null;
-
-  const a = view?.allowance;
-  const windows = Object.entries(a?.windows ?? {}).filter(
-    ([, w]) => w.utilization !== null || w.resetsAt !== null,
-  );
-  const showWindows = Boolean(view && !view.unreachable && !view.error && a && windows.length);
-  const showEmptyHeaders = Boolean(view && !view.unreachable && !view.error && a && !windows.length && !pots.length);
-  const showNothingYet = Boolean(view && !view.unreachable && !view.error && !a && !pots.length);
-  const gatewayFailed = Boolean((view?.unreachable || view?.error) && !pots.length);
+  if (loading && !rows.length) return null;
+  if (!rows.length) {
+    return (
+      <Card title={title} description={description}>
+        {gatewayFailed && (
+          <Banner tone="warn">{allowanceView?.error ?? t('Cannot reach the gateway')}</Banner>
+        )}
+        <Empty text={t('No subscriptions configured.')} />
+      </Card>
+    );
+  }
 
   return (
-    <Card title={pots.length && !showWindows ? t('Prepaid credit') : t('Upstream plan allowance')}>
-      {gatewayFailed ? (
-        <Banner tone="warn">{view?.error ?? t('Cannot reach the gateway')}</Banner>
-      ) : showNothingYet ? (
-        <Empty text={t('Nothing observed yet — it fills in on the next upstream response.')} />
-      ) : showEmptyHeaders ? (
-        <Empty text={t('The upstream sent no limit windows')} />
-      ) : (
-        <div className="space-y-3">
-          {pots.map((b) => {
-            const used = Number(b.used);
-            const limit = Number(b.limit);
-            const pct = limit > 0 && Number.isFinite(used) ? Math.min(Math.max(used / limit, 0), 1) : 0;
-            return (
-              <div key={`${b.label}-${b.totalBalance}`}>
-                <div className="mb-1 flex items-baseline justify-between text-[12.5px]">
-                  <span>{b.label || 'Cursor'}</span>
-                  <span className="font-mono tabular-nums">
-                    {b.totalBalance
-                      ? t('{amount} remaining', { amount: `${b.totalBalance} ${b.currency}` })
-                      : '—'}
+    <Card title={title} description={description}>
+      {gatewayFailed && (
+        <Banner tone="warn">{allowanceView?.error ?? t('Cannot reach the gateway')}</Banner>
+      )}
+      {balanceError && (
+        <p className="mb-2 text-[12.5px] text-faint">{balanceError}</p>
+      )}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {rows.map((row) => {
+          const spend = row.spend ?? ZERO_SPEND;
+          const windows = Object.entries(row.allowance?.windows ?? {}).filter(
+            ([, w]) => w.utilization !== null || w.resetsAt !== null,
+          );
+          const used = Number(row.balance?.used);
+          const limit = Number(row.balance?.limit);
+          const potPct = limit > 0 && Number.isFinite(used) ? Math.min(Math.max(used / limit, 0), 1) : null;
+          return (
+            <div key={row.provider.id} className="min-w-0 overflow-hidden rounded-lg border border-line bg-bubble/25 p-3">
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <span className="min-w-0 truncate font-mono text-[13px] font-medium">{row.provider.name}</span>
+                {row.pool && (
+                  <span className="shrink-0 text-[11px] text-faint">
+                    {t('gate {active}/{max} in flight', {
+                      active: row.pool.active,
+                      max: row.pool.effectiveMax,
+                    })}
                   </span>
-                </div>
-                {limit > 0 && Number.isFinite(used) && (
-                  <div className="h-1.5 overflow-hidden rounded-full bg-line">
-                    <div
-                      className={clsx(
-                        'h-full rounded-full',
-                        pct >= 0.9 ? 'bg-red-500' : pct >= 0.75 ? 'bg-amber-500' : 'bg-accent',
-                      )}
-                      style={{ width: `${pct * 100}%` }}
-                    />
-                  </div>
                 )}
-                <div className="mt-1 flex flex-wrap gap-x-2 text-[11.5px] text-faint">
-                  {b.used && b.limit && (
-                    <span>
-                      {t('{used} used of {limit} prepaid', {
-                        used: `${b.used} ${b.currency}`,
-                        limit: `${b.limit} ${b.currency}`,
-                      })}
-                    </span>
-                  )}
-                  {b.planName && <span>{b.planName}</span>}
-                  {b.billedHere && <span>{t('counted from this platform')}</span>}
-                  {b.resetsAt && <span>{t('resets {t}', { t: fmtDate(b.resetsAt) })}</span>}
-                </div>
               </div>
-            );
-          })}
 
-          {showWindows && a && (
-            <>
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[12px] text-muted">
-                <span className="font-mono text-ink">{a.provider}</span>
-                {a.status && <span>{a.status}</span>}
-                <span className="text-faint">{t('as of {t}', { t: fmtDate(a.observedAt) })}</span>
+              <div className="mb-3">
+                <p className="text-[12px] text-muted">{t('Spent this window')}</p>
+                <div className="mb-0.5 flex flex-wrap items-baseline gap-x-2">
+                  <Money totals={spend} currency={currency} className="text-[16px]" />
+                  <span className="text-[11.5px] text-faint">{t('{n} turns', { n: spend.turns })}</span>
+                </div>
+                <TokenSplit totals={spend} />
               </div>
+
+              {row.balance && (
+                <div className="mb-3">
+                  <p className="text-[12px] text-muted">
+                    {row.balance.source === 'cursor' ? t('Prepaid credit') : t('Upstream balance')}
+                  </p>
+                  <p className="mb-1 font-mono text-[13px] tabular-nums">
+                    {row.balance.totalBalance
+                      ? t('{amount} remaining', { amount: `${row.balance.totalBalance} ${row.balance.currency}` })
+                      : '—'}
+                  </p>
+                  {potPct !== null && <UtilBar value={potPct} />}
+                  <div className="mt-1 flex flex-wrap gap-x-2 text-[11.5px] text-faint">
+                    {balanceSub(t, row.balance)?.split(' · ').map((part) => (
+                      <span key={part}>{part}</span>
+                    ))}
+                    {row.balance.resetsAt && <span>{t('resets {t}', { t: fmtDate(row.balance.resetsAt) })}</span>}
+                  </div>
+                </div>
+              )}
 
               {windows.map(([key, w]) => (
-                <div key={key}>
-                  <div className="mb-1 flex items-baseline justify-between text-[12.5px]">
-                    <span>{t(WINDOW_LABEL[key] ?? key)}</span>
-                    <span className="font-mono tabular-nums">
+                <div key={key} className="mb-2 last:mb-0">
+                  <div className="mb-1 flex items-baseline justify-between gap-2 text-[12.5px]">
+                    <span className="min-w-0">{t(WINDOW_LABEL[key] ?? key)}</span>
+                    <span className="shrink-0 font-mono tabular-nums">
                       {w.utilization === null ? '—' : `${Math.round(w.utilization * 100)}%`}
                     </span>
                   </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-line">
-                    <div
-                      className={clsx(
-                        'h-full rounded-full',
-                        (w.utilization ?? 0) >= 0.9 ? 'bg-red-500' : (w.utilization ?? 0) >= 0.75 ? 'bg-amber-500' : 'bg-accent',
-                      )}
-                      style={{ width: `${Math.min(Math.max((w.utilization ?? 0) * 100, 0), 100)}%` }}
-                    />
-                  </div>
+                  <UtilBar value={w.utilization ?? 0} />
                   <div className="mt-1 flex flex-wrap gap-x-2 text-[11.5px] text-faint">
                     {w.resetsAt && <span>{t('resets {t}', { t: fmtDate(w.resetsAt) })}</span>}
-                    {w.observedAt && a.observedAt && w.observedAt !== a.observedAt && (
+                    {row.allowance && w.observedAt !== row.allowance.observedAt && (
                       <span>{t('read {t}', { t: fmtDate(w.observedAt) })}</span>
                     )}
                   </div>
                 </div>
               ))}
 
-              {a.codex !== undefined && a.codex !== null && (
-                <pre className="overflow-x-auto rounded-lg bg-bubble/60 p-2.5 text-[11.5px]">
-                  {JSON.stringify(a.codex, null, 2)}
+              {row.allowance?.codex != null && (
+                <pre className="mt-2 overflow-x-auto rounded-lg bg-bubble/60 p-2 text-[11px]">
+                  {JSON.stringify(row.allowance.codex, null, 2)}
                 </pre>
               )}
 
-              <div>
-                <Button variant="ghost" onClick={() => setShowRaw((v) => !v)}>
-                  {showRaw ? t('Hide headers') : t('All headers')}
-                </Button>
-                {showRaw && (
-                  <pre className="mt-2 overflow-x-auto rounded-lg bg-bubble/60 p-2.5 text-[11.5px] leading-relaxed">
-                    {Object.entries(a.raw)
-                      .map(([k, v]) => `${k}: ${v}`)
-                      .join('\n')}
-                  </pre>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
+              {row.allowance && Object.keys(row.allowance.raw).length > 0 && (
+                <div className="mt-2">
+                  <Button variant="ghost" onClick={() => setRawFor((cur) => (cur === row.provider.id ? null : row.provider.id))}>
+                    {rawFor === row.provider.id ? t('Hide headers') : t('All headers')}
+                  </Button>
+                  {rawFor === row.provider.id && (
+                    <pre className="mt-2 overflow-x-auto rounded-lg bg-bubble/60 p-2 text-[11px] leading-relaxed">
+                      {Object.entries(row.allowance.raw).map(([k, v]) => `${k}: ${v}`).join('\n')}
+                    </pre>
+                  )}
+                </div>
+              )}
+
+              {row.pool && row.pool.queued > 0 && (
+                <p className="mt-2 text-[11.5px] text-amber-600">{t('{n} waiting', { n: row.pool.queued })}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </Card>
   );
 }

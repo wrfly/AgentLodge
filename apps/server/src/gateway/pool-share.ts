@@ -89,14 +89,14 @@ export function poolShare(
   q: QuotaStatus,
   provider: { id: string; name: string },
 ): Partial<Record<QuotaScope, PoolShare>> {
-  const snap = allowance.snapshot();
+  const snap = allowance.snapshotFor(provider.name);
   /*
-   * One global slot, not one per upstream: whichever provider answered last is what is in
-   * it. A deployment with two of them would otherwise hand a user of the second one the
-   * first one's allowance. No match means we have nothing to say about this upstream, which
-   * also disposes of the mock and local-agent paths — they have no pool at all.
+   * One slot per upstream. A deployment that runs Claude and Cursor used to keep only the
+   * last response of either, so a Cursor user was shown Claude's 5-hour bar (or nothing,
+   * if the names did not match). No reading means we have nothing to say about this
+   * upstream, which also disposes of the mock and local-agent paths — they have no pool.
    */
-  if (!snap || snap.provider !== provider.name) return {};
+  if (!snap) return {};
 
   const out: Partial<Record<QuotaScope, PoolShare>> = {};
 

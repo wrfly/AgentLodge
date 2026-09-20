@@ -1005,8 +1005,10 @@ export interface UpstreamAllowance {
 
 export interface UpstreamAllowanceView {
   enabled: boolean;
-  /** null until an upstream response has passed through the gateway since it started */
+  /** The most recent reading. Kept so an older console still has something to show. */
   allowance?: UpstreamAllowance | null;
+  /** One per upstream that has spoken since the gateway started */
+  allowances?: UpstreamAllowance[];
   unreachable?: boolean;
   error?: string;
 }
