@@ -139,8 +139,9 @@ services:
       # a closed list, so left out it would be a documented variable that does nothing.
       MAX_UPSTREAM_CONCURRENCY: ${MAX_UPSTREAM_CONCURRENCY:-3}
       # The other half of the gate: how many of those slots one user may hold. The console
-      # owns it (System settings › Gateway) and this is only the fallback — but the block is
-      # a closed list, so left out it would be a documented variable that does nothing.
+      # owns it — the same Metering gateway card as the ceiling above, which stores it too —
+      # and this is only the fallback, but the block is a closed list, so left out it would
+      # be a documented variable that does nothing.
       PER_USER_INFLIGHT_MAX: ${PER_USER_INFLIGHT_MAX:-2}
       # How long a stream may go quiet before the gateway gives up, and how often it pings a
       # client that would otherwise hear nothing. Named here because the environment block is

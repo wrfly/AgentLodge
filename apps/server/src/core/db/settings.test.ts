@@ -23,7 +23,7 @@ delete process.env.PER_USER_INFLIGHT_MAX;
 
 const { initDb, run } = await import('./index.js');
 initDb();
-const { setSetting, getNumber, getNumberFresh, listSettings } = await import('./settings.js');
+const { setSetting, getNumber, getNumberFresh, listSettings, SETTING_SPECS } = await import('./settings.js');
 
 let pass = 0;
 let fail = 0;
@@ -93,12 +93,27 @@ console.log('\n=== Read past the cache, because the reader is another container 
   ok('and the fresh one is not', getNumberFresh(KEY) === 9, String(getNumberFresh(KEY)));
 }
 
-console.log('\n=== It reaches the console as a field of its own ===');
+console.log('\n=== It is the gateway card that offers it, not the generic page ===');
 {
-  const row = listSettings().find((s) => s.key === KEY);
-  ok('the console is offered it', Boolean(row), 'missing from listSettings()');
-  ok('in a group of its own', row?.group === 'gateway', String(row?.group));
-  ok('as a number', row?.type === 'number', String(row?.type));
+  /*
+   * Both of the gate's limits are drawn by the Metering gateway card and written through
+   * PATCH /api/admin/gate. Listed here as well they would have two entry points under two
+   * different save models — this page's batched "N unsaved changes" draft and that card's
+   * own button — each quietly overwriting the other, which is what they did until the pair
+   * was moved together.
+   */
+  ok('the generic list does not offer it', !listSettings().some((s) => s.key === KEY));
+  ok(
+    'nor the ceiling it is configured with',
+    !listSettings().some((s) => s.key === 'gateway.maxUpstreamConcurrency'),
+  );
+
+  // Hidden is not gone: the route validates, the fallbacks resolve and the label is
+  // translated off this spec, so everything above still has to hold for it
+  const spec = SETTING_SPECS.find((s) => s.key === KEY);
+  ok('but the spec is still there', Boolean(spec), 'missing from SETTING_SPECS');
+  ok('as a number', spec?.type === 'number', String(spec?.type));
+  ok('in the gateway group', spec?.group === 'gateway', String(spec?.group));
 }
 
 fs.rmSync(box, { recursive: true, force: true });

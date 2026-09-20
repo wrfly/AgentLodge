@@ -1232,7 +1232,7 @@ request.raw.on('close', () => { if (!finished) { abortUpstream(); lease.release(
 | `QUEUE_TIMEOUT_MS` | 120000 | 排队超时 → 429 + `retry-after` |
 | `LEASE_MAX_MS` | 600000 | 单次上游请求最长持有时间 |
 | `TTFT_TIMEOUT_MS` | 60000 | 首字节超时 |
-| `PER_USER_INFLIGHT_MAX` | 2 | 单用户在每条上游最多同时占 2 个 slot，防独占。真正的来源是 `gateway.perUserInflightMax` 设置项，网关每轮准入 fresh 读一次；这个变量是它的 `envFallback` |
+| `PER_USER_INFLIGHT_MAX` | 2 | 单用户在每条上游最多同时占 2 个 slot，防独占。真正的来源是 `gateway.perUserInflightMax` 设置项，网关每轮准入 fresh 读一次；这个变量是它的 `envFallback`。和 `gateway.maxUpstreamConcurrency` 一起由「计量网关」卡片写，走 `PATCH /api/admin/gate`——同一个闸门的两个数，放在同一处改，旁边就是它们的在途/排队计数 |
 
 #### 排队体验：把等待暴露给用户
 

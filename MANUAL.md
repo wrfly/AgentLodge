@@ -748,7 +748,9 @@ Error: Usage endpoint is rate limited. Please try again in a moment.
 - **配额硬闸门**：在一个 turn 内部也能刹住（M2 的 turn 级拦截做不到）
 - **并发闸门**：每条上游任一瞬间 in-flight ≤ 3（可在后台热调），各上游一个池子
   - 用户级轮转而非全局 FIFO —— 否则一个用户的 agent 循环会把别人饿死
-  - 单用户最多占 2 个 slot，防独占
+  - 单用户最多占 2 个 slot，防独占。这条同样落库（`gateway.perUserInflightMax`），
+    和上限并排摆在「计量网关」卡片上 —— 一个闸门的两个数，旁边就是它们的在途/排队计数。
+    两条里通常是这条在起作用：池子 20、在途 2、排队 8 是某人卡在自己的 2 上，不是闸门坏了
   - AIMD 自适应：上游返回 429 就把并发砍半，连续成功 20 次再加回来；只拒某类模型的 429
     （比如 Fable 周额度用完）不算，同一上游的其他模型照常走
   - 上限本身**落库**（`gateway.maxUpstreamConcurrency`），网关每轮准入 fresh 读一次 ——
@@ -1107,7 +1109,7 @@ npm -w @agentlodge/server run reset-password -- admin@example.com
 | `GATEWAY_URL` | 自动推导 | **agent** 访问网关的地址；compose 部署时设成 `http://gateway:8788` |
 | `GATEWAY_INTERNAL_URL` | 自动推导 | **本进程**访问网关的地址（后台读闸门）；同上 |
 | `MAX_UPSTREAM_CONCURRENCY` | `3` | **每条上游**的 in-flight 上限，后台「计量网关」卡片可热调。每条上游一个池子，各自计数。真正的来源是 `gateway.maxUpstreamConcurrency` 设置项（改完落库，网关每轮准入 fresh 读一次，**重启不丢**）；这个变量是它的兜底 |
-| `PER_USER_INFLIGHT_MAX` | `2` | 单用户在**每条上游**最多占几个 slot。后台「系统设置 › 网关」可改，改完下一个请求即生效；这个变量只是没人开过那一页时的兜底 |
+| `PER_USER_INFLIGHT_MAX` | `2` | 单用户在**每条上游**最多占几个 slot，和上面那条并排在后台「计量网关」卡片上改。真正的来源是 `gateway.perUserInflightMax` 设置项（落库，网关每轮准入 fresh 读一次，**重启不丢**）；这个变量是它的兜底。两条限额里通常是这条在起作用：池子 20、在途 2、排队 8 不是闸门坏了，是某个用户卡在自己的 2 上 |
 | `UPSTREAM_HEADERS_TIMEOUT_MS` | `90000` | 上游多久没给响应头就放弃，回 504（CLI 会重试） |
 | `UPSTREAM_IDLE_TIMEOUT_MS` | `330000` | 上游多久没给字节就放弃。**故意大于 300 秒**：Claude Code 自己数字节，静默 300 秒就放弃，网关先掐会把「慢」变成「截断」，所以这条只当客户端已经走了、socket 还没察觉时的兜底。真触发时会往流里写一个 error 帧，客户端不会把半截答案当完整的。0 关掉 |
 | `STREAM_KEEP_ALIVE_MS` | `15000` | 多久没有东西发给客户端就补一个 ping。计时从**上一次写给客户端**算起，不是从上游最后说话算起——推理流、心跳注释、只有 role 的首个 delta 都到得了网关而到不了客户端。0 关掉 |

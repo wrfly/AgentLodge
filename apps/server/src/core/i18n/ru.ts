@@ -10,6 +10,7 @@ export const ru: Record<string, string> = {
   'Cannot reach the audit proxy: {reason}': 'Не удаётся связаться с прокси аудита: {reason}',
   'The audit proxy\'s control API is not enabled': 'Управляющий API прокси аудита не включён',
   'The concurrency limit has to be between 1 and 64': 'Лимит параллелизма должен быть от 1 до 64',
+  'The per-user slot limit has to be between 1 and 64': 'Лимит слотов на пользователя должен быть от 1 до 64',
   'That is not a valid email address': 'Некорректный адрес электронной почты',
   'That address is already registered': 'Этот адрес уже зарегистрирован',
   'No such invite code': 'Такого кода приглашения нет',

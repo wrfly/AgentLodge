@@ -1178,6 +1178,9 @@ export function buildGateway(): FastifyInstance {
 
   app.get('/gate', adminOnly, async () => ({
     max: gate.max(),
+    // The gate's other limit, read here for the same reason `max` is: this process is the
+    // one that applies it, and the console draws both of them in one place now
+    perUser: gate.perUser(),
     pinned: gate.pinned(),
     // One row per upstream that has seen traffic since this process started. An upstream
     // with no row has had no request go to it, which is different from having a limit of
@@ -1226,8 +1229,11 @@ export function buildGateway(): FastifyInstance {
   app.patch('/gate', adminOnly, async (req, reply) => {
     const body = (req.body ?? {}) as { maxConcurrency?: number };
     if (body.maxConcurrency !== undefined) {
-      const n = Number(body.maxConcurrency);
-      if (!Number.isFinite(n) || n < 1 || n > 64)
+      const n = body.maxConcurrency;
+      // The same test the console's route applies, rather than `isFinite` on a coerced value:
+      // this route is reachable on its own — agent containers share agent-net, which is why
+      // it is admin-guarded — and 2.5 or `true` must not mean something different here
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 64)
         return reply.code(400).send({ error: tr(req, 'The concurrency limit has to be between 1 and 64') });
       gate.setMaxConcurrency(n);
     }
@@ -1237,7 +1243,7 @@ export function buildGateway(): FastifyInstance {
      * already queued would otherwise wait for a release that may be minutes away.
      */
     gate.reschedule();
-    return { max: gate.max(), pinned: gate.pinned(), pools: gate.stats() };
+    return { max: gate.max(), perUser: gate.perUser(), pinned: gate.pinned(), pools: gate.stats() };
   });
 
   /**

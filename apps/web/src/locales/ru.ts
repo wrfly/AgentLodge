@@ -289,7 +289,6 @@ export const ru: Record<string, string> = {
   'Concurrency gate': 'Шлюз параллелизма',
   'This is what it looks like when the gateway container is not up. Rate limiting still applies on that side; only the status is unreadable here.': 'Так это выглядит, когда контейнер шлюза не запущен. Ограничение частоты на той стороне продолжает работать; здесь просто не читается состояние.',
   'Metering gateway': 'Шлюз учёта',
-  'Change limit': 'Изменить лимит',
   'In flight': 'В работе',
   Queued: 'В очереди',
   'throttled upstream — reduced from {n}': 'провайдер ограничил — снижено с {n}',

@@ -29,6 +29,10 @@ process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 // The fallback a restarted container would come up on, and deliberately not the number the
 // console writes below — otherwise "it was stored" and "it was never changed" look the same
 process.env.MAX_UPSTREAM_CONCURRENCY = '3';
+// The same for the gate's other limit, which arrives on this route now rather than through
+// the generic settings page. Owned here: a machine set up to run this deployment is exactly
+// the machine that exports it.
+process.env.PER_USER_INFLIGHT_MAX = '2';
 // Nothing listens there. `callGateway` answers `unreachable` rather than throwing.
 process.env.GATEWAY_INTERNAL_URL = 'http://127.0.0.1:1';
 
@@ -90,8 +94,11 @@ const restartedGateway = () =>
     maxQueueDepth: 200,
     queueTimeoutMs: 120_000,
     leaseMaxMs: 600_000,
-    perUserInflightMax: 2,
+    // The other fallback a restarted container comes up on, and again deliberately not the
+    // number the console writes below
+    perUserInflightMax: Number(process.env['PER_USER_INFLIGHT_MAX']),
     readMaxConcurrency: () => settings.getNumberFresh('gateway.maxUpstreamConcurrency'),
+    readPerUserInflightMax: () => settings.getNumberFresh('gateway.perUserInflightMax'),
     readAdaptiveConcurrency: () => settings.getBoolFresh('gateway.adaptiveConcurrency'),
   });
 
@@ -108,13 +115,33 @@ console.log('\n=== What the console writes ===');
   ok('the pin is accepted on its own', pinned.statusCode === 200, String(pinned.statusCode));
   ok('and stored inverted', settings.getBoolFresh('gateway.adaptiveConcurrency') === false);
   ok('the limit is untouched by it', settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 9);
+
+  /*
+   * The gate's other limit arrives on this route now rather than through the generic
+   * settings page. Same row — `gateway.perUserInflightMax` — but written here it also
+   * reaches the gateway's reschedule, which is what lets a raise admit the people already
+   * queued instead of leaving them for a release that may be minutes away.
+   */
+  const perUser = await patch({ perUserInflightMax: 5 });
+  ok('the per-user cap is accepted', perUser.statusCode === 200, String(perUser.statusCode));
+  ok('and stored', settings.getNumberFresh('gateway.perUserInflightMax') === 5,
+    String(settings.getNumberFresh('gateway.perUserInflightMax')));
+  ok('without disturbing the ceiling', settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 9);
+
+  // Both at once, because that is how a pair whose difficulty is their relationship gets
+  // adjusted: one round trip, one audit entry
+  const both = await patch({ maxConcurrency: 12, perUserInflightMax: 3 });
+  ok('both together are accepted', both.statusCode === 200, String(both.statusCode));
+  ok('and both are stored',
+    settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 12
+      && settings.getNumberFresh('gateway.perUserInflightMax') === 3);
 }
 
 console.log('\n=== What it refuses ===');
 {
   const tooBig = await patch({ maxConcurrency: 999 });
   ok('an out-of-range limit is refused', tooBig.statusCode === 400, String(tooBig.statusCode));
-  ok('and nothing is written', settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 9,
+  ok('and nothing is written', settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 12,
     String(settings.getNumberFresh('gateway.maxUpstreamConcurrency')));
 
   ok('zero is refused', (await patch({ maxConcurrency: 0 })).statusCode === 400);
@@ -123,13 +150,63 @@ console.log('\n=== What it refuses ===');
   // "pin it to false"
   ok('and a pin that is not a boolean', (await patch({ pinned: 'yes' })).statusCode === 400);
   ok('the pin survived all of that', settings.getBoolFresh('gateway.adaptiveConcurrency') === false);
+
+  // The per-user cap takes the same range, and refusing it has to be the same answer: it is
+  // written with the same setSetting, whose own validate would otherwise throw
+  ok('an out-of-range per-user cap is refused', (await patch({ perUserInflightMax: 0 })).statusCode === 400);
+  ok('and too large a one', (await patch({ perUserInflightMax: 65 })).statusCode === 400);
+  /*
+   * A fraction, which used to reach setSetting and come back a 500 with a stack trace.
+   * `Number.isFinite(2.5)` is true, so the route's own check passed it on to the spec's
+   * validate — which wants a whole number and refuses by throwing. The same value typed into
+   * the settings page has always been a plain 400.
+   */
+  ok('and a fraction, as a 400 rather than a 500', (await patch({ maxConcurrency: 2.5 })).statusCode === 400);
+  ok('on either limit', (await patch({ perUserInflightMax: 1.5 })).statusCode === 400);
+  /*
+   * `Number(true)` is 1, which is a whole number in range — so a body a client had no
+   * business sending took the whole deployment down to one request in flight per upstream
+   * and filed an audit entry saying it had been asked for. The type is checked now, not
+   * coerced, which also refuses a numeral sent as a string.
+   */
+  ok('a boolean is not a limit', (await patch({ maxConcurrency: true })).statusCode === 400);
+  ok('nor a string', (await patch({ perUserInflightMax: '4' })).statusCode === 400);
+  ok('neither limit moved', settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 12
+    && settings.getNumberFresh('gateway.perUserInflightMax') === 3);
+
+  /*
+   * The one the card made reachable: two limits in one body, one of them bad.
+   *
+   * Validating each as it was stored wrote the good one and then answered 400 — and nothing
+   * downstream ran for it, so there was no audit entry naming who had changed it and no
+   * forward to the gateway. The console showed the error and the administrator concluded
+   * nothing had been saved, while every later admission pass read the half that landed.
+   */
+  const mixed = await patch({ maxConcurrency: 7, perUserInflightMax: 99 });
+  ok('a body with one bad limit is refused', mixed.statusCode === 400, String(mixed.statusCode));
+  ok('and the good half of it is not written',
+    settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 12,
+    String(settings.getNumberFresh('gateway.maxUpstreamConcurrency')));
+  // The other way round too: the refusal must not depend on which field came first
+  const mixedBack = await patch({ maxConcurrency: 99, perUserInflightMax: 7 });
+  ok('in either order', mixedBack.statusCode === 400, String(mixedBack.statusCode));
+  ok('with neither half written', settings.getNumberFresh('gateway.perUserInflightMax') === 3,
+    String(settings.getNumberFresh('gateway.perUserInflightMax')));
+  // And the message names the limit that was actually wrong, since both boxes sit under it
+  ok('the per-user refusal names the per-user limit',
+    /per-user/.test(JSON.parse((await patch({ perUserInflightMax: 99 })).body).error ?? ''),
+    JSON.parse((await patch({ perUserInflightMax: 99 })).body).error);
 }
 
 console.log('\n=== An ordinary user cannot move it ===');
 {
   const res = await patch({ maxConcurrency: 64 }, alice);
   ok('the route refuses', res.statusCode === 403, String(res.statusCode));
-  ok('and the limit stands', settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 9);
+  ok('and the limit stands', settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 12);
+  // The per-user cap left the settings page for this route, so its guard is this route's
+  ok('the per-user cap is guarded the same way',
+    (await patch({ perUserInflightMax: 1 }, alice)).statusCode === 403);
+  ok('and it stands too', settings.getNumberFresh('gateway.perUserInflightMax') === 3);
 }
 
 console.log('\n=== And a gateway that has just restarted ===');
@@ -137,19 +214,24 @@ console.log('\n=== And a gateway that has just restarted ===');
   // The regression itself. This pool has never been told anything: it is what the container
   // comes up with after a deploy, and on the old code it would report 3.
   const pool = restartedGateway();
-  ok('it comes up on the stored limit, not the environment variable', pool.max() === 9, String(pool.max()));
+  ok('it comes up on the stored limit, not the environment variable', pool.max() === 12, String(pool.max()));
+  ok('and on the stored per-user cap, not PER_USER_INFLIGHT_MAX', pool.perUser() === 3, String(pool.perUser()));
   ok('and on the stored pin', pool.pinned());
-  ok('so a pool created later starts there too', pool.for('provider-a').stats().max === 9);
+  ok('so a pool created later starts there too', pool.for('provider-a').stats().max === 12);
   ok('and does not narrow itself', (() => {
     const g = pool.for('provider-b');
     g.reportUpstream(429, 10);
-    return g.stats().effectiveMax === 9;
+    return g.stats().effectiveMax === 12;
   })());
 
   await patch({ pinned: false });
-  await patch({ maxConcurrency: 4 });
+  // 6 rather than 2, so "it read the row" and "it fell back to PER_USER_INFLIGHT_MAX" cannot
+  // both produce a pass
+  await patch({ maxConcurrency: 4, perUserInflightMax: 6 });
   const later = restartedGateway();
-  ok('a later change is the one it comes up on', later.max() === 4 && !later.pinned(), String(later.max()));
+  ok('a later change is the one it comes up on',
+    later.max() === 4 && later.perUser() === 6 && !later.pinned(),
+    `${later.max()} / ${later.perUser()}`);
 }
 
 await app.close();

@@ -14,6 +14,7 @@ export const zhHant: Record<string, string> = {
   'Cannot reach the audit proxy: {reason}': '連不上稽核代理：{reason}',
   'The audit proxy\'s control API is not enabled': '稽核代理的控制 API 未啟用',
   'The concurrency limit has to be between 1 and 64': '並行上限需為 1–64',
+  'The per-user slot limit has to be between 1 and 64': '單一使用者槽位上限需為 1–64',
   'That is not a valid email address': '電子郵件格式不正確',
   'That address is already registered': '該信箱已註冊',
   'No such invite code': '邀請碼不存在',

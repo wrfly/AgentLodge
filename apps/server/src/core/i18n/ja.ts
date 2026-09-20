@@ -10,6 +10,7 @@ export const ja: Record<string, string> = {
   'Cannot reach the audit proxy: {reason}': '監査プロキシに接続できません：{reason}',
   'The audit proxy\'s control API is not enabled': '監査プロキシの制御 API が有効ではありません',
   'The concurrency limit has to be between 1 and 64': '同時実行の上限は 1〜64 の範囲です',
+  'The per-user slot limit has to be between 1 and 64': '1 ユーザーあたりのスロット上限は 1〜64 の範囲で指定してください',
   'That is not a valid email address': 'メールアドレスの形式が正しくありません',
   'That address is already registered': 'このアドレスはすでに登録されています',
   'No such invite code': 'そのような招待コードはありません',

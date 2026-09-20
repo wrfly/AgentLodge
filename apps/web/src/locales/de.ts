@@ -272,7 +272,6 @@ export const de: Record<string, string> = {
   'Concurrency gate': 'Nebenläufigkeits-Schranke',
   'This is what it looks like when the gateway container is not up. Rate limiting still applies on that side; only the status is unreadable here.': 'So sieht es aus, wenn der Gateway-Container nicht läuft. Das Rate Limiting greift dort weiterhin; nur der Status ist hier nicht lesbar.',
   'Metering gateway': 'Metering-Gateway',
-  'Change limit': 'Limit ändern',
   'In flight': 'Laufend',
   Queued: 'In der Warteschlange',
   'throttled upstream — reduced from {n}': 'vom Upstream gedrosselt — von {n} heruntergesetzt',

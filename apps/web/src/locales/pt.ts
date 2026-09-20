@@ -272,7 +272,6 @@ export const pt: Record<string, string> = {
   'Concurrency gate': 'Portão de concorrência',
   'This is what it looks like when the gateway container is not up. Rate limiting still applies on that side; only the status is unreadable here.': 'É este o aspeto quando o contentor da gateway não está a correr. A limitação de pedidos continua a aplicar-se desse lado; aqui apenas não se consegue ler o estado.',
   'Metering gateway': 'Gateway de medição',
-  'Change limit': 'Alterar o limite',
   'In flight': 'Em curso',
   Queued: 'Em fila',
   'throttled upstream — reduced from {n}': 'limitado pelo fornecedor — reduzido a partir de {n}',

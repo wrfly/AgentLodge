@@ -10,6 +10,7 @@ export const zh: Record<string, string> = {
   'Cannot reach the audit proxy: {reason}': '连不上审计代理：{reason}',
   'The audit proxy\'s control API is not enabled': '审计代理的控制 API 未启用',
   'The concurrency limit has to be between 1 and 64': '并发上限需为 1–64',
+  'The per-user slot limit has to be between 1 and 64': '单用户槽位上限需为 1–64',
   'That is not a valid email address': '邮箱格式不正确',
   'That address is already registered': '该邮箱已注册',
   'No such invite code': '邀请码不存在',

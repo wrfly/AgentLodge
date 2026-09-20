@@ -10,6 +10,7 @@ export const es: Record<string, string> = {
   'Cannot reach the audit proxy: {reason}': 'No se puede acceder al proxy de auditoría: {reason}',
   'The audit proxy\'s control API is not enabled': 'La API de control del proxy de auditoría no está habilitada',
   'The concurrency limit has to be between 1 and 64': 'El límite de concurrencia debe estar entre 1 y 64',
+  'The per-user slot limit has to be between 1 and 64': 'El límite de ranuras por usuario debe estar entre 1 y 64',
   'That is not a valid email address': 'Esa dirección de correo no es válida',
   'That address is already registered': 'Esa dirección ya está registrada',
   'No such invite code': 'Ese código de invitación no existe',
