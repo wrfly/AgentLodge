@@ -352,6 +352,7 @@ const CODEX_EFFORTS: EffortOption[] = [
 export const codexAdapter: AgentAdapter = {
   id: 'codex',
   displayName: 'Codex',
+  needsContainer: true,
   bin: config.codexBin,
   probe: () => probeBin(config.codexBin, ['--version']),
   models: codexModels,

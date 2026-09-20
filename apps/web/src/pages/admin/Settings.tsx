@@ -119,7 +119,7 @@ function AgentsCard() {
             <span className="min-w-0 flex-1 truncate text-[11.5px] text-faint">
               {a.enabled
                 ? a.availability.available
-                  ? (a.availability.version ?? t('CLI found'))
+                  ? (a.availability.version ?? t('available'))
                   : (a.availability.reason ?? t('CLI not found'))
                 : t('Off — not offered to users')}
             </span>

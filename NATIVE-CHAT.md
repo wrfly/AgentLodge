@@ -1,6 +1,7 @@
 # 在 AgentLodge 里复现 claude.ai
 
-> 实施计划 · 2026-09-16 · **尚未动工。** 分支 `feature/native-chat`，从 `master` 的 `cf8ef01` 起。
+> 实施计划 · 2026-09-16 · **Phase 0–1 已落地，Phase 2 的 web search/fetch 已接入。**
+> 分支 `feature/native-chat` 已同步到当前 `master`。
 >
 > 每一条都带出处（`file:line` 或官方文档），好让它能被逐条否决，而不是整份接受或整份放弃。
 > claude.ai 的功能面以 `support.claude.com` / `platform.claude.com` 为准，抓取于 2026-09-16；

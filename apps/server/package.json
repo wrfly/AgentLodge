@@ -20,6 +20,8 @@
     "test:cli-version": "tsx src/gateway/cli-version.test.ts",
     "test:credential": "tsx src/core/credential.test.ts",
     "test:registry": "tsx src/app/agents/registry.test.ts",
+    "test:native-chat": "tsx src/app/agents/native/native.test.ts",
+    "test:usage-parser": "tsx src/gateway/usage-parser.test.ts",
     "test:i18n": "tsx src/core/i18n/i18n.test.ts",
     "test:workspace": "tsx src/app/workspace.test.ts",
     "test:quota-report": "tsx src/gateway/quota-report.test.ts",

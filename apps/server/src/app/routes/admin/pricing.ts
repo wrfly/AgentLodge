@@ -44,6 +44,8 @@ export function register(app: FastifyInstance): void {
       priceCacheRead?: number;
       priceCacheWrite?: number;
       priceOutput?: number;
+      /** Price per 1,000 server-side searches, in the row's currency. */
+      priceWebSearch?: number;
       /** Which upstream this price is for. Empty applies to any of them. */
       providerId?: string;
       note?: string;
@@ -60,7 +62,13 @@ export function register(app: FastifyInstance): void {
      * number the way the interface's own language writes it. A negative went through the
      * same way and credited quota instead of consuming it.
      */
-    const FIELDS = ['priceInput', 'priceCacheRead', 'priceCacheWrite', 'priceOutput'] as const;
+    const FIELDS = [
+      'priceInput',
+      'priceCacheRead',
+      'priceCacheWrite',
+      'priceOutput',
+      'priceWebSearch',
+    ] as const;
     for (const f of FIELDS) {
       const v = body[f];
       // Absent is a caller that did not mention this price, and zero is a fair reading of
@@ -106,6 +114,7 @@ export function register(app: FastifyInstance): void {
       priceCacheRead: yuan(body.priceCacheRead),
       priceCacheWrite: yuan(body.priceCacheWrite),
       priceOutput: yuan(body.priceOutput),
+      priceWebSearch: yuan(body.priceWebSearch),
       note: body.note,
     });
     audit.log({

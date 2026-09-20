@@ -134,7 +134,7 @@ export function RegisterPage({ code, email: presetEmail }: { code?: string; emai
     e.preventDefault();
     if (!canSubmit || busy) return;
     const ok = await register({ email, username, password, inviteCode });
-    if (ok) navigate('/claude', true);
+    if (ok) navigate('/chat', true);
   };
 
   if (checking) {
@@ -154,7 +154,7 @@ export function RegisterPage({ code, email: presetEmail }: { code?: string; emai
       footer={
         <>
           {t('Already have an account?')}
-          <button onClick={() => navigate('/claude')} className="ml-1 text-accent hover:underline">
+          <button onClick={() => navigate('/chat')} className="ml-1 text-accent hover:underline">
             {t('Sign in')}
           </button>
         </>
@@ -249,7 +249,7 @@ export function ResetPasswordPage({ token }: { token?: string }) {
       <AuthShell title={t('Invalid link')}>
         <ErrorBox text={t('The reset link is missing a parameter — request a new one.')} />
         <SubmitButton>
-          <span onClick={() => navigate('/claude')}>{t('Back to sign in')}</span>
+          <span onClick={() => navigate('/chat')}>{t('Back to sign in')}</span>
         </SubmitButton>
       </AuthShell>
     );
@@ -263,7 +263,7 @@ export function ResetPasswordPage({ token }: { token?: string }) {
           {t('Every device has been signed out. Sign in again with the new password.')}
         </div>
         <button
-          onClick={() => navigate('/claude')}
+          onClick={() => navigate('/chat')}
           className="w-full rounded-lg bg-accent py-2.5 text-[14.5px] font-medium text-white hover:opacity-90"
         >
           {t('Sign in')}

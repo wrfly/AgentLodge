@@ -52,9 +52,10 @@ export function record(input: RecordInput): void {
     `insert into usage_records
        (user_id, conversation_id, turn_id, agent, model, provider_id, effort,
         input_tokens, cache_read_tokens, cache_creation_tokens, output_tokens,
+        web_search_requests,
         cost_usd, cost_micro, cost_currency, duration_ms, num_turns, status,
         created_at, day, source, queue_wait_ms, ttft_ms, api_key_id)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.userId,
     input.conversationId ?? null,
     input.turnId ?? null,
@@ -66,6 +67,7 @@ export function record(input: RecordInput): void {
     u?.cacheReadTokens ?? 0,
     u?.cacheCreationTokens ?? 0,
     u?.outputTokens ?? 0,
+    u?.webSearchRequests ?? 0,
     u?.costUsd ?? 0,
     u && priced ? Math.round(pricing.costOf(priced, u)) : 0,
     priced?.currency ?? 'USD',
@@ -115,9 +117,9 @@ export function repriceHistory(): void {
     const rows = all<{
       id: number; model: string | null; provider_id: string | null; created_at: string;
       input_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
-      output_tokens: number; cost_micro: number;
+      output_tokens: number; web_search_requests: number; cost_micro: number;
     }>(`select id, model, provider_id, created_at, input_tokens, cache_read_tokens,
-               cache_creation_tokens, output_tokens, cost_micro
+               cache_creation_tokens, output_tokens, web_search_requests, cost_micro
           from usage_records where id > ? order by id limit ?`, after, PAGE);
     if (!rows.length) break;
     after = rows[rows.length - 1]!.id;
@@ -133,6 +135,7 @@ export function repriceHistory(): void {
           cacheReadTokens: r.cache_read_tokens,
           cacheCreationTokens: r.cache_creation_tokens,
           outputTokens: r.output_tokens,
+          webSearchRequests: r.web_search_requests,
           costUsd: 0,
           durationMs: 0,
           numTurns: 1,

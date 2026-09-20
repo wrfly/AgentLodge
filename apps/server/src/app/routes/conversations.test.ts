@@ -121,6 +121,27 @@ console.log('\n=== Correcting the newest question answers it in place ===');
     trims.forConversation(id).includes('wrote sort.py'));
 }
 
+console.log('\n=== Native chat does not create CLI transcript trim rules ===');
+{
+  const c = convRepo.create({ userId: alice.id, agent: 'chat', model: 'opus' });
+  const question = convRepo.appendMessage(c.id, alice.id, {
+    role: 'user',
+    blocks: [{ kind: 'text', blockId: 0, text: 'old question' }],
+    createdAt: new Date().toISOString(),
+  })!;
+  convRepo.appendMessage(c.id, alice.id, {
+    role: 'assistant',
+    blocks: [{ kind: 'text', blockId: 0, text: 'old native answer' }],
+    createdAt: new Date().toISOString(),
+  });
+  const r = await post(`/api/conversations/${c.id}/messages/${question.id}/edit`, {
+    text: 'new question',
+  });
+  ok('the replacement starts', r.statusCode === 202, String(r.statusCode));
+  ok('no CLI-only trim rule is written', trims.forConversation(c.id).length === 0);
+  turns.abortConversation(c.id, alice.id);
+}
+
 console.log('\n=== An older question cannot be edited ===');
 {
   /*

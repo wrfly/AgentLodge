@@ -12,6 +12,8 @@ import type { RunningTurn, TurnResult } from './agents/types.js';
 import * as convRepo from '../core/db/conversations.js';
 import * as deferredRepo from '../core/db/deferred.js';
 import * as usageRepo from '../core/db/usage.js';
+import * as modelsRepo from '../core/db/models.js';
+import * as providersRepo from '../core/db/providers.js';
 import * as memory from './memory.js';
 import * as quota from '../core/quota.js';
 import * as usersRepo from '../core/db/users.js';
@@ -298,11 +300,14 @@ export async function startTurn(
 
   const turnId = crypto.randomUUID();
   const cwd = workspaceDir(userId, conversationId);
-  // Every turn: the agent may have written memory during the last one, the codex rendering
-  // may be stale, and a new conversation has no link in it yet
-  await memory.tidy(userId);
-  await memory.snapshot(userId, 'agent');
-  await memory.linkInto(cwd, userId);
+  if (adapter.needsContainer) {
+    // Every CLI turn: the agent may have written memory during the last one, the codex
+    // rendering may be stale, and a new conversation has no link in it yet. Native chat
+    // reconstructs context from the database and has no workspace to link this into.
+    await memory.tidy(userId);
+    await memory.snapshot(userId, 'agent');
+    await memory.linkInto(cwd, userId);
+  }
 
   const runtimeToken = await signRuntimeToken(
     {
@@ -327,7 +332,7 @@ export async function startTurn(
    */
   let containerName: string | undefined;
   let containerCwd: string | undefined;
-  if (containers.enabled()) {
+  if (adapter.needsContainer && containers.enabled()) {
     containerName = await containers.ensure(userId);
     containerCwd = containers.toContainerPath(userId, cwd);
     containers.touch(userId);
@@ -363,6 +368,20 @@ export async function startTurn(
     publish(conversationId, { type: 'title.updated', conversationId, title });
   }
 
+  const selectedModel =
+    conv.model
+    || getString(`agent.${conv.agent}.defaultModel`)
+    || config.model
+    || (conv.agent === 'chat' ? modelsRepo.names()[0] : undefined);
+  const modelCandidate = selectedModel ? modelsRepo.candidates(selectedModel)[0] : undefined;
+  const serverTools = Boolean(
+    selectedModel
+    && /^(claude-|opus$|sonnet$|haiku$|fable$)/i.test(selectedModel)
+    && modelCandidate
+    ? providersRepo.findById(modelCandidate.providerId)?.kind === 'anthropic-native'
+    : false,
+  );
+
   const startRun = (resumeSessionId?: string) =>
     adapter.run({
       // The stored message is what the user wrote, and that is all the CLI is told. The
@@ -371,9 +390,14 @@ export async function startTurn(
       // gateway/redo-trim.ts.
       prompt: text,
       cwd,
+      messages: convRepo.full(conversationId, userId)?.messages,
       containerName,
       containerCwd,
-      memoryDir: containers.enabled() ? memory.containerDir() : memory.dir(userId),
+      memoryDir: adapter.needsContainer
+        ? containers.enabled()
+          ? memory.containerDir()
+          : memory.dir(userId)
+        : undefined,
       // A thread shares its parent's directory, so it reads and does not write
       readOnly: Boolean(conv.parentId),
       resumeSessionId,
@@ -381,8 +405,10 @@ export async function startTurn(
       // environment, then whatever the CLI decides
       // The conversation's own choice, then the default configured for this agent, then
       // whatever the CLI would use on its own
-      model: conv.model || getString(`agent.${conv.agent}.defaultModel`) || config.model || undefined,
+      model: selectedModel,
       effort: conv.effort || undefined,
+      thinking: conv.thinking,
+      serverTools,
       runtimeToken,
       onEvent: (e) => publish(conversationId, e),
       onSessionId: (sid) => {

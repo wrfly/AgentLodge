@@ -195,7 +195,8 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     const body = (req.body ?? {}) as { text?: string };
     const text = (body.text ?? '').trim();
     if (!text) return reply.code(400).send({ error: tr(req, 'The message is empty') });
-    if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    const conversation = convRepo.meta(id, req.user!.id);
+    if (!conversation) return reply.code(404).send({ error: tr(req, 'No such conversation') });
     if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     const at = convRepo.messageAt(id, req.user!.id, messageId);
@@ -214,7 +215,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       const cut = convRepo.truncateFrom(id, req.user!.id, at.seq);
       let rules: string[] = [];
       try {
-        rules = rememberDiscarded(id, cut);
+        rules = conversation.agent === 'chat' ? [] : rememberDiscarded(id, cut);
         const { turnId, userMessage } = await turns.startTurn(id, req.user!.id, text);
         reply.code(202);
         return { turnId, userMessage };
@@ -245,7 +246,8 @@ export function registerConversationRoutes(app: FastifyInstance): void {
   app.post('/api/conversations/:id/retry', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { model?: string; effort?: string };
-    if (!convRepo.exists(id, req.user!.id)) return reply.code(404).send({ error: tr(req, 'No such conversation') });
+    const conversation = convRepo.meta(id, req.user!.id);
+    if (!conversation) return reply.code(404).send({ error: tr(req, 'No such conversation') });
     if (turns.isBusy(id)) return reply.code(409).send({ error: tr(req, 'This conversation is already generating') });
 
     const last = convRepo.lastUserMessage(id, req.user!.id);
@@ -265,7 +267,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       const before = convRepo.meta(id, req.user!.id);
       let rules: string[] = [];
       try {
-        rules = rememberDiscarded(id, cut);
+        rules = conversation.agent === 'chat' ? [] : rememberDiscarded(id, cut);
         // The retry has to run on the model it was retried *with*, so this lands before the
         // turn — and comes back off below if the turn never started. It used to be written
         // outside the try, where a refusal left the conversation on a model the interface

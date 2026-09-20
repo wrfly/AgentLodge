@@ -611,6 +611,7 @@ export const ja: Record<string, string> = {
   'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': '100万トークンあたり。クォータはそのターンの実費を数えるので、この表が請求も拒否も決めます。',
   'Cache read': 'キャッシュ読取',
   'Cache write': 'キャッシュ書込',
+  'Web search / 1K': 'ウェブ検索 / 1,000回',
   'Time of day': '時間帯',
   'in effect now': '現在適用中',
   'A price is a number written with a dot — 0.15, not 0,15': '価格は小数点にピリオドを使った数字で入力してください（0,15 ではなく 0.15）',

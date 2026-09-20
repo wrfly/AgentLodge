@@ -16,9 +16,10 @@ import { TracesPage } from './pages/TracesPage';
 import { ApiKeysPage } from './pages/ApiKeysPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
+import type { AgentId } from './lib/protocol';
 
 /** Only the chat route needs the conversation list; other pages must not bootstrap */
-function ChatPane({ agent }: { agent: 'claude' | 'codex' }) {
+function ChatPane({ agent }: { agent: AgentId }) {
   const bootstrap = useChat((s) => s.bootstrap);
   const reset = useChat((s) => s.reset);
   const agentsLoaded = useAgents((s) => s.loaded);
@@ -215,7 +216,7 @@ export default function App() {
 
   // Non-admins asking for the admin console go back to chat
   if (route.name === 'admin' && user.role !== 'admin') {
-    navigate('/claude', true);
+    navigate('/chat', true);
     return null;
   }
   if (isPublic(route)) return null;

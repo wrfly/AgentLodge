@@ -421,6 +421,7 @@ const CLAUDE_EFFORTS: EffortOption[] = [
 export const claudeAdapter: AgentAdapter = {
   id: 'claude',
   displayName: 'Claude Code',
+  needsContainer: true,
   bin: config.claudeBin,
   probe: () => probeBin(config.claudeBin, ['--version']),
   models: claudeModels,
