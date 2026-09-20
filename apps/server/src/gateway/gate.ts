@@ -250,10 +250,9 @@ export class UpstreamGate {
   }
 
   /**
-   * What the console says, or the configured value when it says nothing.
-   *
-   * Resolved once per admission pass and handed down, not read per waiter: a drain over a
-   * deep queue would otherwise be one database read per person in it.
+   * `perUserOf` for this gate, resolved once per admission pass and handed down rather than
+   * read per waiter: a drain over a deep queue would otherwise be one database read per
+   * person in it. The fallback order itself is documented on `perUserOf`.
    */
   private perUserMax(): number {
     return perUserOf(this.cfg);

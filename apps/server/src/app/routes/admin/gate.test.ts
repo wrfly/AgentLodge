@@ -163,8 +163,39 @@ console.log('\n=== What it refuses ===');
    */
   ok('and a fraction, as a 400 rather than a 500', (await patch({ maxConcurrency: 2.5 })).statusCode === 400);
   ok('on either limit', (await patch({ perUserInflightMax: 1.5 })).statusCode === 400);
+  /*
+   * `Number(true)` is 1, which is a whole number in range — so a body a client had no
+   * business sending took the whole deployment down to one request in flight per upstream
+   * and filed an audit entry saying it had been asked for. The type is checked now, not
+   * coerced, which also refuses a numeral sent as a string.
+   */
+  ok('a boolean is not a limit', (await patch({ maxConcurrency: true })).statusCode === 400);
+  ok('nor a string', (await patch({ perUserInflightMax: '4' })).statusCode === 400);
   ok('neither limit moved', settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 12
     && settings.getNumberFresh('gateway.perUserInflightMax') === 3);
+
+  /*
+   * The one the card made reachable: two limits in one body, one of them bad.
+   *
+   * Validating each as it was stored wrote the good one and then answered 400 — and nothing
+   * downstream ran for it, so there was no audit entry naming who had changed it and no
+   * forward to the gateway. The console showed the error and the administrator concluded
+   * nothing had been saved, while every later admission pass read the half that landed.
+   */
+  const mixed = await patch({ maxConcurrency: 7, perUserInflightMax: 99 });
+  ok('a body with one bad limit is refused', mixed.statusCode === 400, String(mixed.statusCode));
+  ok('and the good half of it is not written',
+    settings.getNumberFresh('gateway.maxUpstreamConcurrency') === 12,
+    String(settings.getNumberFresh('gateway.maxUpstreamConcurrency')));
+  // The other way round too: the refusal must not depend on which field came first
+  const mixedBack = await patch({ maxConcurrency: 99, perUserInflightMax: 7 });
+  ok('in either order', mixedBack.statusCode === 400, String(mixedBack.statusCode));
+  ok('with neither half written', settings.getNumberFresh('gateway.perUserInflightMax') === 3,
+    String(settings.getNumberFresh('gateway.perUserInflightMax')));
+  // And the message names the limit that was actually wrong, since both boxes sit under it
+  ok('the per-user refusal names the per-user limit',
+    /per-user/.test(JSON.parse((await patch({ perUserInflightMax: 99 })).body).error ?? ''),
+    JSON.parse((await patch({ perUserInflightMax: 99 })).body).error);
 }
 
 console.log('\n=== An ordinary user cannot move it ===');

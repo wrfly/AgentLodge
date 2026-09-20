@@ -1229,8 +1229,11 @@ export function buildGateway(): FastifyInstance {
   app.patch('/gate', adminOnly, async (req, reply) => {
     const body = (req.body ?? {}) as { maxConcurrency?: number };
     if (body.maxConcurrency !== undefined) {
-      const n = Number(body.maxConcurrency);
-      if (!Number.isFinite(n) || n < 1 || n > 64)
+      const n = body.maxConcurrency;
+      // The same test the console's route applies, rather than `isFinite` on a coerced value:
+      // this route is reachable on its own — agent containers share agent-net, which is why
+      // it is admin-guarded — and 2.5 or `true` must not mean something different here
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 64)
         return reply.code(400).send({ error: tr(req, 'The concurrency limit has to be between 1 and 64') });
       gate.setMaxConcurrency(n);
     }

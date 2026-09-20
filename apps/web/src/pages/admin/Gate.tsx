@@ -32,11 +32,23 @@ export function GateCard() {
    * nothing renders differently.
    */
   const editing = useRef({ max: false, perUser: false });
+  /**
+   * Bumped by every write, so a poll that was already in flight when one landed is discarded.
+   *
+   * The poll runs every five seconds and a save takes a round trip, so the overlap is
+   * ordinary rather than rare: the older response carries the pre-save numbers, and applying
+   * it put the previous limit back in the box and the pre-save status behind it — which, with
+   * the button greyed out because the two now agreed, read exactly like a save that had been
+   * silently reverted.
+   */
+  const writes = useRef(0);
 
-  const load = () =>
-    admin
+  const load = () => {
+    const seen = writes.current;
+    return admin
       .gate()
       .then((g) => {
+        if (writes.current !== seen) return;
         setGate(g);
         // A change made from another console still lands in the boxes; only a half-typed one
         // is left alone. Both fields are absent when the gateway container cannot be reached,
@@ -48,6 +60,7 @@ export function GateCard() {
         }));
       })
       .catch(() => {});
+  };
 
   useEffect(() => {
     void load();
@@ -84,20 +97,31 @@ export function GateCard() {
   const changed =
     pending.maxConcurrency !== undefined || pending.perUserInflightMax !== undefined;
 
-  const save = async () => {
-    if (!changed) return;
+  /**
+   * A write, and then the full status again.
+   *
+   * The answer to a PATCH is the gateway's own — `{max, perUser, pinned, pools}` — and not
+   * what `GET /api/admin/gate` assembles: no `containers` block, and pools by raw id rather
+   * than by provider name. Installed as the whole status it made the card announce that
+   * container isolation was off, which is a false claim about a security feature, until the
+   * next poll five seconds later. So the reply is only checked, and the card is refilled by
+   * the reload.
+   *
+   * `writes` is bumped first so a poll already in flight cannot land on top of the result.
+   */
+  const write = async (call: () => Promise<GateStatus>) => {
     setBusy(true);
     setErr(null);
+    writes.current += 1;
     try {
-      // Only what moved. Sending both would file an audit entry claiming a limit was changed
-      // to the value it already had, and one of the two is often deliberately left alone.
-      const next = await admin.setGateLimits({
-        ...(pending.maxConcurrency !== undefined ? { maxConcurrency: pending.maxConcurrency } : {}),
-        ...(pending.perUserInflightMax !== undefined
-          ? { perUserInflightMax: pending.perUserInflightMax }
-          : {}),
-      });
-      setGate(next);
+      const next = await call();
+      /*
+       * A gateway that answered something other than 2xx comes back through `callGateway` as
+       * a 200 carrying `{ error }`, so the promise resolves and this would otherwise read as
+       * a saved limit. The row was still written — the route stores before it forwards — but
+       * saying so while the gate cannot confirm it is how "it did not persist" starts.
+       */
+      if (next.error) throw new Error(next.error);
       /*
        * Saved, so what is in the boxes is the gate's own answer again and the poll may refill
        * them. Only on success: a refused write has to leave the numbers where the
@@ -105,10 +129,7 @@ export function GateCard() {
        * correct.
        */
       editing.current = { max: false, perUser: false };
-      setDraft((d) => ({
-        max: typeof next.max === 'number' ? String(next.max) : d.max,
-        perUser: typeof next.perUser === 'number' ? String(next.perUser) : d.perUser,
-      }));
+      await load();
     } catch (e) {
       /*
        * Said out loud rather than swallowed. A rejected PATCH used to do nothing visible at
@@ -122,21 +143,17 @@ export function GateCard() {
     }
   };
 
-  const setPinned = async (v: boolean) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      setGate(await admin.setGatePinned(v));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const save = () =>
+    // Only what moved. Sending both would file an audit entry claiming a limit was changed to
+    // the value it already had, and one of the two is often deliberately left alone.
+    // `JSON.stringify` drops the undefined half, so `pending` is already that body.
+    changed ? write(() => admin.setGateLimits(pending)) : Promise.resolve();
 
-  /** One of the two limits: its name over a narrow numeric box. Digits only, as before. */
-  const limitBox = (key: 'max' | 'perUser', label: string) => (
-    <label className="block">
+  const setPinned = (v: boolean) => write(() => admin.setGatePinned(v));
+
+  /** One of the two limits: its name over a narrow numeric box, with its own hint under it */
+  const limitBox = (key: 'max' | 'perUser', label: string, hint: string) => (
+    <label className="block max-w-[15rem]">
       <span className="mb-1 block text-[12px] font-medium text-muted">{label}</span>
       <div className="w-16">
         <Input
@@ -146,9 +163,25 @@ export function GateCard() {
             const v = e.target.value.replace(/[^\d]/g, '');
             setDraft((d) => ({ ...d, [key]: v }));
           }}
+          /*
+           * Leaving the box empty hands it back to the poll.
+           *
+           * Typing is what marks a box as being edited, and only a save cleared that — so a
+           * box somebody emptied and then thought better of was frozen out of the refresh
+           * with nothing in it, and could not be saved either, because an empty box is not a
+           * limit and the button stays disabled. Nothing could reach the line that clears the
+           * flag, so the real number was off the screen until the page was reloaded.
+           */
+          onBlur={() => {
+            if (draft[key]) return;
+            editing.current[key] = false;
+            const live = key === 'max' ? gate.max : gate.perUser;
+            if (typeof live === 'number') setDraft((d) => ({ ...d, [key]: String(live) }));
+          }}
           inputMode="numeric"
         />
       </div>
+      <span className="mt-1 block text-[11.5px] text-faint">{hint}</span>
     </label>
   );
 
@@ -184,22 +217,31 @@ export function GateCard() {
         * eight queued is not a broken gate, it is one user at their own cap of two, and that
         * is only legible with both numbers in view.
         */}
-      <div className="mb-3 rounded-lg border border-line px-2.5 py-2">
-        <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
-          {limitBox('max', t('Slots per upstream'))}
-          {limitBox('perUser', t('Slots one user may hold'))}
+      {/* Each hint under the box it describes, and taken from the setting that box writes —
+          so the wording is the wording that was on the settings page, rather than a second
+          description of the same numbers. Under rather than beside, because the row wraps on
+          a narrow viewport and a shared line of hints would stop lining up with anything */}
+      <div className="mb-3 flex flex-wrap items-start gap-x-5 gap-y-3 rounded-lg border border-line px-2.5 py-2">
+        {limitBox(
+          'max',
+          t('Slots per upstream'),
+          t('How many requests may be in flight to one upstream at once.'),
+        )}
+        {limitBox(
+          'perUser',
+          t('Slots one user may hold'),
+          t('Per upstream, so a busy conversation cannot take the whole pool.'),
+        )}
+        <div>
+          {/* An empty label in the same shape as the real ones, so the button lines up with
+              the boxes rather than with their names — and stays lined up if those change */}
+          <span className="mb-1 block text-[12px] font-medium" aria-hidden>
+            &nbsp;
+          </span>
           <Button onClick={() => void save()} loading={busy} disabled={!changed}>
             {t('Save')}
           </Button>
         </div>
-        {/* The two hints in the order of the two boxes, taken from the settings the boxes
-            write — so the wording an administrator reads here is the wording that was on the
-            settings page, rather than a second description of the same numbers */}
-        <p className="mt-1.5 text-[11.5px] text-faint">
-          {t('How many requests may be in flight to one upstream at once.')}
-          {' · '}
-          {t('Per upstream, so a busy conversation cannot take the whole pool.')}
-        </p>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label={t('In flight')} value={String(active)} tone="accent" />
