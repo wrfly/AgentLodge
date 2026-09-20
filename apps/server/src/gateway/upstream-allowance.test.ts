@@ -24,7 +24,7 @@ process.env.JWT_SECRET = 'test-only-not-a-real-secret';
 const { initDb } = await import('../core/db/index.js');
 initDb();
 const { getStringFresh, setSetting } = await import('../core/db/settings.js');
-const { record, recordCodex, refusesOnlySomeModels, reset, snapshot } = await import('./upstream-allowance.js');
+const { record, recordCodex, refusesOnlySomeModels, reset, snapshot, snapshotFor, snapshots } = await import('./upstream-allowance.js');
 
 let pass = 0;
 let fail = 0;
@@ -198,6 +198,12 @@ console.log('\n=== A window nobody mentioned this time is still the last thing s
   // A different upstream is a different plan; nothing carries over
   record('DeepSeek', 'anthropic', headers({ 'anthropic-ratelimit-unified-5h-utilization': '0.02' }));
   ok('another provider starts clean', snapshot()?.windows['7d_oi'] === undefined, JSON.stringify(snapshot()?.windows));
+  ok(
+    'the previous upstream is still on file',
+    snapshotFor('Claude')?.windows['7d_oi']?.utilization === 0.25,
+    JSON.stringify(snapshotFor('Claude')?.windows),
+  );
+  ok('and both appear on the console list', snapshots().some((a) => a.provider === 'Claude') && snapshots().some((a) => a.provider === 'DeepSeek'));
 }
 
 console.log('\n=== The resets are written down, so the quota windows can follow them ===');

@@ -1190,7 +1190,10 @@ export function buildGateway(): FastifyInstance {
    * Only this process sees those headers — they are dropped before the response leaves — so
    * the console has to ask for them here, the same way it asks for gate status.
    */
-  app.get('/upstream-allowance', adminOnly, async () => ({ allowance: allowance.snapshot() }));
+  app.get('/upstream-allowance', adminOnly, async () => ({
+    allowance: allowance.snapshot(),
+    allowances: allowance.snapshots(),
+  }));
 
   /**
    * The same question, for a named provider rather than the active one.
