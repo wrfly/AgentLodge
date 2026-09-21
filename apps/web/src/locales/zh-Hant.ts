@@ -390,6 +390,7 @@ export const zhHant: Record<string, string> = {
   'Export failed': '匯出失敗',
   'Cannot reach the gateway': '連不上網關',
   'resets {t}': '{t} 重置',
+  'reset {t}, awaiting the next response': '{t} 已重置，等待下一次回應更新',
   'read {t}': '{t} 讀到',
   'Hide headers': '隱藏標頭',
   'All headers': '全部標頭',

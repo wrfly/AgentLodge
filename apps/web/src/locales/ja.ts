@@ -414,6 +414,7 @@ export const ja: Record<string, string> = {
   'Export failed': 'エクスポートに失敗しました',
   'Cannot reach the gateway': 'ゲートウェイに接続できません',
   'resets {t}': '{t} にリセット',
+  'reset {t}, awaiting the next response': '{t} にリセット済み、次の応答待ち',
   'read {t}': '{t} 時点',
   'Hide headers': 'ヘッダーを隠す',
   'All headers': 'すべてのヘッダー',

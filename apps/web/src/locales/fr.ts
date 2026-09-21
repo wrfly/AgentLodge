@@ -389,6 +389,7 @@ export const fr: Record<string, string> = {
   'Export failed': 'Échec de l\'export',
   'Cannot reach the gateway': 'Passerelle injoignable',
   'resets {t}': 'réinitialisation {t}',
+  'reset {t}, awaiting the next response': 'réinitialisé {t}, en attente de la prochaine réponse',
   'read {t}': 'lu {t}',
   'Hide headers': 'Masquer les en-têtes',
   'All headers': 'Tous les en-têtes',

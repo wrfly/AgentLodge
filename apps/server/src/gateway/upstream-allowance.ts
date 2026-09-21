@@ -35,6 +35,20 @@ export interface AllowanceWindow {
    * console says so rather than presenting it as current.
    */
   observedAt: string;
+  /**
+   * The reading outlived its own window.
+   *
+   * `resetsAt` is the upstream saying when this figure stops being true. Past that instant
+   * the allowance has rolled and the utilisation we hold describes a window that no longer
+   * exists — but nothing refreshes it until some model counts against that same window
+   * again, which for `7d_oi` can be days. A console left to print it says "100%, reset at
+   * 20:00" hours after 20:00, and a user reads it as still full.
+   *
+   * What replaces it is nothing, not zero: the headers only ever said when the limit lifts,
+   * never what the next window starts at, and a rolling window rarely starts empty. So the
+   * utilisation is dropped and the window is marked as awaiting its next reading.
+   */
+  expired?: boolean;
 }
 
 export interface Allowance {
@@ -121,6 +135,35 @@ let last: Allowance | null = null;
 /** One reading per upstream. Claude does not wipe Cursor when both are in use. */
 const byProvider = new Map<string, Allowance>();
 
+/**
+ * A window whose reset has passed, with its stale figure taken out.
+ *
+ * Applied on the way out rather than on a timer: the reading is only ever looked at when
+ * somebody asks for it, so the clock at that moment is the only one that matters, and there
+ * is no sweep to keep running in a process that may not be serving anybody.
+ *
+ * `resetsAt` and `observedAt` stay: together they are the explanation — this is what the
+ * upstream last said, this is when it said it, and it expired at the time printed beside it.
+ */
+function expire(w: AllowanceWindow, nowMs: number): AllowanceWindow {
+  if (w.expired) return w;
+  if (!w.resetsAt) return w;
+  const at = Date.parse(w.resetsAt);
+  if (!Number.isFinite(at) || nowMs < at) return w;
+  return { ...w, utilization: null, status: null, expired: true };
+}
+
+function expired(a: Allowance, nowMs = Date.now()): Allowance {
+  const windows: Record<string, AllowanceWindow> = {};
+  let changed = false;
+  for (const [name, w] of Object.entries(a.windows)) {
+    const next = expire(w, nowMs);
+    if (next !== w) changed = true;
+    windows[name] = next;
+  }
+  return changed ? { ...a, windows } : a;
+}
+
 function store(next: Allowance): void {
   byProvider.set(next.provider, next);
   last = next;
@@ -142,9 +185,12 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
    * changes; until then the last reading stands with its own timestamp.
    */
   const prev = byProvider.get(provider);
-  const carried = prev && prev.wire === wire ? prev.windows : {};
+  const nowMs = Date.now();
+  const carried = prev && prev.wire === wire ? expired(prev, nowMs).windows : {};
   const windows: Record<string, AllowanceWindow> = { ...carried };
-  const now = new Date().toISOString();
+  const now = new Date(nowMs).toISOString();
+  /** Windows this response has started, so its own fields do not restart each other */
+  const fresh = new Set<string>();
   for (const key of Object.keys(raw)) {
     // anthropic-ratelimit-unified-5h-utilization → 5h
     if (!key.startsWith(PREFIX)) continue;
@@ -154,11 +200,18 @@ export function record(provider: string, wire: Wire, headers: Headers): void {
     const name = rest.slice(0, dash);
     const field = rest.slice(dash + 1);
     if (field !== 'utilization' && field !== 'reset' && field !== 'status') continue;
-    // A window this response mentions is this response's reading, not the carried one
-    const w = (windows[name] =
-      windows[name]?.observedAt === now
-        ? windows[name]
-        : { utilization: null, resetsAt: null, status: null, observedAt: now });
+    /*
+     * A window this response mentions is this response's reading, not the carried one — so
+     * the first field naming it starts a fresh window and the rest fill it in. Which ones
+     * have been started is tracked by name: comparing `observedAt` to now instead meant two
+     * responses landing in the same millisecond shared a window, and the second one
+     * inherited the first's fields rather than replacing them.
+     */
+    if (!fresh.has(name)) {
+      fresh.add(name);
+      windows[name] = { utilization: null, resetsAt: null, status: null, observedAt: now };
+    }
+    const w = windows[name]!;
     if (field === 'utilization') w.utilization = num(raw[key]);
     else if (field === 'reset') w.resetsAt = isoFromEpoch(raw[key]);
     else w.status = raw[key] ?? null;
@@ -225,17 +278,21 @@ export function recordCodex(provider: string, wire: Wire, rateLimits: unknown): 
 
 /** The most recent reading, whichever upstream answered last */
 export function snapshot(): Allowance | null {
-  return last;
+  return last && expired(last);
 }
 
 /** The reading for one upstream, or null if it has not spoken since this process started */
 export function snapshotFor(provider: string): Allowance | null {
-  return byProvider.get(provider) ?? null;
+  const a = byProvider.get(provider);
+  return a ? expired(a) : null;
 }
 
 /** Every upstream that has reported, newest first so the console can show them all */
 export function snapshots(): Allowance[] {
-  return [...byProvider.values()].sort((a, b) => (a.observedAt < b.observedAt ? 1 : -1));
+  const now = Date.now();
+  return [...byProvider.values()]
+    .map((a) => expired(a, now))
+    .sort((a, b) => (a.observedAt < b.observedAt ? 1 : -1));
 }
 
 /** Test seam */

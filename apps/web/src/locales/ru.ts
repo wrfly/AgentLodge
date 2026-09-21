@@ -414,6 +414,7 @@ export const ru: Record<string, string> = {
   'Export failed': 'Не удалось экспортировать',
   'Cannot reach the gateway': 'Не удаётся связаться со шлюзом',
   'resets {t}': 'сброс {t}',
+  'reset {t}, awaiting the next response': 'сброшено {t}, ждём следующего ответа',
   'read {t}': 'считано {t}',
   'Hide headers': 'Скрыть заголовки',
   'All headers': 'Все заголовки',

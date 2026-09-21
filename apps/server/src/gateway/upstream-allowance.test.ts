@@ -39,18 +39,35 @@ function ok(label: string, cond: boolean, detail = ''): void {
   }
 }
 
+/**
+ * The resets the fixtures carry, as unix seconds.
+ *
+ * Relative to now rather than the instants the capture was taken at: a reading is dropped
+ * once its own reset has passed, so a fixture pinned to a date in 2026 would start failing
+ * the day the suite outlived it — which is exactly the behaviour under test, arriving as a
+ * false alarm. `R_PAST` is the one that is deliberately behind us.
+ */
+const epoch = (msFromNow: number): string => String(Math.round((Date.now() + msFromNow) / 1000));
+const iso = (secs: string): string => new Date(Number(secs) * 1000).toISOString();
+const HOUR = 3_600_000;
+const R_5H = epoch(3 * HOUR);
+const R_7D = epoch(60 * HOUR);
+const R_7D_ALT = epoch(90 * HOUR);
+const R_OI = epoch(100 * HOUR);
+const R_PAST = epoch(-HOUR);
+
 /** A real capture, taken through the audit proxy against the official endpoint */
 const CAPTURED: Record<string, string> = {
   'anthropic-ratelimit-unified-status': 'allowed',
   'anthropic-ratelimit-unified-5h-status': 'allowed',
-  'anthropic-ratelimit-unified-5h-reset': '1787331600',
+  'anthropic-ratelimit-unified-5h-reset': R_5H,
   'anthropic-ratelimit-unified-5h-utilization': '0.22',
   'anthropic-ratelimit-unified-7d-status': 'allowed',
-  'anthropic-ratelimit-unified-7d-reset': '1787547600',
+  'anthropic-ratelimit-unified-7d-reset': R_7D,
   'anthropic-ratelimit-unified-7d-utilization': '0.59',
   'anthropic-ratelimit-unified-representative-claim': 'five_hour',
   'anthropic-ratelimit-unified-fallback-percentage': '0.5',
-  'anthropic-ratelimit-unified-reset': '1787331600',
+  'anthropic-ratelimit-unified-reset': R_5H,
   'anthropic-ratelimit-unified-overage-disabled-reason': 'org_level_disabled',
   'anthropic-ratelimit-unified-overage-status': 'rejected',
   'content-type': 'text/event-stream',
@@ -101,10 +118,10 @@ console.log('\n=== A real header set, parsed ===');
   ok('the 7d window too', a.windows['7d']?.utilization === 0.59);
   ok(
     'unix seconds became a timestamp',
-    a.windows['5h']?.resetsAt === new Date(1787331600_000).toISOString(),
+    a.windows['5h']?.resetsAt === iso(R_5H),
     String(a.windows['5h']?.resetsAt),
   );
-  ok('the top-level reset too', a.resetsAt === new Date(1787331600_000).toISOString());
+  ok('the top-level reset too', a.resetsAt === iso(R_5H));
   ok('per-window status is kept', a.windows['5h']?.status === 'allowed');
   ok('overage is a window of its own', a.windows.overage?.status === 'rejected', JSON.stringify(a.windows.overage));
 }
@@ -179,7 +196,7 @@ console.log('\n=== A window nobody mentioned this time is still the last thing s
     'anthropic-ratelimit-unified-5h-utilization': '0.10',
     'anthropic-ratelimit-unified-7d-utilization': '0.40',
     'anthropic-ratelimit-unified-7d_oi-utilization': '0.25',
-    'anthropic-ratelimit-unified-7d_oi-reset': '1788152400',
+    'anthropic-ratelimit-unified-7d_oi-reset': R_OI,
   }));
   const fable = snapshot()?.windows['7d_oi'];
 
@@ -214,12 +231,12 @@ console.log('\n=== The resets are written down, so the quota windows can follow 
   record('anthropic-official', 'anthropic', headers(CAPTURED));
   ok(
     'the 5-hour reset is kept',
-    getStringFresh('quota.windowResetAt') === new Date(1787331600_000).toISOString(),
+    getStringFresh('quota.windowResetAt') === iso(R_5H),
     String(getStringFresh('quota.windowResetAt')),
   );
   ok(
     'and the weekly one, which used to be the administrator’s calendar week',
-    getStringFresh('quota.weekResetAt') === new Date(1787547600_000).toISOString(),
+    getStringFresh('quota.weekResetAt') === iso(R_7D),
     String(getStringFresh('quota.weekResetAt')),
   );
 }
@@ -232,13 +249,55 @@ console.log('\n=== The resets are written down, so the quota windows can follow 
   record('anthropic-official', 'anthropic', headers(CAPTURED));
   ok('an unchanged reset is not written again', getStringFresh('quota.weekResetAt') === 'sentinel', String(getStringFresh('quota.weekResetAt')));
 
-  record('anthropic-official', 'anthropic', headers({ ...CAPTURED, 'anthropic-ratelimit-unified-7d-reset': '1788152400' }));
+  record('anthropic-official', 'anthropic', headers({ ...CAPTURED, 'anthropic-ratelimit-unified-7d-reset': R_7D_ALT }));
   ok(
     'a different one is',
-    getStringFresh('quota.weekResetAt') === new Date(1788152400_000).toISOString(),
+    getStringFresh('quota.weekResetAt') === iso(R_7D_ALT),
     String(getStringFresh('quota.weekResetAt')),
   );
-  ok('and the 5-hour key it shares the response with is untouched by that', getStringFresh('quota.windowResetAt') === new Date(1787331600_000).toISOString());
+  ok('and the 5-hour key it shares the response with is untouched by that', getStringFresh('quota.windowResetAt') === iso(R_5H));
+}
+
+console.log('\n=== A reading does not outlive the window it describes ===');
+{
+  /*
+   * The console used to print "100%, resets 20:00" at 21:00, because nothing refreshes a
+   * window until some model counts against it again — days, for Fable's weekly one. What
+   * replaces the figure is nothing rather than zero: the headers say when the limit lifts,
+   * never what the next window opens at.
+   */
+  reset();
+  record('Claude', 'anthropic', headers({
+    'anthropic-ratelimit-unified-5h-status': 'allowed',
+    'anthropic-ratelimit-unified-5h-utilization': '0.22',
+    'anthropic-ratelimit-unified-5h-reset': R_5H,
+    'anthropic-ratelimit-unified-7d_oi-status': 'rejected',
+    'anthropic-ratelimit-unified-7d_oi-utilization': '1.0',
+    'anthropic-ratelimit-unified-7d_oi-reset': R_PAST,
+  }));
+  const oi = snapshot()?.windows['7d_oi'];
+  ok('a window past its reset is marked expired', oi?.expired === true, JSON.stringify(oi));
+  ok('its utilization is dropped, not zeroed', oi?.utilization === null);
+  ok('and so is the status it was rejected under', oi?.status === null);
+  ok('the reset it expired at is kept, to explain why', oi?.resetsAt === iso(R_PAST));
+  ok('as is when it was read', typeof oi?.observedAt === 'string');
+  ok('a window still inside its own window is untouched', snapshot()?.windows['5h']?.utilization === 0.22);
+  ok('every reader sees the same', snapshotFor('Claude')?.windows['7d_oi']?.utilization === null);
+  ok('including the console list', snapshots()[0]?.windows['7d_oi']?.expired === true);
+
+  // The next response that mentions it is a real reading again, expired flag and all
+  record('Claude', 'anthropic', headers({
+    'anthropic-ratelimit-unified-7d_oi-utilization': '0.05',
+    'anthropic-ratelimit-unified-7d_oi-reset': R_OI,
+  }));
+  const fresh = snapshot()?.windows['7d_oi'];
+  ok('a fresh reading clears the mark', fresh?.expired === undefined, JSON.stringify(fresh));
+  ok('with the new figure', fresh?.utilization === 0.05);
+
+  // A window with no reset at all has nothing to outlive
+  reset();
+  record('p', 'anthropic', headers({ 'anthropic-ratelimit-unified-5h-utilization': '0.3' }));
+  ok('a window with no reset never expires', snapshot()?.windows['5h']?.expired === undefined);
 }
 
 console.log('\n=== A refusal says whether it closes the plan or only some models ===');

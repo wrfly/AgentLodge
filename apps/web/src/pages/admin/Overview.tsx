@@ -865,7 +865,13 @@ function SubscriptionsCard({
                   </div>
                   <UtilBar value={w.utilization ?? 0} />
                   <div className="mt-1 flex flex-wrap gap-x-2 text-[11.5px] text-faint">
-                    {w.resetsAt && <span>{t('resets {t}', { t: fmtDate(w.resetsAt) })}</span>}
+                    {w.resetsAt && (
+                      <span>
+                        {w.expired
+                          ? t('reset {t}, awaiting the next response', { t: fmtDate(w.resetsAt) })
+                          : t('resets {t}', { t: fmtDate(w.resetsAt) })}
+                      </span>
+                    )}
                     {row.allowance && w.observedAt !== row.allowance.observedAt && (
                       <span>{t('read {t}', { t: fmtDate(w.observedAt) })}</span>
                     )}

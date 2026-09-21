@@ -45,15 +45,26 @@ function ok(label: string, cond: boolean, detail = ''): void {
 const ANTHROPIC = { id: 'prov-a', name: 'anthropic-official' };
 const DEEPSEEK = { id: 'prov-b', name: 'DeepSeek' };
 
+/*
+ * The fixture clock, shifted so that its "now" is the real now.
+ *
+ * A reading is dropped once its own reset has passed (upstream-allowance.ts), so a pool
+ * pinned to August 2026 reports nothing at all from September onwards. The instants below
+ * keep the shape of the capture — a 5-hour window three hours in, a week half spent — and
+ * only their anchor moves.
+ */
+const SHIFT = Date.now() - Date.parse('2026-08-23T17:00:00.000Z');
+const T = (at: string): string => new Date(Date.parse(at) + SHIFT).toISOString();
+
 const STARTS: Record<QuotaScope, string> = {
-  window: '2026-08-23T14:00:00.000Z',
-  week: '2026-08-20T05:00:00.000Z',
-  month: '2026-08-01T00:00:00.000Z',
+  window: T('2026-08-23T14:00:00.000Z'),
+  week: T('2026-08-20T05:00:00.000Z'),
+  month: T('2026-08-01T00:00:00.000Z'),
 };
 const ENDS: Record<QuotaScope, string> = {
-  window: '2026-08-23T19:00:00.000Z',
-  week: '2026-08-27T05:00:00.000Z',
-  month: '2026-09-01T00:00:00.000Z',
+  window: T('2026-08-23T19:00:00.000Z'),
+  week: T('2026-08-27T05:00:00.000Z'),
+  month: T('2026-09-01T00:00:00.000Z'),
 };
 
 /** By default no ceiling: this file is about the users who have none */
@@ -181,7 +192,7 @@ console.log('\n=== The arithmetic ===');
 }
 {
   // Alone on the platform: 400 of the 400 spent in this window are theirs
-  spend('alice', ANTHROPIC.id, '2026-08-23T15:00:00.000Z', 400);
+  spend('alice', ANTHROPIC.id, T('2026-08-23T15:00:00.000Z'), 400);
   pool();
   const s = poolShare(q({ window: { used: 400 } }), ANTHROPIC);
   ok(
@@ -191,7 +202,7 @@ console.log('\n=== The arithmetic ===');
   );
 }
 {
-  spend('bob', ANTHROPIC.id, '2026-08-23T16:00:00.000Z', 600);
+  spend('bob', ANTHROPIC.id, T('2026-08-23T16:00:00.000Z'), 600);
   pool();
   const s = poolShare(q({ window: { used: 400 } }), ANTHROPIC);
   ok(
@@ -208,7 +219,7 @@ console.log('\n=== The arithmetic ===');
 }
 {
   // A turn through a second upstream is not part of this subscription's consumption
-  spend('carol', DEEPSEEK.id, '2026-08-23T16:30:00.000Z', 9000);
+  spend('carol', DEEPSEEK.id, T('2026-08-23T16:30:00.000Z'), 9000);
   pool();
   const s = poolShare(q({ window: { used: 400 } }), ANTHROPIC);
   ok(
@@ -219,8 +230,8 @@ console.log('\n=== The arithmetic ===');
 }
 {
   // 13:00 is before the window opened, 20:00 after it closed
-  spend('dave', ANTHROPIC.id, '2026-08-23T13:00:00.000Z', 5000);
-  spend('dave', ANTHROPIC.id, '2026-08-23T20:00:00.000Z', 5000);
+  spend('dave', ANTHROPIC.id, T('2026-08-23T13:00:00.000Z'), 5000);
+  spend('dave', ANTHROPIC.id, T('2026-08-23T20:00:00.000Z'), 5000);
   pool();
   const s = poolShare(q({ window: { used: 400 }, week: { used: 400 } }), ANTHROPIC);
   ok(

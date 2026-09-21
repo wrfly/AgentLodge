@@ -389,6 +389,7 @@ export const es: Record<string, string> = {
   'Export failed': 'La exportación ha fallado',
   'Cannot reach the gateway': 'No se puede acceder a la pasarela',
   'resets {t}': 'se reinicia {t}',
+  'reset {t}, awaiting the next response': 'se reinició {t}, a la espera de la próxima respuesta',
   'read {t}': 'leído {t}',
   'Hide headers': 'Ocultar cabeceras',
   'All headers': 'Todas las cabeceras',
