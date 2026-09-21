@@ -135,7 +135,7 @@ function hasTables(d: DatabaseSync): boolean {
  * restoring the database with the image — `cli/backup-db.ts` is what makes that copy. Prefer
  * an additive step whenever one will do.
  */
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 export function columns(d: DatabaseSync, table: string): Set<string> {
   return new Set(
@@ -1230,6 +1230,29 @@ function migrateInTx(d: DatabaseSync, opts: { fresh?: boolean } = {}): void {
         );
       }
     }
+  }
+
+  if (from < 23) {
+    /*
+     * Server-side search is billed per request, not per token. Keeping it in a token column
+     * either makes search free or invents fake tokens, both of which corrupt reports and
+     * quota. Existing rows predate native chat, so their request count is exactly zero.
+     */
+    if (!columns(d, 'usage_records').has('web_search_requests')) {
+      d.exec(
+        'alter table usage_records add column web_search_requests integer not null default 0',
+      );
+    }
+    if (!columns(d, 'model_pricing').has('price_web_search')) {
+      d.exec(
+        'alter table model_pricing add column price_web_search integer not null default 0',
+      );
+    }
+    d.exec(`
+      update model_pricing
+         set price_web_search = 10000000
+       where model like 'claude-%' and price_web_search = 0
+    `);
   }
 
   d.exec(`pragma user_version = ${SCHEMA_VERSION}`);

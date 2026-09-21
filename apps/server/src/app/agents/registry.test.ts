@@ -45,8 +45,8 @@ function put(value: string): void {
 }
 
 console.log('\n=== Default: everything is offered ===');
-ok('nothing configured means both', enabledAgentIds().join(',') === 'claude,codex', enabledAgentIds().join(','));
-ok('default agent is the first', defaultAgent() === 'claude');
+ok('nothing configured means all three', enabledAgentIds().join(',') === 'chat,claude,codex', enabledAgentIds().join(','));
+ok('native chat is the default', defaultAgent() === 'chat');
 
 console.log('\n=== A single agent ===');
 put('codex');
@@ -98,10 +98,10 @@ console.log('\n=== The read side is defensive anyway ===');
   invalidate();
   ok(
     'an empty stored value falls back to all, not to none',
-    enabledAgentIds().join(',') === 'claude,codex',
+    enabledAgentIds().join(',') === 'chat,claude,codex',
     enabledAgentIds().join(','),
   );
-  ok('so there is still a default', defaultAgent() === 'claude');
+  ok('so there is still a default', defaultAgent() === 'chat');
 }
 
 console.log('\n=== The command line a turn runs on ===');

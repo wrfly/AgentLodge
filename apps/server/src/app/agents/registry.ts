@@ -2,6 +2,7 @@ import { AGENT_IDS } from '../../core/protocol.js';
 import { getList } from '../../core/db/settings.js';
 import { claudeAdapter } from './claude.js';
 import { codexAdapter } from './codex.js';
+import { nativeAdapter } from './native/index.js';
 import type {
   AgentAdapter,
   AgentAvailability,
@@ -15,7 +16,7 @@ import type {
  * here; authentication, conversation storage, SSE and quota are reused as they are.
  *
  */
-const adapters: AgentAdapter[] = [claudeAdapter, codexAdapter];
+const adapters: AgentAdapter[] = [nativeAdapter, claudeAdapter, codexAdapter];
 
 const byId = new Map<AgentId, AgentAdapter>(adapters.map((a) => [a.id, a]));
 
@@ -26,6 +27,7 @@ const byId = new Map<AgentId, AgentAdapter>(adapters.map((a) => [a.id, a]));
  * clicks it sees why rather than a button that does nothing.
  */
 const CATALOG: Array<{ id: AgentId; displayName: string }> = [
+  { id: 'chat', displayName: 'Chat' },
   { id: 'claude', displayName: 'Claude Code' },
   { id: 'codex', displayName: 'Codex' },
 ];

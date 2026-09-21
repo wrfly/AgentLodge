@@ -20,10 +20,19 @@ interface Draft {
   priceCacheRead: string;
   priceCacheWrite: string;
   priceOutput: string;
+  priceWebSearch: string;
   note: string;
 }
 
-const EMPTY: Draft = { model: '', priceInput: '', priceCacheRead: '', priceCacheWrite: '', priceOutput: '', note: '' };
+const EMPTY: Draft = {
+  model: '',
+  priceInput: '',
+  priceCacheRead: '',
+  priceCacheWrite: '',
+  priceOutput: '',
+  priceWebSearch: '',
+  note: '',
+};
 
 /**
  * A row backdated to the epoch has always applied, and says so without a date.
@@ -94,6 +103,7 @@ export function PricingCard() {
       priceCacheRead: parse(draft.priceCacheRead),
       priceCacheWrite: parse(draft.priceCacheWrite),
       priceOutput: parse(draft.priceOutput),
+      priceWebSearch: parse(draft.priceWebSearch),
     };
     if (Object.values(prices).some((v) => v === null)) {
       setError(t('A price is a number written with a dot — 0.15, not 0,15'));
@@ -108,6 +118,7 @@ export function PricingCard() {
         priceCacheRead: prices.priceCacheRead!,
         priceCacheWrite: prices.priceCacheWrite!,
         priceOutput: prices.priceOutput!,
+        priceWebSearch: prices.priceWebSearch!,
         note: draft.note.trim() || undefined,
       });
       setDraft(EMPTY);
@@ -175,7 +186,7 @@ export function PricingCard() {
   return (
     <Card
       title={t('Price table')}
-      description={t('Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.')}
+      description={`${t('Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.')} ${t('Web search / 1K')}.`}
     >
       {error && <Banner tone="error">{error}</Banner>}
       {/* No mixed-currency warning any more. Two currencies in this table used to make every
@@ -194,6 +205,7 @@ export function PricingCard() {
                 <th className="pb-2 pl-4 text-right font-medium">{t('Out')}</th>
                 <th className="pb-2 pl-4 text-right font-medium">{t('Cache read')}</th>
                 <th className="pb-2 pl-4 text-right font-medium">{t('Cache write')}</th>
+                <th className="pb-2 pl-4 text-right font-medium">{t('Web search / 1K')}</th>
                 <th className="pb-2 pl-4 font-medium">{t('Time of day')}</th>
                 <th className="pb-2" />
               </tr>
@@ -242,6 +254,7 @@ export function PricingCard() {
                   <td className="py-2 pl-4 text-right font-mono tabular-nums">{fmtMoney(r.priceOutput, r.currency)}</td>
                   <td className="py-2 pl-4 text-right font-mono tabular-nums text-muted">{fmtMoney(r.priceCacheRead, r.currency)}</td>
                   <td className="py-2 pl-4 text-right font-mono tabular-nums text-muted">{fmtMoney(r.priceCacheWrite, r.currency)}</td>
+                  <td className="py-2 pl-4 text-right font-mono tabular-nums text-muted">{fmtMoney(r.priceWebSearch, r.currency)}</td>
                   <td className="w-[200px] py-2 pl-4 align-top">
                     {r.peakMultiplier === 1 ? (
                       <span className="text-faint">—</span>
@@ -301,6 +314,7 @@ export function PricingCard() {
             ['priceOutput', t('Out')],
             ['priceCacheRead', t('Cache read')],
             ['priceCacheWrite', t('Cache write')],
+            ['priceWebSearch', t('Web search / 1K')],
           ] as const
         ).map(([key, label]) => (
           <Field key={key} label={`${label}${currency ? ` (${currency})` : ''}`}>

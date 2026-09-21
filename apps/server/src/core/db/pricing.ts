@@ -27,6 +27,8 @@ export interface Pricing {
   priceCacheRead: number;
   priceCacheWrite: number;
   priceOutput: number;
+  /** Micro-units per 1,000 server-side web searches. */
+  priceWebSearch: number;
   effectiveFrom: string;
   note?: string;
   /**
@@ -52,6 +54,7 @@ interface Row {
   price_cache_read: number;
   price_cache_write: number;
   price_output: number;
+  price_web_search: number;
   effective_from: string;
   note: string | null;
   created_at: string;
@@ -71,6 +74,7 @@ const toPricing = (r: Row): Pricing => {
   priceCacheRead: r.price_cache_read,
   priceCacheWrite: r.price_cache_write,
   priceOutput: r.price_output,
+  priceWebSearch: r.price_web_search,
   effectiveFrom: r.effective_from,
   note: r.note ?? undefined,
   // A row written before the column existed reads as "no time of day", which it was
@@ -129,6 +133,8 @@ export interface UpsertInput {
   priceCacheRead: number;
   priceCacheWrite: number;
   priceOutput: number;
+  /** Micro-units per 1,000 requests; omitted means this model cannot bill searches. */
+  priceWebSearch?: number;
   effectiveFrom?: string;
   note?: string;
   /** Left out means 1: the price does not depend on the time of day */
@@ -141,8 +147,8 @@ export function add(input: UpsertInput): Pricing {
   const result = run(
     `insert into model_pricing
        (model, provider_id, currency, price_input, price_cache_read, price_cache_write, price_output,
-        effective_from, note, created_at, peak_multiplier, peak_windows)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        price_web_search, effective_from, note, created_at, peak_multiplier, peak_windows)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.model.trim(),
     (input.providerId ?? '').trim() || null,
     input.currency ?? getString('billing.currency', 'USD'),
@@ -150,6 +156,7 @@ export function add(input: UpsertInput): Pricing {
     Math.round(input.priceCacheRead),
     Math.round(input.priceCacheWrite),
     Math.round(input.priceOutput),
+    Math.round(input.priceWebSearch ?? 0),
     input.effectiveFrom ?? nowIso(),
     input.note ?? null,
     nowIso(),
@@ -250,6 +257,7 @@ export interface TokenCounts {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   outputTokens: number;
+  webSearchRequests?: number;
 }
 
 /**
@@ -281,11 +289,13 @@ export function costMicroExact(
  */
 export function costOf(p: Pricing, u: TokenCounts): number {
   const per = (tokens: number, price: number) => (tokens * price) / 1_000_000;
+  const perThousand = (requests: number, price: number) => (requests * price) / 1_000;
   return (
     per(u.inputTokens, p.priceInput) +
     per(u.cacheReadTokens, p.priceCacheRead) +
     per(u.cacheCreationTokens, p.priceCacheWrite) +
-    per(u.outputTokens, p.priceOutput)
+    per(u.outputTokens, p.priceOutput) +
+    perThousand(u.webSearchRequests ?? 0, p.priceWebSearch)
   );
 }
 
@@ -507,6 +517,11 @@ function seedRows(): UpsertInput[] {
       note: 'The catch-all, used by any model without a price of its own',
     },
   ].map((r) => ({ currency: 'USD', ...r, effectiveFrom: now }));
+  // Anthropic bills server-side search per request, independently of the tokens the search
+  // result contributes. $10 / 1,000 searches is stored as micro-units per 1,000 requests.
+  for (const row of seed) {
+    if (row.model.startsWith('claude-')) row.priceWebSearch = 10 * MICRO;
+  }
   return seed;
 }
 

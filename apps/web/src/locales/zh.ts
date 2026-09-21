@@ -611,6 +611,7 @@ export const zh: Record<string, string> = {
   'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': '按每百万 token 计。配额算的是这一轮实际花了多少钱，所以这张表既决定账单也决定谁被拦下。',
   'Cache read': '缓存读',
   'Cache write': '缓存写',
+  'Web search / 1K': '网页搜索 / 千次',
   'Time of day': '时段',
   'in effect now': '当前生效',
   'A price is a number written with a dot — 0.15, not 0,15': '价格要写成用点的数字 —— 0.15,不是 0,15',

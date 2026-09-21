@@ -1,14 +1,25 @@
-import type { MessageBlock, ServerEvent, TurnUsage } from '../../core/protocol.js';
+import type {
+  AgentId,
+  MessageBlock,
+  ServerEvent,
+  StoredMessage,
+  TurnUsage,
+} from '../../core/protocol.js';
 
-export type AgentId = 'claude' | 'codex';
+export type { AgentId };
 
 export interface RunOptions {
   prompt: string;
   cwd: string;
+  /** The persisted transcript, including the user message that starts this turn. */
+  messages?: StoredMessage[];
   /** The session identifier from the previous turn, so the CLI can resume context */
   resumeSessionId?: string;
   model?: string;
   effort?: string;
+  thinking?: boolean;
+  /** The selected upstream speaks Anthropic's server-tool protocol natively. */
+  serverTools?: boolean;
   /** The gateway credential. Empty still points the CLI at the gateway, so the host login cannot answer. */
   runtimeToken?: string;
   /** Container name. Empty runs on the host directly. */
@@ -56,6 +67,8 @@ export interface RunningTurn {
 export interface AgentAdapter {
   readonly id: AgentId;
   readonly displayName: string;
+  /** Whether a turn needs a workspace, memory files and a CLI container. */
+  readonly needsContainer: boolean;
   /** Default executable name, overridable from the environment */
   readonly bin: string;
   /** Probe whether this agent is usable here, meaning whether its CLI exists */

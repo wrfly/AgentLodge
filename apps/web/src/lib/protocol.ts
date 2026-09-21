@@ -15,6 +15,8 @@ export interface TurnUsage {
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  /** Billable Anthropic server-side searches, separate from token usage. */
+  webSearchRequests?: number;
   /** Only meaningful against the official API; third-party endpoints usually report 0. See DESIGN.md §7.6. */
   costUsd: number;
   durationMs: number;
@@ -159,6 +161,10 @@ export interface ToolBlock {
   toolName: string;
   input: unknown;
   result?: { isError: boolean; content: string };
+  /** Native Anthropic server tools are replayed as assistant blocks, not user tool_result. */
+  server?: boolean;
+  /** Exact server result block needed to continue the conversation on the next turn. */
+  serverResult?: Record<string, unknown>;
 }
 export type MessageBlock = TextBlock | ThinkingBlock | ToolBlock;
 
@@ -177,7 +183,7 @@ export interface StoredMessage {
  * which agents are offered validates against it, and core cannot import the app layer's
  * registry across the layer boundary.
  */
-export const AGENT_IDS = ['claude', 'codex'] as const;
+export const AGENT_IDS = ['chat', 'claude', 'codex'] as const;
 
 export type AgentId = (typeof AGENT_IDS)[number];
 

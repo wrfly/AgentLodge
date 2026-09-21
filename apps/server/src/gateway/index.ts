@@ -478,7 +478,11 @@ async function handleProxy(
      * body this conversation's traffic all passes through. A rule that no longer matches —
      * compaction rewrote the text, say — leaves the request as it stood.
      */
-    const redoMatches = claims.cid ? trimsRepo.forConversation(claims.cid) : [];
+    // Native chat rebuilt this request from the already-truncated database transcript.
+    // Redo rules exist only to correct an opaque CLI session that still contains the old
+    // answer; applying one here would cut the replacement history a second time.
+    const redoMatches =
+      claims.agent !== 'chat' && claims.cid ? trimsRepo.forConversation(claims.cid) : [];
     const trimmed = redoMatches.length ? trimRedoAnswers(sent, redoMatches) : sent;
     const outbound = !target.translate
       ? trimmed
@@ -971,7 +975,8 @@ function settle(
   meta: { status: number; latencyMs: number; queueWaitMs: number; providerId?: string; model?: string },
 ): void {
   const total =
-    acc.inputTokens + acc.cacheReadTokens + acc.cacheCreationTokens + acc.outputTokens;
+    acc.inputTokens + acc.cacheReadTokens + acc.cacheCreationTokens + acc.outputTokens
+    + acc.webSearchRequests;
   if (total === 0) return; // nothing was used, an auth failure say, so nothing is booked
 
   usageRepo.record({
@@ -986,6 +991,7 @@ function settle(
       cacheReadTokens: acc.cacheReadTokens,
       cacheCreationTokens: acc.cacheCreationTokens,
       outputTokens: acc.outputTokens,
+      webSearchRequests: acc.webSearchRequests,
       costUsd: 0, // the gateway knows no unit prices; the price table converts this later
       durationMs: meta.latencyMs,
       numTurns: 1,

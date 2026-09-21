@@ -241,6 +241,7 @@ create table if not exists usage_records (
   cache_read_tokens     integer not null default 0,
   cache_creation_tokens integer not null default 0,
   output_tokens         integer not null default 0,
+  web_search_requests   integer not null default 0,
   cost_usd              real    not null default 0,   -- as the CLI reported; usually 0 off-platform
   -- Cost from the price table, in micro-units. This is what money-based billing uses.
   cost_micro            integer not null default 0,
@@ -323,6 +324,8 @@ create table if not exists model_pricing (
   price_cache_read  integer not null,   -- input that hit it, usually an order of magnitude cheaper
   price_cache_write integer not null,
   price_output      integer not null,
+  -- Micro-units per 1,000 Anthropic server-side web searches.
+  price_web_search  integer not null default 0,
   effective_from    text not null,
   note              text,
   created_at        text not null,

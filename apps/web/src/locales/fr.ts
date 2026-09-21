@@ -584,6 +584,7 @@ export const fr: Record<string, string> = {
   'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': 'Par million de tokens. Le quota compte ce qu’un tour a coûté : cette table décide donc de la facture comme des refus.',
   'Cache read': 'Lecture cache',
   'Cache write': 'Écriture cache',
+  'Web search / 1K': 'Recherche web / 1 000',
   'Time of day': 'Heure de la journée',
   'in effect now': 'en vigueur actuellement',
   'A price is a number written with a dot — 0.15, not 0,15': 'Un prix est un nombre écrit avec un point — 0.15, pas 0,15',

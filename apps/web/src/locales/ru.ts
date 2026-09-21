@@ -611,6 +611,7 @@ export const ru: Record<string, string> = {
   'Per million tokens. Quota counts what a turn cost, so these decide refusals as well as the bill.': 'За миллион токенов. Квота считает фактическую стоимость хода, поэтому эта таблица определяет и счёт, и отказы.',
   'Cache read': 'Чтение кэша',
   'Cache write': 'Запись кэша',
+  'Web search / 1K': 'Веб-поиск / 1 000',
   'Time of day': 'Время суток',
   'in effect now': 'действует сейчас',
   'A price is a number written with a dot — 0.15, not 0,15': 'Цена — это число с точкой: 0.15, а не 0,15',

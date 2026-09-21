@@ -35,9 +35,10 @@ export interface AgentInfo {
   /**
    * Whether an administrator offers this agent at all.
    *
-   * Separate from `availability`, which answers whether the CLI is installed
-   * and working. A missing CLI is a fault and says so; a disabled agent is a
-   * deployment decision and should simply not appear.
+   * Separate from `availability`, which answers whether it can run (CLI on
+   * disk for claude/codex, an enabled upstream for chat). A missing CLI is a
+   * fault and says so; a disabled agent is a deployment decision and should
+   * simply not appear.
    */
   enabled: boolean;
   availability: { available: boolean; version?: string; reason?: string };
@@ -744,6 +745,8 @@ export interface PricingRow {
   priceCacheRead: number;
   priceCacheWrite: number;
   priceOutput: number;
+  /** Micro-unit price per 1,000 server-side searches. */
+  priceWebSearch: number;
   effectiveFrom: string;
   note?: string;
   /** What the four prices are multiplied by inside the schedule below; 1 means no schedule */
@@ -1121,6 +1124,7 @@ export const admin = {
     priceCacheRead: number;
     priceCacheWrite: number;
     priceOutput: number;
+    priceWebSearch: number;
     note?: string;
   }) => request<PricingRow>('/api/admin/pricing', { method: 'POST', body: JSON.stringify(input) }),
   removePricing: (id: number) =>

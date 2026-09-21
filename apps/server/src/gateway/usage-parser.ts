@@ -13,13 +13,20 @@ export interface UsageAcc {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   outputTokens: number;
+  webSearchRequests: number;
   /** Time to first byte */
   ttftMs?: number;
   model?: string;
 }
 
 export function newUsageAcc(): UsageAcc {
-  return { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0 };
+  return {
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+    webSearchRequests: 0,
+  };
 }
 
 /**
@@ -29,10 +36,28 @@ export function newUsageAcc(): UsageAcc {
  */
 export type Wire = 'anthropic' | 'responses' | 'chat';
 
+interface AnthropicUsage extends Record<string, unknown> {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_creation?: {
+    ephemeral_5m_input_tokens?: number;
+    ephemeral_1h_input_tokens?: number;
+  };
+  server_tool_use?: { web_search_requests?: number; web_fetch_requests?: number };
+}
+
 interface AnthropicEvent {
   type?: string;
-  message?: { model?: string; usage?: Record<string, number> };
-  usage?: Record<string, number>;
+  message?: { model?: string; usage?: AnthropicUsage };
+  usage?: AnthropicUsage;
+}
+
+function cacheCreation(u: AnthropicUsage): number {
+  if (typeof u.cache_creation_input_tokens === 'number') return u.cache_creation_input_tokens;
+  return (u.cache_creation?.ephemeral_5m_input_tokens ?? 0)
+    + (u.cache_creation?.ephemeral_1h_input_tokens ?? 0);
 }
 
 interface ResponsesEvent {
@@ -72,11 +97,19 @@ export function absorbEvent(wire: Wire, raw: string, acc: UsageAcc): void {
       const u = e.message?.usage ?? {};
       acc.inputTokens += u.input_tokens ?? 0;
       acc.cacheReadTokens += u.cache_read_input_tokens ?? 0;
-      acc.cacheCreationTokens += u.cache_creation_input_tokens ?? 0;
+      acc.cacheCreationTokens += cacheCreation(u);
+      acc.webSearchRequests = Math.max(
+        acc.webSearchRequests,
+        u.server_tool_use?.web_search_requests ?? 0,
+      );
       acc.model ??= e.message?.model;
     } else if (e.type === 'message_delta') {
       // Cumulative rather than incremental, so take the maximum in case frames arrive out of order
       acc.outputTokens = Math.max(acc.outputTokens, e.usage?.output_tokens ?? 0);
+      acc.webSearchRequests = Math.max(
+        acc.webSearchRequests,
+        e.usage?.server_tool_use?.web_search_requests ?? 0,
+      );
     }
     return;
   }
@@ -120,8 +153,9 @@ export function absorbBody(wire: Wire, body: string, acc: UsageAcc): void {
       const u = j.usage ?? {};
       acc.inputTokens += u.input_tokens ?? 0;
       acc.cacheReadTokens += u.cache_read_input_tokens ?? 0;
-      acc.cacheCreationTokens += u.cache_creation_input_tokens ?? 0;
+      acc.cacheCreationTokens += cacheCreation(u);
       acc.outputTokens += u.output_tokens ?? 0;
+      acc.webSearchRequests += u.server_tool_use?.web_search_requests ?? 0;
     } catch {
       /* What came back was not JSON */
     }

@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { AgentId } from './protocol';
 
 export const AGENTS: Array<{ id: AgentId; path: string; label: string }> = [
+  { id: 'chat', path: '/chat', label: 'Chat' },
   { id: 'claude', path: '/claude', label: 'Claude Code' },
   { id: 'codex', path: '/codex', label: 'Codex' },
 ];
@@ -33,13 +34,14 @@ export function isPublic(route: Route): boolean {
   return route.name === 'register' || route.name === 'reset-password';
 }
 
-const DEFAULT_AGENT: AgentId = 'claude';
+const DEFAULT_AGENT: AgentId = 'chat';
 
 function parse(url: URL): Route {
   const [, first, second] = url.pathname.split('/');
   const q = url.searchParams;
 
   switch (first) {
+    case 'chat':
     case 'claude':
     case 'codex':
       return { name: 'chat', agent: first };
@@ -109,6 +111,7 @@ export function useRoute(): Route {
 }
 
 const KNOWN = [
+  'chat',
   'claude',
   'codex',
   'usage',

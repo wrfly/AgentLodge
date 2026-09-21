@@ -411,7 +411,7 @@ export function Composer({ agent }: { agent: AgentId }) {
               title={t("Reasoning effort (affects later messages only)")}
               disabled={locked}
               mark={
-                agent === 'claude' ? (
+                agent !== 'codex' ? (
                   <Brain
                     size={11}
                     className={clsx('shrink-0', thinking ? 'text-accent' : 'text-faint')}
@@ -419,7 +419,7 @@ export function Composer({ agent }: { agent: AgentId }) {
                 ) : undefined
               }
               footer={
-                agent === 'claude' ? (
+                agent !== 'codex' ? (
                   <button
                     type="button"
                     role="switch"
