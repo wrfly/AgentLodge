@@ -389,6 +389,7 @@ export const de: Record<string, string> = {
   'Export failed': 'Export fehlgeschlagen',
   'Cannot reach the gateway': 'Gateway nicht erreichbar',
   'resets {t}': 'wird {t} zurückgesetzt',
+  'reset {t}, awaiting the next response': '{t} zurückgesetzt, wartet auf die nächste Antwort',
   'read {t}': 'gelesen {t}',
   'Hide headers': 'Header ausblenden',
   'All headers': 'Alle Header',

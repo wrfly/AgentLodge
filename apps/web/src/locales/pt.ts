@@ -389,6 +389,7 @@ export const pt: Record<string, string> = {
   'Export failed': 'A exportação falhou',
   'Cannot reach the gateway': 'Não é possível contactar a gateway',
   'resets {t}': 'é reposto {t}',
+  'reset {t}, awaiting the next response': 'reposto {t}, à espera da próxima resposta',
   'read {t}': 'lido {t}',
   'Hide headers': 'Ocultar cabeçalhos',
   'All headers': 'Todos os cabeçalhos',

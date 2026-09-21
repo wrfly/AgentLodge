@@ -980,6 +980,8 @@ export interface UpstreamAllowanceWindow {
   status: string | null;
   /** When this window was last mentioned; a window nobody has touched keeps its own age */
   observedAt: string;
+  /** Its reset has passed, so the figure was dropped rather than shown as still current */
+  expired?: boolean;
 }
 
 /**

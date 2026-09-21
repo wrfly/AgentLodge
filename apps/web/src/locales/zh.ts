@@ -414,6 +414,7 @@ export const zh: Record<string, string> = {
   'Export failed': '导出失败',
   'Cannot reach the gateway': '连不上网关',
   'resets {t}': '{t} 重置',
+  'reset {t}, awaiting the next response': '{t} 已重置，等待下一次响应更新',
   'read {t}': '{t} 读到',
   'Hide headers': '收起响应头',
   'All headers': '全部响应头',
