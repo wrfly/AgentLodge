@@ -12,8 +12,8 @@ import zlib from 'node:zlib';
  *
  * `fetch` cannot ask for HTTP/2, so this is `node:http2` wrapped to look like the one call
  * `bidi.ts` already knew how to consume. The audit proxy and the tests stay on `fetch`: they
- * listen over HTTP/1.1, and the proxy — when it is in front — is the one that has to speak
- * HTTP/2 to the agent host (`PROXY_HTTP2=1`).
+ * listen over HTTP/1.1, and the proxy — when it is in front — switches the agent host to
+ * HTTP/2 on its own the first time h1 gets h2 frames back.
  */
 
 /** Headers HTTP/2 refuses, which a leftover from an HTTP/1.1 client would otherwise send */

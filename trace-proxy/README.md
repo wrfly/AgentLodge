@@ -113,7 +113,7 @@ One directory per request:
 | `ANTHROPIC_UPSTREAM` | `https://api.anthropic.com` | |
 | `OPENAI_UPSTREAM` | `https://api.openai.com` | |
 | `PROXY_REDACT` | `1` | `0` records keys verbatim |
-| `PROXY_HTTP2` | `0` | HTTP/1.1 by default, matching what Claude Code negotiates directly; `1` uses HTTP/2 |
+| `PROXY_HTTP2` | `0` | HTTP/1.1 by default, matching what Claude Code negotiates directly; `1` uses HTTP/2. An origin that answers h1 with h2 frames gets h2 regardless |
 | `PROXY_IDENTITY` | `0` | `1` asks the upstream not to compress — cheaper, but no longer a faithful copy |
 | `PROXY_TIMEOUT_MS` | `900000` | upstream timeout |
 | `PROXY_UI_PREFIX` | `/__trace` | where the interface is mounted under the proxy's port; empty means not mounted |

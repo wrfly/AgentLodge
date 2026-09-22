@@ -1000,6 +1000,9 @@ function makeDecompressor(encoding) {
 // later requests go straight to h1
 const h2Sessions = new Map();
 const h2Unsupported = new Set();
+// Origins that answered h1 with h2 frames. Cursor's agent host speaks only h2, and it gets
+// h2 whatever PROXY_HTTP2 says; everything else keeps the default.
+const h2Only = new Set();
 
 function getH2Session(origin) {
   const cur = h2Sessions.get(origin);
@@ -1254,7 +1257,7 @@ const server = http.createServer((req, res) => {
     if (FORCE_IDENTITY) outHeaders['accept-encoding'] = 'identity';
     if (reqBody.length) outHeaders['content-length'] = String(reqBody.length);
 
-    const wantH2 = USE_HTTP2 && target.protocol === 'https:' && !h2Unsupported.has(target.origin);
+    const wantH2 = target.protocol === 'https:' && (h2Only.has(target.origin) || (USE_HTTP2 && !h2Unsupported.has(target.origin)));
 
     if (!skipTrace) writeJSON(path.join(dir, 'forwarded.headers.json'), {
       protocol: wantH2 ? 'HTTP/2' : 'HTTP/1.1',
@@ -1548,7 +1551,17 @@ const server = http.createServer((req, res) => {
       upstreamReq.setTimeout(Number(process.env.PROXY_TIMEOUT_MS || 15 * 60 * 1000), () => {
         upstreamReq.destroy(new Error('upstream timeout'));
       });
-      upstreamReq.on('error', (err) => onError(err, 'h1'));
+      upstreamReq.on('error', (err) => {
+        // Not an HTTP status line: the origin answered in h2. Nothing reached the client, so
+        // this request goes again over h2, and so does every later one to the same origin.
+        if (err.code === 'HPE_INVALID_CONSTANT' && !committed && target.protocol === 'https:' && !h2Only.has(target.origin)) {
+          h2Only.add(target.origin);
+          h2Unsupported.delete(target.origin);
+          console.error(c.yellow(`[#${id}] ${target.host} does not speak h1, switching it to h2`));
+          return forwardH2();
+        }
+        onError(err, 'h1');
+      });
       if (reqBody.length) upstreamReq.write(reqBody);
       upstreamReq.end();
     };
@@ -1589,7 +1602,7 @@ const server = http.createServer((req, res) => {
 
       stream.on('error', (err) => {
         // If h2 will not negotiate, blacklist the origin and fall back to h1 for this request
-        if (!settled) {
+        if (!settled && !h2Only.has(target.origin)) {
           h2Unsupported.add(target.origin);
           console.error(c.yellow(`[#${id}] h2 failed, falling back to h1: ${err.message}`));
           return forwardH1();
@@ -1603,7 +1616,7 @@ const server = http.createServer((req, res) => {
 
     const tryForward = () => {
       attempt++;
-      if (wantH2 && !h2Unsupported.has(target.origin)) forwardH2();
+      if (h2Only.has(target.origin) || (wantH2 && !h2Unsupported.has(target.origin))) forwardH2();
       else forwardH1();
     };
 

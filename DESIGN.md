@@ -426,7 +426,7 @@ Cursor 自己的客户端里就有出路，因为它在企业代理后面遇到�
 id 是这边生成的 uuid，两个请求的 `x-request-id` 都是它 —— Cursor 自己的客户端就是从这个头里读的。
 两个调用都只是「POST 一个 protobuf」，所以审计代理、egress 闸门、abort 信号全都跟别的上游一样有效。
 
-> ⚠️ **这条上游要出两个域名。** 一个 turn 分两个调用：消息发到 `api2.cursor.sh`（HTTP/1.1 即可），回来的流从 agent host（默认 `agentn.us.api5.cursor.sh`）读。**agent host 只讲 HTTP/2** —— Node 的 `fetch` 走 HTTP/1.1，连上去会直接 `fetch failed`，所以 RunSSE 走 `node:http2`。有 egress allowlist 的部署两个域名都要放。上游填了 Base URL 的话两个都走那一个地址。审计代理默认出网也是 HTTP/1.1，前面挂代理时要开 `PROXY_HTTP2=1`，否则代理会把同样的 HTTP/1.1 打到 agent host 上，一样过不去。
+> ⚠️ **这条上游要出两个域名。** 一个 turn 分两个调用：消息发到 `api2.cursor.sh`（HTTP/1.1 即可），回来的流从 agent host（默认 `agentn.us.api5.cursor.sh`）读。**agent host 只讲 HTTP/2** —— Node 的 `fetch` 走 HTTP/1.1，连上去会直接 `fetch failed`，所以 RunSSE 走 `node:http2`。有 egress allowlist 的部署两个域名都要放。上游填了 Base URL 的话两个都走那一个地址。审计代理默认出网是 HTTP/1.1，h1 请求收到的回应不是 HTTP 状态行时，它把这个 origin 记为只讲 h2，这次请求和之后的请求都改走 h2。
 
 #### 这段是对着真客户端校准过的
 
