@@ -448,7 +448,7 @@ export const ru: Record<string, string> = {
   'This 5-hour window': 'Текущее 5-часовое окно',
   'The user quota window. Spend below is per configured subscription.': 'Окно пользовательской квоты. Расход ниже — по каждой настроенной подписке.',
   Subscriptions: 'Подписки',
-  'What this platform spent on each configured subscription this window, and what that plan still has left.': 'Сколько эта платформа потратила на каждую настроенную подписку в этом окне, и сколько ещё осталось у самого плана.',
+  'What this platform spent on each configured subscription, over the period that subscription is billed on, and what that plan still has left.': 'Сколько эта платформа потратила на каждой настроенной подписке — за тот период, по которому эта подписка выставляет счёт, — и сколько в этом плане осталось.',
   'Previewing three configured subscriptions. This is not live data.': 'Предпросмотр с тремя настроенными подписками. Это не живые данные.',
   'Spent this window': 'Потрачено в этом окне',
   'Spent this billing cycle': "Потрачено в этом расчётном цикле",

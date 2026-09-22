@@ -448,7 +448,7 @@ export const ja: Record<string, string> = {
   'This 5-hour window': '現在の 5 時間ウィンドウ',
   'The user quota window. Spend below is per configured subscription.': 'ユーザーのクォータウィンドウです。下の使用量は設定済みのサブスクリプションごとです。',
   Subscriptions: 'サブスクリプション',
-  'What this platform spent on each configured subscription this window, and what that plan still has left.': 'このウィンドウで、設定済みの各サブスクリプションにこのプラットフォームが使った分と、そのプランの残り。',
+  'What this platform spent on each configured subscription, over the period that subscription is billed on, and what that plan still has left.': 'このプラットフォームが設定済みの各サブスクリプションで使った額を、そのサブスクリプションの請求期間で示したものと、そのプランの残りです。',
   'Previewing three configured subscriptions. This is not live data.': '設定済みサブスクリプションが3つある配置のプレビューです。ライブデータではありません。',
   'Spent this window': 'このウィンドウの使用量',
   'Spent this billing cycle': "この請求サイクルの使用量",

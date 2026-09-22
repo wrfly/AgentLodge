@@ -448,7 +448,7 @@ export const zh: Record<string, string> = {
   'This 5-hour window': '当前 5 小时窗口',
   'The user quota window. Spend below is per configured subscription.': '用户配额窗口。下面的用量按已配置的订阅分开。',
   Subscriptions: '订阅',
-  'What this platform spent on each configured subscription this window, and what that plan still has left.': '本窗口内平台在每个已配置订阅上花了多少，以及该订阅自己还剩多少。',
+  'What this platform spent on each configured subscription, over the period that subscription is billed on, and what that plan still has left.': '本平台在每个已配置订阅上的消费，按该订阅自己的计费周期计，以及该套餐还剩多少。',
   'Previewing three configured subscriptions. This is not live data.': '预览三份已配置订阅同时在线时的总览。这不是实时数据。',
   'Spent this window': '本窗口已用',
   'Spent this billing cycle': "本计费周期已用",

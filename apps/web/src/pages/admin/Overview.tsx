@@ -33,6 +33,7 @@ import { TokenCells, TokenHeaders, TokenSplit } from '../../components/TokenSpli
 import { useT } from '../../lib/i18n';
 import { Money, MoneyCell } from '../../components/Money';
 import { PLATFORM_PRESETS } from './shared';
+import { useQuota } from '../../store/quota';
 
 /* ---------------- Overview ---------------- */
 
@@ -234,12 +235,20 @@ export function Overview() {
   useEffect(() => {
     void admin.providers().then((d) => setProviders(d.providers)).catch(() => setProviders([]));
   }, []);
+  /*
+   * The per-subscription fallback figure, over the window the gate is enforcing.
+   *
+   * A subscription that reports a billing cycle of its own shows that instead — see the
+   * card below. This is for the ones that do not, and asking for `window` where no upstream
+   * has a rolling allowance would cut them at five hours for no reason.
+   */
+  const windowPreset: PlatformPreset = data?.window.scope === 'month' ? 'month' : 'window';
   useEffect(() => {
     void admin
-      .platformUsage('window')
+      .platformUsage(windowPreset)
       .then((u) => setWindowSpend(u.byUpstream))
       .catch(() => setWindowSpend([]));
-  }, []);
+  }, [windowPreset]);
 
   if (error) return <Banner tone="error">{error}</Banner>;
   if (!data) return <Spinner />;
@@ -341,6 +350,17 @@ function PlatformUsageCard() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [data, setData] = useState<PlatformUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * The two rolling spans are the gate's own windows, so they are offered only where the
+   * gate has them. Where no upstream reports a rolling allowance — Cursor reports none, its
+   * plan being a monthly pot — they would be two buttons cutting the platform's spend at
+   * boundaries nothing is billed or refused on. See core/quota.ts `enforcedScopes`.
+   */
+  const enforced = useQuota((s) => s.quota?.enforced);
+  const rolling = !enforced || enforced.includes('window');
+  const presets = rolling
+    ? PLATFORM_PRESETS
+    : PLATFORM_PRESETS.filter((p) => p.id !== 'window' && p.id !== 'weekWindow');
 
   useEffect(() => {
     let live = true;
@@ -371,7 +391,7 @@ function PlatformUsageCard() {
   return (
     <Card title={t('Platform usage')}>
       <div className="mb-3 flex flex-wrap gap-1.5">
-        {PLATFORM_PRESETS.map((p) => (
+        {presets.map((p) => (
           <Button
             key={p.id}
             variant={preset === p.id ? 'primary' : 'ghost'}
@@ -778,7 +798,12 @@ function SubscriptionsCard({
   const rows = collectSubscriptions(providers, spends, balances, allowances, pools);
   const gatewayFailed = Boolean((allowanceView?.unreachable || allowanceView?.error) && !preview);
   const title = t('Subscriptions');
-  const description = t('What this platform spent on each configured subscription this window, and what that plan still has left.');
+  /*
+   * "This window" was wrong here the moment one of these cards reported a billing cycle
+   * instead: each row now says which interval its own figure covers, and the cards no
+   * longer share one.
+   */
+  const description = t('What this platform spent on each configured subscription, over the period that subscription is billed on, and what that plan still has left.');
 
   if (loading && !rows.length) return null;
   if (!rows.length) {

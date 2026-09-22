@@ -424,7 +424,7 @@ export const zhHant: Record<string, string> = {
   'This 5-hour window': '這 5 小時視窗',
   'The user quota window. Spend below is per configured subscription.': '使用者配額視窗。下面的用量依已設定的訂閱分開。',
   Subscriptions: '訂閱',
-  'What this platform spent on each configured subscription this window, and what that plan still has left.': '本視窗內平台在每個已設定訂閱上花了多少，以及該訂閱自己還剩多少。',
+  'What this platform spent on each configured subscription, over the period that subscription is billed on, and what that plan still has left.': '本平台在每個已設定訂閱上的消費，按該訂閱自己的計費週期計，以及該方案還剩多少。',
   'Previewing three configured subscriptions. This is not live data.': '預覽三份已設定訂閱同時在線時的總覽。這不是即時資料。',
   'Spent this window': '本視窗已用',
   'Spent this billing cycle': "本計費週期已用",

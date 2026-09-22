@@ -423,7 +423,7 @@ export const fr: Record<string, string> = {
   'This 5-hour window': 'Cette fenêtre de 5 heures',
   'The user quota window. Spend below is per configured subscription.': 'La fenêtre de quota utilisateur. La consommation ci-dessous est par abonnement configuré.',
   Subscriptions: 'Abonnements',
-  'What this platform spent on each configured subscription this window, and what that plan still has left.': 'Ce que cette plateforme a consommé sur chaque abonnement configuré dans cette fenêtre, et ce qu’il reste au forfait lui-même.',
+  'What this platform spent on each configured subscription, over the period that subscription is billed on, and what that plan still has left.': 'Ce que cette plate-forme a dépensé sur chaque abonnement configuré, sur la période de facturation de cet abonnement, et ce qu\'il reste sur ce forfait.',
   'Previewing three configured subscriptions. This is not live data.': 'Aperçu avec trois abonnements configurés. Ce ne sont pas des données en direct.',
   'Spent this window': 'Consommé dans cette fenêtre',
   'Spent this billing cycle': "Consommé dans ce cycle de facturation",
