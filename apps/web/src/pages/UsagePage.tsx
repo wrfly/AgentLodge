@@ -147,13 +147,19 @@ function QuotaCard({ quota }: { quota: UsageReport['quota'] }) {
    * refuses on first, and the number they want the moment they are told to wait. The figure
    * was always computed; only the row was missing. With no ceiling there is nothing to draw
    * a bar against, so the row is the count and when it resets.
+   *
+   * Every window the gate is *enforcing*, that is. A row for a 5-hour window nothing is cut
+   * at is the same kind of claim this card exists to avoid making — a Cursor subscription
+   * reports no rolling allowance, so there the month is the only one. See core/quota.ts
+   * `enforcedScopes`. Falls back to all three, which is what an older server meant.
    */
-  const anyLimit = SCOPES.some((s) => quota.windows[s].limit !== null);
+  const scopes = quota.enforced?.length ? quota.enforced : SCOPES;
+  const anyLimit = scopes.some((s) => quota.windows[s].limit !== null);
 
   return (
     <Card title={t('Quota')}>
       <div className="space-y-3">
-        {SCOPES.map((scope) => {
+        {scopes.map((scope) => {
           const w = quota.windows[scope];
           const pct = Math.round(w.ratio * 100);
           const capped = w.limit !== null;
@@ -229,6 +235,16 @@ export function UsagePage() {
   const [to, setTo] = useState('');
   /** Which upstream everything is narrowed to; null is all of them, 'none' the ones with none */
   const [upstream, setUpstream] = useState<string | null>(null);
+  /*
+   * The two rolling presets are the quota's own windows, so they are offered only where the
+   * gate has them. On a deployment whose upstreams report no rolling allowance — Cursor
+   * reports none — they would be two buttons cutting the report at boundaries nothing is
+   * billed or refused on. See core/quota.ts `enforcedScopes`.
+   */
+  const enforced = useQuota((s) => s.quota?.enforced);
+  const presets = !enforced || enforced.includes('window')
+    ? PRESETS
+    : PRESETS.filter((p) => p.id !== 'window' && p.id !== 'weekWindow');
 
   const load = async (p: RangePreset = preset, f = from, t = to, u = upstream) => {
     setBusy(true);
@@ -347,7 +363,7 @@ export function UsagePage() {
             }
           >
             <div className="mb-3 flex flex-wrap gap-1.5">
-              {PRESETS.map((p) => (
+              {presets.map((p) => (
                 <button
                   key={p.id}
                   onClick={() => pick(p.id)}

@@ -936,6 +936,34 @@ async function handleProxy(
       model: typeof asked === 'string' ? asked : undefined,
     });
 
+    /*
+     * A turn the upstream opened and then said nothing in.
+     *
+     * Traced twice against Cursor and not reproducible since: status 200, `ttftMs` equal to
+     * the whole duration, every token count zero — a stream that was accepted, held open for
+     * minutes and closed empty. The client sees nothing at all and has no way to tell that
+     * from a slow answer, and the only thing that ends it is the 330-second idle timeout,
+     * which is far longer than any client's patience.
+     *
+     * Logged rather than turned into a timeout of its own: one sighting is not enough to pick
+     * a cutoff with, and a wrong one would cut off turns that are merely slow to think. This
+     * is here so the next sighting arrives with the provider, the model and the shape of the
+     * request attached instead of only a trace file.
+     */
+    if (!ac.signal.aborted && acc.outputTokens === 0 && acc.inputTokens === 0 && (status ?? 0) < 400) {
+      req.log.warn(
+        {
+          upstream: target?.provider.name,
+          wire,
+          model: typeof asked === 'string' ? asked : undefined,
+          latencyMs,
+          ttftMs: acc.ttftMs,
+          stream: Boolean((req.body as { stream?: boolean } | undefined)?.stream),
+        },
+        'gateway upstream answered with nothing',
+      );
+    }
+
     // So a user can see what actually went upstream. A structured summary of the request
     // side, recorded on failure too — the failed one is usually the one they want to see
     trace.record({

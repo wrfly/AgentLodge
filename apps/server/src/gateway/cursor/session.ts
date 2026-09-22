@@ -6,6 +6,7 @@ import { endOfStream, statusOf } from './connect.js';
 import { cursorLog } from './catalog.js';
 import { EXEC_TOOLS, shellStream, toolFor } from './exec-bridge.js';
 import { argsOf, clientName, mcpResult } from './mcp.js';
+import { toolName } from './request.js';
 
 /**
  * One turn of Cursor's agent, as a run of events.
@@ -84,6 +85,15 @@ export interface SessionOptions extends BidiOptions {
    * it. See run().
    */
   delegate: boolean;
+  /**
+   * Which tools that loop has, by exec-bridge name — see `clientTools()` in request.ts.
+   *
+   * `delegate` is about having a loop at all; this is about what is in it. A request for a
+   * tool the caller did not declare is refused rather than handed to a client with no way to
+   * answer it. Absent means "whatever arrives", which is what the probe wants and no relayed
+   * request does.
+   */
+  tools?: Set<string>;
   /**
    * What a previous turn of this conversation left behind, when this is a later one.
    *
@@ -335,14 +345,17 @@ export class AgentSession {
      * a per-file match map; a caller's tool answers with text, which is neither. Current
      * models ask for the `pi_` variants of both, which are bridged.
      */
-    if (!tool || !this.opts.delegate) {
+    const declared = !tool || !this.opts.tools || this.opts.tools.has(toolName(tool.name));
+    if (!tool || !this.opts.delegate || !declared) {
       await this.stream.send({
         exec_client_control_message: {
           throw: {
             id,
-            error: tool
-              ? 'this client has no tools of its own to run, so tool execution is not available'
-              : 'this client cannot run that tool',
+            error: !tool
+              ? 'this client cannot run that tool'
+              : !this.opts.delegate
+                ? 'this client has no tools of its own to run, so tool execution is not available'
+                : `this client has no ${tool.name} tool, so that cannot be run here`,
             error_code: 'unsupported',
           },
         },

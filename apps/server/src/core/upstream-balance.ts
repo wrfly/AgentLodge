@@ -24,6 +24,28 @@ export interface BalanceInfo {
   resetsAt?: string;
   /** True when `used` was counted from our usage table, not the upstream's own meter */
   billedHere?: boolean;
+  /**
+   * Where the billing cycle this remaining covers begins.
+   *
+   * Cursor's plan is a monthly dollar pot, not a rolling window: it reports a
+   * `subscriptionCycleStart` and refills on it. Sent so the console can report spend over
+   * the interval the vendor actually bills on, rather than over the 5-hour quota window,
+   * which for a Cursor subscription is a boundary that exists only here.
+   */
+  cycleStart?: string;
+  /**
+   * Who decided that interval. `upstream` is the vendor's own cycle; `anchor` is this
+   * platform's monthly anchor, used when the vendor reported no cycle — the console says
+   * which, because a figure cut on a guessed month must not read as the vendor's invoice.
+   */
+  cycleSource?: 'upstream' | 'anchor';
+  /**
+   * What this platform billed through this upstream inside that cycle.
+   *
+   * The whole `Totals`, currencies kept apart, exactly as the platform cards report it —
+   * `used` above is the vendor's single dollar figure and stays as it was.
+   */
+  spend?: usageRepo.Totals;
 }
 
 export interface BalanceResult {
@@ -39,23 +61,25 @@ function dollars(n: number | null | undefined): string {
 }
 
 /**
- * Dollars this platform has billed through one upstream, in the window that remaining
- * is supposed to cover.
+ * What this platform billed through one upstream, over the cycle that remaining covers.
  *
- * Cursor's Enterprise dashboard often answers a hard limit and nothing spent. The pot
- * is still being drawn — by us — so the remaining we show subtracts what we have already
- * priced in USD. A deployment that only priced in another currency has no USD figure to
- * subtract and is left as Cursor reported it.
+ * The vendor's cycle first: Cursor reports a `subscriptionCycleStart` and refills the pot on
+ * it, so that is the interval its own invoice is cut at. Reported nothing, and this falls
+ * back to the administrator's monthly anchor — a month is the right shape for a monthly pot,
+ * and `source` says the boundary is ours so the console can too. Counting from 1970 instead
+ * would put lifetime spend beside a monthly ceiling.
  */
-function billedHereUsd(providerId: string, from: string | null): number {
-  // No cycle window means we cannot know which of our rows belong to this remaining.
-  // Counting from 1970 would show lifetime spend against a monthly pot.
-  if (!from) return 0;
-  const totals = usageRepo.totalsAllInRange(
-    { from, to: new Date().toISOString() },
-    providerId,
-  );
-  return (totals.cost.USD ?? 0) / 1_000_000;
+export function cycleOf(providerId: string, reported: string | null): {
+  from: string;
+  source: 'upstream' | 'anchor';
+  totals: usageRepo.Totals;
+} {
+  const from = reported ?? usageRepo.periodStart('monthly');
+  return {
+    from,
+    source: reported ? 'upstream' : 'anchor',
+    totals: usageRepo.totalsAllInRange({ from, to: new Date().toISOString() }, providerId),
+  };
 }
 
 function isDeepSeek(baseUrl: string): boolean {
@@ -111,7 +135,17 @@ async function fetchDeepSeekBalance(p: providers.Provider, key: string): Promise
 
 async function fetchOneCursor(p: providers.Provider, key: string): Promise<BalanceInfo> {
   const raw = await fetchCursorBalance(key, p.baseUrl);
-  const ours = billedHereUsd(p.id, raw.cycleStart);
+  const cycle = cycleOf(p.id, raw.cycleStart);
+  /*
+   * Only the vendor's own cycle is subtracted from the vendor's remaining.
+   *
+   * Cursor's Enterprise dashboard often answers a hard limit and nothing spent. The pot is
+   * still being drawn — by us — so the remaining below subtracts what we priced in USD. On
+   * our own monthly anchor that subtraction would be guesswork against somebody else's
+   * ledger, so it is left at zero and only the spend figure uses the fallback interval. A
+   * deployment that priced in another currency has no USD figure to subtract either.
+   */
+  const ours = cycle.source === 'upstream' ? (cycle.totals.cost.USD ?? 0) / 1_000_000 : 0;
   const billedHere = raw.used === null && ours > 0;
   const used = raw.used ?? (ours > 0 ? ours : null);
   const remaining =
@@ -132,6 +166,9 @@ async function fetchOneCursor(p: providers.Provider, key: string): Promise<Balan
     planName: raw.planName ?? undefined,
     resetsAt: raw.resetsAt ?? undefined,
     billedHere: billedHere || undefined,
+    cycleStart: cycle.from,
+    cycleSource: cycle.source,
+    spend: cycle.totals,
   };
 }
 

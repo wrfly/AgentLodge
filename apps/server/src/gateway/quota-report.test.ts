@@ -60,6 +60,7 @@ function q(over: Partial<Record<QuotaScope, Partial<QuotaWindow>>> = {}, top: Pa
     currency: 'CNY',
     hardStop: true,
     windows,
+    enforced: ['window', 'week', 'month'],
     exceeded: limited.some((w) => w.exceeded),
     warning: limited.some((w) => w.ratio >= 0.9),
     tightest: limited.length ? limited.reduce((a, b) => (b.ratio > a.ratio ? b : a)).scope : null,

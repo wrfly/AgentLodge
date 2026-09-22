@@ -33,6 +33,7 @@ import { TokenCells, TokenHeaders, TokenSplit } from '../../components/TokenSpli
 import { useT } from '../../lib/i18n';
 import { Money, MoneyCell } from '../../components/Money';
 import { PLATFORM_PRESETS } from './shared';
+import { useQuota } from '../../store/quota';
 
 /* ---------------- Overview ---------------- */
 
@@ -234,12 +235,20 @@ export function Overview() {
   useEffect(() => {
     void admin.providers().then((d) => setProviders(d.providers)).catch(() => setProviders([]));
   }, []);
+  /*
+   * The per-subscription fallback figure, over the window the gate is enforcing.
+   *
+   * A subscription that reports a billing cycle of its own shows that instead — see the
+   * card below. This is for the ones that do not, and asking for `window` where no upstream
+   * has a rolling allowance would cut them at five hours for no reason.
+   */
+  const windowPreset: PlatformPreset = data?.window.scope === 'month' ? 'month' : 'window';
   useEffect(() => {
     void admin
-      .platformUsage('window')
+      .platformUsage(windowPreset)
       .then((u) => setWindowSpend(u.byUpstream))
       .catch(() => setWindowSpend([]));
-  }, []);
+  }, [windowPreset]);
 
   if (error) return <Banner tone="error">{error}</Banner>;
   if (!data) return <Spinner />;
@@ -341,6 +350,17 @@ function PlatformUsageCard() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [data, setData] = useState<PlatformUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * The two rolling spans are the gate's own windows, so they are offered only where the
+   * gate has them. Where no upstream reports a rolling allowance — Cursor reports none, its
+   * plan being a monthly pot — they would be two buttons cutting the platform's spend at
+   * boundaries nothing is billed or refused on. See core/quota.ts `enforcedScopes`.
+   */
+  const enforced = useQuota((s) => s.quota?.enforced);
+  const rolling = !enforced || enforced.includes('window');
+  const presets = rolling
+    ? PLATFORM_PRESETS
+    : PLATFORM_PRESETS.filter((p) => p.id !== 'window' && p.id !== 'weekWindow');
 
   useEffect(() => {
     let live = true;
@@ -371,7 +391,7 @@ function PlatformUsageCard() {
   return (
     <Card title={t('Platform usage')}>
       <div className="mb-3 flex flex-wrap gap-1.5">
-        {PLATFORM_PRESETS.map((p) => (
+        {presets.map((p) => (
           <Button
             key={p.id}
             variant={preset === p.id ? 'primary' : 'ghost'}
@@ -576,7 +596,17 @@ function LiveWindowCard({
 
   return (
     <Card
-      title={t('This 5-hour window')}
+      /*
+       * Named by the window the gate is enforcing, not by the 5-hour one. With no upstream
+       * reporting a rolling allowance — a Cursor subscription reports none — the month is
+       * the only window anybody is cut at, and a card headed "5-hour" would be describing
+       * a boundary that exists nowhere. See quota.enforcedScopes() on the server.
+       */
+      title={
+        w.scope === 'window' ? t('This 5-hour window')
+          : w.scope === 'week' ? t('This 7-day window')
+            : t('This month')
+      }
       description={t('The user quota window. Spend below is per configured subscription.')}
     >
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
@@ -768,7 +798,12 @@ function SubscriptionsCard({
   const rows = collectSubscriptions(providers, spends, balances, allowances, pools);
   const gatewayFailed = Boolean((allowanceView?.unreachable || allowanceView?.error) && !preview);
   const title = t('Subscriptions');
-  const description = t('What this platform spent on each configured subscription this window, and what that plan still has left.');
+  /*
+   * "This window" was wrong here the moment one of these cards reported a billing cycle
+   * instead: each row now says which interval its own figure covers, and the cards no
+   * longer share one.
+   */
+  const description = t('What this platform spent on each configured subscription, over the period that subscription is billed on, and what that plan still has left.');
 
   if (loading && !rows.length) return null;
   if (!rows.length) {
@@ -792,7 +827,19 @@ function SubscriptionsCard({
       )}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {rows.map((row) => {
-          const spend = row.spend ?? ZERO_SPEND;
+          /*
+           * Spend over the interval this subscription is actually billed on.
+           *
+           * The platform window — 5 hours, or whatever the gate enforces — is the right
+           * frame for a Claude subscription, whose pool refills on exactly that cadence.
+           * Cursor's is a monthly dollar pot with a cycle it reports itself, and cutting it
+           * at five hours reported a figure its invoice has no counterpart for. So a cycle,
+           * where the balance read found one, wins over the window.
+           */
+          const cycleSpend = row.balance?.spend;
+          const cycleFrom = row.balance?.cycleStart;
+          const onCycle = Boolean(cycleSpend && cycleFrom);
+          const spend = (onCycle ? cycleSpend : row.spend) ?? ZERO_SPEND;
           const windows = Object.entries(row.allowance?.windows ?? {}).filter(
             ([, w]) => w.utilization !== null || w.resetsAt !== null,
           );
@@ -814,12 +861,21 @@ function SubscriptionsCard({
               </div>
 
               <div className="mb-3">
-                <p className="text-[12px] text-muted">{t('Spent this window')}</p>
+                <p className="text-[12px] text-muted">
+                  {onCycle ? t('Spent this billing cycle') : t('Spent this window')}
+                </p>
                 <div className="mb-0.5 flex flex-wrap items-baseline gap-x-2">
                   <Money totals={spend} currency={currency} className="text-[16px]" />
                   <span className="text-[11.5px] text-faint">{t('{n} turns', { n: spend.turns })}</span>
                 </div>
                 <TokenSplit totals={spend} />
+                {onCycle && (
+                  <p className="mt-1 text-[11.5px] text-faint">
+                    {row.balance?.cycleSource === 'anchor'
+                      ? t('since {t} — this subscription reported no cycle, so the monthly anchor is used', { t: fmtDate(cycleFrom!) })
+                      : t('since {t}, the cycle this subscription reports', { t: fmtDate(cycleFrom!) })}
+                  </p>
+                )}
               </div>
 
               {row.balance && (

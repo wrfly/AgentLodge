@@ -42,6 +42,7 @@ const settings = await import('../../../core/db/settings.js');
 const usage = await import('../../../core/db/usage.js');
 const providers = await import('../../../core/db/providers.js');
 const pricing = await import('../../../core/db/pricing.js');
+const quota = await import('../../../core/quota.js');
 const { signAccessToken } = await import('../../../core/auth/tokens.js');
 const { installLocale } = await import('../../../core/i18n/locale.js');
 const { attachUser } = await import('../../../core/auth/guard.js');
@@ -284,6 +285,32 @@ console.log('\n=== It is the console, so it is for administrators ===');
     String((await ask('all', alice.bearer)).statusCode));
   ok('and the user card too', (await askUsers('all', alice.bearer)).statusCode === 403,
     String((await askUsers('all', alice.bearer)).statusCode));
+}
+
+console.log('\n=== The live card is headed by the window the gate enforces ===');
+{
+  /*
+   * An upstream that reports no rolling allowance — Cursor is one: a monthly dollar pot —
+   * leaves the month as the only window anybody is cut at. The card has to name that one,
+   * or it is counting down to a 5-hour boundary that exists nowhere. See
+   * core/quota.ts `enforcedScopes`.
+   */
+  const overview = async () =>
+    (await app.inject({ method: 'GET', url: '/api/admin/overview', headers: root.bearer }))
+      .json() as { window: { scope: string; startsAt: string; endsAt: string } };
+
+  settings.setSetting('quota.windowResetAt', '');
+  settings.setSetting('quota.weekResetAt', '');
+  const monthly = await overview();
+  ok('with nothing reported it is the month', monthly.window.scope === 'month', monthly.window.scope);
+  ok('and it is cut at the monthly anchor',
+    monthly.window.startsAt === quota.boundsOf('month').start.toISOString(),
+    `${monthly.window.startsAt} vs ${quota.boundsOf('month').start.toISOString()}`);
+
+  settings.setSetting('quota.windowResetAt', new Date(Date.now() + 3600_000).toISOString());
+  const rolling = await overview();
+  ok('once an upstream reports one it is the 5-hour window again', rolling.window.scope === 'window', rolling.window.scope);
+  ok('five hours wide', new Date(rolling.window.endsAt).getTime() - new Date(rolling.window.startsAt).getTime() === 5 * 3600_000);
 }
 
 await app.close();

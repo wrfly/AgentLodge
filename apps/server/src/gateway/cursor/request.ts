@@ -56,8 +56,31 @@ export interface ChatRequest {
   tools?: { function?: { name?: string; description?: string; parameters?: unknown } }[];
 }
 
-function toolName(name: string): string {
+export function toolName(name: string): string {
   return name.replace(/^client__/i, '').replace(/[_-]/g, '').toLowerCase();
+}
+
+/**
+ * The caller's tools, by the name an exec request would be handed over under.
+ *
+ * `delegate` says the caller has *a* loop; this says which tools that loop actually has. The
+ * two are not the same thing, and the difference is a turn that stops dead: Claude Code's
+ * web-search subrequest declares one tool, the server-side `web_search`, and nothing else —
+ * no Bash, no Read, no Write. Cursor, told it is talking to an editor, answered one of those
+ * turns by asking the client to `Write` its search results to a scratch file. Claude Code has
+ * no tool of that name in that request, so it never replied, and the turn sat parked until the
+ * idle timeout turned it into a 504 five and a half minutes later.
+ *
+ * An exec request is only handed over when this set has the name, so a request Cursor makes
+ * for a tool the caller did not bring is refused on the spot — which the agent recovers from —
+ * rather than asked of a client that cannot answer it.
+ */
+export function clientTools(body: ChatRequest): Set<string> {
+  return new Set(
+    (body.tools ?? [])
+      .map((t) => toolName(t.function?.name ?? ''))
+      .filter(Boolean),
+  );
 }
 
 /**

@@ -4,7 +4,7 @@ import type { Egress } from './bidi.js';
 import { cursorLog, listModels, resolveModel, type CatalogOptions } from './catalog.js';
 import { AgentSession, type AgentEvent } from './session.js';
 import { canonical, identify, keep, planFor, recall, spoken, systemOf, asideOf, type Sticky } from './conversation.js';
-import { buildRunRequest, toolResults, type ChatRequest } from './request.js';
+import { buildRunRequest, clientTools, toolResults, type ChatRequest } from './request.js';
 import { ChatStream } from './stream.js';
 import { BUNDLE_VERSION } from './schema.generated.js';
 import { park, resume } from './turns.js';
@@ -254,6 +254,12 @@ export async function fetchCursor(opts: FetchOptions): Promise<Response> {
       signal: controller.signal,
       workspace: WORKSPACE,
       delegate,
+      /*
+       * And which tools it brought, so a request for one it did not is refused here instead of
+       * asked of a client that has no way to answer — the turn that used to park until the
+       * idle timeout. See clientTools() in request.ts.
+       */
+      tools: clientTools(opts.body),
       /*
        * The blobs this conversation has already handed over. The server asks for them by id
        * and does not care which request stored them, so a turn that continues one without them

@@ -330,7 +330,18 @@ const sentWith = (field: string): Message | undefined =>
     .filter(Boolean)
     .find((m) => m[field] !== undefined);
 
-const TOOLS = [{ name: 'Search', description: 'search the web', input_schema: { type: 'object' } }];
+/**
+ * What a caller brings. `Read` is here because an exec request is only handed over to a
+ * caller that declared a tool of that name — a client with only its own `Search` is the
+ * case further down, where the request is refused instead.
+ */
+const TOOLS = [
+  { name: 'Search', description: 'search the web', input_schema: { type: 'object' } },
+  { name: 'Read', description: 'read a file', input_schema: { type: 'object' } },
+];
+
+/** A caller whose only tool is one this bridge cannot route an exec request to */
+const SEARCH_ONLY = [TOOLS[0]];
 
 const asClaude = (payload: Record<string, unknown>) =>
   app.inject({
@@ -876,6 +887,39 @@ async function run(): Promise<void> {
     ok('the exec is thrown rather than ignored', Boolean(thrown), JSON.stringify(said));
     ok('under the id that asked', Number(thrown?.['id']) === 11, JSON.stringify(thrown));
     ok('and the turn gets to finish', res.body.includes('never mind'), res.body);
+  }
+
+  /*
+   * The one the live upstream caught. Claude Code's web-search subrequest declares a single
+   * tool — the server-side `web_search` — and Cursor answered one of those turns by asking the
+   * client to `Write` its results to a scratch file. Handed over, that is a tool_use the
+   * caller has no tool for and never answers: the turn parked until the 330-second idle
+   * timeout and the client saw nothing at all, then a 504.
+   */
+  console.log('\n=== A tool the caller did not bring is refused, not handed over ===');
+  {
+    reset((message, out) => {
+      if (message['run_request']) {
+        out(frame({
+          exec_server_message: { id: 13, exec_id: 'e13', pi_write_args: { path: '/workspace/scratch.txt', content: 'what I found' } },
+        }));
+        return;
+      }
+      if (message['exec_client_control_message']) {
+        out(text('here is what I found'));
+        out(ended({ input_tokens: 2, output_tokens: 3 }));
+        endStream();
+      }
+    });
+
+    const res = await asClaude({ messages: [{ role: 'user', content: 'search for the rpc' }], tools: SEARCH_ONLY });
+    const thrown = sentWith('throw')?.['throw'] as Message;
+    ok('the exec is refused', Boolean(thrown), JSON.stringify(said));
+    ok('and says which tool is missing', String(thrown?.['error']).includes('Write'), JSON.stringify(thrown));
+    ok('nothing is asked of the caller', !res.body.includes('"type":"tool_use"'), res.body);
+    ok('the turn answers in text instead', res.body.includes('here is what I found'), res.body);
+    ok('and it ends rather than parking', turns.parkedCount() === 0, String(turns.parkedCount()));
+    conversation.clear();
   }
 
   console.log('\n=== Codex gets the same upstream as a Responses stream ===');
