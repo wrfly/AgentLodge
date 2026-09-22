@@ -69,6 +69,10 @@ flowchart LR
       headers are rewritten from their quota, and a user with no ceiling of their own is
       shown their share of the pool, derived from the platform's total consumption
 - [x] **The administrator alone sees the upstream plan's real utilisation** and reset times
+- [x] **Each subscription is billed on the period it actually has**: the rolling 5-hour and
+      weekly windows are a Claude subscription's, and only enforced where an upstream
+      reports one — a Cursor plan is a monthly dollar pot, so it is reported on the cycle
+      Cursor itself states, and the month is what the gate holds people to
 
 **Isolation**
 - [x] One long-lived container per user: non-root, all capabilities dropped, memory / CPU /
