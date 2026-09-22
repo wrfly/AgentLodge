@@ -25,12 +25,20 @@ export function QuotaBar() {
 
   const w = quota.tightest ? quota.windows[quota.tightest] : null;
   if (!w || w.limit === null) {
+    /*
+     * Nothing is capped, so what is shown is consumption — over the widest window the gate
+     * is enforcing. The month used to be hard-coded here, which on a deployment that limits
+     * nothing meant the sidebar reported monthly spend labelled "no limit" while the other
+     * windows were unreachable from it. `enforced` is the server's own list, narrowest
+     * first, so the last of it is the widest.
+     */
+    const widest = quota.enforced?.[quota.enforced.length - 1] ?? 'month';
     return (
       <button
         onClick={() => navigate('/usage')}
         className="mb-2 w-full px-1 text-left text-[11px] text-faint hover:text-muted"
       >
-        {t('Used {used} · no limit', { used: show(quota.windows.month.used) })}
+        {t('Used {used} · no limit', { used: show(quota.windows[widest].used) })}
       </button>
     );
   }

@@ -17,7 +17,14 @@ export function register(app: FastifyInstance): void {
    */
   app.get('/api/admin/overview', guard, async () => {
     const now = new Date();
-    const w = quota.boundsOf('window', now);
+    /*
+     * The tightest window the gate is actually enforcing, which is not always the 5-hour one.
+     * A deployment whose upstreams have no rolling allowance — a Cursor subscription is a
+     * monthly dollar pot — enforces the month alone, and a card headed "this 5-hour window"
+     * there would be naming a boundary nothing is cut at. See quota.enforcedScopes().
+     */
+    const scope = quota.enforcedScopes(now)[0] ?? 'month';
+    const w = quota.boundsOf(scope, now);
     const range = { from: w.start.toISOString(), to: w.end.toISOString() };
     /*
      * Balance is not fetched here. Cursor's dashboard is several RPCs including GetTeamSpend,
@@ -31,9 +38,10 @@ export function register(app: FastifyInstance): void {
         active: usersRepo.list().filter((u) => u.status === 'active').length,
       },
       /*
-       * The five-hour window, platform-wide. It is the one that refuses first, and the only
-       * one of the three where "how far through are we" is a live question rather than a
-       * retrospective one — which is why `elapsed` is here and not a period preset.
+       * The enforced window, platform-wide — the 5-hour one wherever an upstream reports one.
+       * It is the one that refuses first, and the only one of the three where "how far through
+       * are we" is a live question rather than a retrospective one — which is why `elapsed` is
+       * here and not a period preset.
        *
        * The bar to compare it against is the upstream's own utilisation, reported separately
        * by the allowance card: consumption running ahead of the clock is the shape of hitting
@@ -44,6 +52,8 @@ export function register(app: FastifyInstance): void {
        * a bar frozen at whatever it read when the tab was opened.
        */
       window: {
+        /** Which of the three this is, so the card names it rather than assuming */
+        scope,
         startsAt: range.from,
         endsAt: range.to,
         totals: usageRepo.totalsAllInRange(range),

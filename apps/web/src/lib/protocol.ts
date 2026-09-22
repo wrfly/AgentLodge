@@ -113,11 +113,21 @@ export interface QuotaStatus {
   hardStop: boolean;
   /** All three, always present; an unlimited one has a null limit */
   windows: Record<QuotaScope, QuotaWindow>;
-  /** Any window over its ceiling */
+  /**
+   * Which of them the gate is actually enforcing, in the order a refusal names them.
+   *
+   * The 5-hour and weekly windows exist because a Claude subscription has them and reports
+   * when they reset. A deployment whose upstreams have no such thing — a Cursor
+   * subscription is a monthly dollar pot — enforces the month alone, and this says so
+   * rather than leaving every surface to guess. The other two are still computed above:
+   * the ceilings an administrator typed are kept and shown, they simply refuse nobody.
+   */
+  enforced: QuotaScope[];
+  /** Any enforced window over its ceiling */
   exceeded: boolean;
-  /** Any limited window at 90% or more */
+  /** Any limited, enforced window at 90% or more */
   warning: boolean;
-  /** Whichever limited window is closest to refusing, or null when none is limited */
+  /** Whichever limited, enforced window is closest to refusing, or null when none is limited */
   tightest: QuotaScope | null;
   /**
    * What one of this user's own turns typically costs, in the unit above — the median of

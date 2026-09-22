@@ -97,6 +97,7 @@ function q(
       week: win('week', over.week),
       month: win('month', over.month),
     },
+    enforced: ['window', 'week', 'month'],
     exceeded: false,
     warning: false,
     tightest: null,

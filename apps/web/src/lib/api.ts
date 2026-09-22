@@ -669,6 +669,18 @@ export interface BalanceResult {
     planName?: string;
     resetsAt?: string;
     billedHere?: boolean;
+    /**
+     * The billing cycle this remaining covers, and our own spend inside it.
+     *
+     * Cursor's plan is a monthly pot rather than a rolling window, so its card reports spend
+     * over this interval instead of over the 5-hour quota window. `cycleSource` says whose
+     * boundary it is: the vendor's reported cycle, or this platform's monthly anchor when
+     * the vendor reported none. Absent from an older server, and from upstreams that have
+     * no cycle to report.
+     */
+    cycleStart?: string;
+    cycleSource?: 'upstream' | 'anchor';
+    spend?: UsageTotals;
   }>;
   fetchedAt: string;
   error?: string;
@@ -680,6 +692,12 @@ export type TurnStatus = 'completed' | 'error' | 'aborted';
 export interface AdminOverview {
   users: { total: number; active: number };
   window: {
+    /**
+     * Which window this is. `month` on a deployment whose upstreams have no rolling
+     * allowance — Cursor reports none — where the month is the only one the gate enforces.
+     * Optional so an older server, which always meant the 5-hour one, still reads.
+     */
+    scope?: QuotaScope;
     startsAt: string;
     endsAt: string;
     totals: UsageTotals;

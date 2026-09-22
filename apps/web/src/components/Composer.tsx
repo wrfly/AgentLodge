@@ -137,8 +137,11 @@ export function Composer({ agent }: { agent: AgentId }) {
     if (!quota || quota.exceeded || !quota.typicalTurn) return null;
     const per = quota.typicalTurn;
     let fewest: { turns: number; scope: QuotaScope } | null = null;
-    for (const w of Object.values(quota.windows)) {
-      if (w.limit === null || w.remaining === null) continue;
+    // Only the enforced ones can run anybody out; a ceiling on a window the gate ignores
+    // would otherwise produce a warning about a refusal that cannot happen
+    const scopes = quota.enforced ?? (['window', 'week', 'month'] as QuotaScope[]);
+    for (const w of scopes.map((s) => quota.windows[s])) {
+      if (!w || w.limit === null || w.remaining === null) continue;
       const turns = Math.floor(w.remaining / per);
       if (!fewest || turns < fewest.turns) fewest = { turns, scope: w.scope };
     }
@@ -504,9 +507,17 @@ export function Composer({ agent }: { agent: AgentId }) {
         ) : blocked ? (
           <div className="mt-1.5 text-center text-[11.5px] text-danger">
             {(() => {
-              // The window that refused is the one to name — "used up" without saying which
-              // window sends people to the console to work it out
-              const hit = quota && Object.values(quota.windows).find((w) => w.exceeded);
+              /*
+               * The window that refused is the one to name — "used up" without saying which
+               * window sends people to the console to work it out.
+               *
+               * Walked in `enforced` order, which is the order the gate itself checks them
+               * in (core/quota.ts `check`). `Object.values` happened to agree, because the
+               * server builds the object narrowest-first; it is not the same promise, and a
+               * window the gate is not enforcing must not be named at all.
+               */
+              const scopes = quota?.enforced ?? (['window', 'week', 'month'] as QuotaScope[]);
+              const hit = quota && scopes.map((s) => quota.windows[s]).find((w) => w?.exceeded);
               if (!quota || !hit) return t('Quota used up — ask an administrator');
               const show = (v: number) =>
                 fmtMoney(v, quota.currency);

@@ -40,6 +40,15 @@ const quota = await import('../core/quota.js');
 const pricing = await import('../core/db/pricing.js');
 const deferred = await import('./deferred.js');
 
+/*
+ * An upstream that has reported when its 5-hour window resets, because everything here is
+ * about waiting for one. The gate only enforces the rolling windows where some upstream has
+ * them — a Cursor subscription is a monthly pot and reports none, and holding a turn until a
+ * boundary that exists nowhere would be holding it for nothing. See quota.enforcedScopes().
+ */
+const settings = await import('../core/db/settings.js');
+settings.setSetting('quota.windowResetAt', new Date(Date.now() + 3600_000).toISOString());
+
 let pass = 0;
 let fail = 0;
 function ok(label: string, cond: boolean, detail = ''): void {

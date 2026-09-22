@@ -337,6 +337,58 @@ console.log('\n=== what a turn typically costs, for saying the remainder in turn
   ok('rows with no turn id count one each', usageRepo.typicalTurn(dave) === 20, String(usageRepo.typicalTurn(dave)));
 }
 
+console.log('\n=== The rolling windows are only enforced where an upstream has them ===');
+{
+  /*
+   * A Cursor subscription is a monthly dollar pot: it reports no 5-hour and no weekly
+   * allowance, so nothing ever writes those two settings and there is no boundary here for
+   * the gate to hold anybody at. The ceilings stay in the database and the figures stay on
+   * the page — they come back into force the day a subscription with that cadence is added.
+   */
+  const now = new Date('2026-08-23T18:00:00.000Z');
+  const carol = makeUser('carol-no-windows@example.com');
+  users.setQuota(carol, { window: 100, week: null, month: 10_000, hardStop: true });
+  spend(carol, new Date('2026-08-23T17:00:00.000Z'), 500);
+
+  settings.setSetting('quota.windowResetAt', '');
+  settings.setSetting('quota.weekResetAt', '');
+  ok('with nothing reported only the month is enforced', quota.enforcedScopes(now).join() === 'month', quota.enforcedScopes(now).join());
+
+  const alone = quota.status(carol, now);
+  ok('so a spent 5-hour ceiling refuses nobody', !alone.exceeded, JSON.stringify(alone.enforced));
+  ok('and the gate lets the request through', quota.check(carol, now).allow);
+  ok('the spend is still counted, under the month', alone.windows.month.used === 500, String(alone.windows.month.used));
+  /*
+   * The 5-hour row is still computed — it falls back to the calendar grid with no upstream
+   * phase to lock to, so what lands inside it is whatever that grid says. The figure is
+   * there for the page either way; what matters here is that the ceiling typed for it
+   * survives and that nothing is decided by it.
+   */
+  ok('and the 5-hour row is still computed', typeof alone.windows.window.used === 'number');
+  ok('the ceiling typed for it is still reported', alone.windows.window.limit === 100, String(alone.windows.window.limit));
+  ok('and the month is what is named as closest to refusing', alone.tightest === 'month', String(alone.tightest));
+
+  settings.setSetting('quota.windowResetAt', '2026-08-23T19:00:00.000Z');
+  const seen = quota.status(carol, now);
+  ok('once an upstream reports one it is enforced again', seen.enforced.join() === 'window,week,month', seen.enforced.join());
+  ok('and the same spend now refuses', seen.exceeded && !quota.check(carol, now).allow);
+
+  /*
+   * Evidence goes stale. The settings hold an instant, not when we learned it, so age is
+   * all there is to go on: a deployment that moved off a Claude subscription would
+   * otherwise keep being cut on a cadence nothing refills on any more.
+   */
+  const old = new Date(now.getTime() - 40 * 24 * 3600_000).toISOString();
+  settings.setSetting('quota.windowResetAt', old);
+  ok('a reset reported forty days ago is not evidence any more', quota.enforcedScopes(now).join() === 'month', quota.enforcedScopes(now).join());
+  ok('and a week reported just now is', quota.upstreamWindowsSeen(now) === false);
+  settings.setSetting('quota.weekResetAt', now.toISOString());
+  ok('either one of the two is enough', quota.upstreamWindowsSeen(now));
+
+  settings.setSetting('quota.windowResetAt', '2026-08-23T19:00:00.000Z');
+  settings.setSetting('quota.weekResetAt', '');
+}
+
 fs.rmSync(box, { recursive: true, force: true });
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

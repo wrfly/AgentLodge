@@ -35,6 +35,7 @@ import {
   fmtDate,
 } from '../../components/ui';
 import { useT } from '../../lib/i18n';
+import { useQuota } from '../../store/quota';
 import { WithUnit } from './shared';
 
 /* ---------------- Users ---------------- */
@@ -110,6 +111,13 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
   const [limitWeek, setLimitWeek] = useState(asUnits(user.quota.week));
   const [limitMonth, setLimitMonth] = useState(asUnits(user.quota.month));
   const [hardStop, setHardStop] = useState(user.quota.hardStop);
+  /*
+   * Whether the rolling windows are enforced at all, read off this administrator's own quota
+   * status. `enforced` is the platform's answer, not one user's — the windows belong to the
+   * platform — so any status carries it and there is nothing extra to fetch.
+   */
+  const enforced = useQuota((s) => s.quota?.enforced);
+  const rollingEnforced = !enforced || enforced.includes('window') || enforced.includes('week');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -278,8 +286,23 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
         <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-line bg-elevated p-3">
           {/* Three ceilings, all optional. The windows they apply to are the platform's —
               the same instants for every user — so there is no period to choose. */}
-          <div className="w-32">
-            <Field label={t('Per 5 hours')} hint={t('empty = unlimited')}>
+          {/*
+            * The rolling two are only enforced where an upstream has them.
+            *
+            * A Cursor subscription is a monthly dollar pot and reports no 5-hour or weekly
+            * allowance, so the gate enforces the month alone (core/quota.ts
+            * `enforcedScopes`). The boxes stay editable and whatever is in them stays in the
+            * database — the day a subscription with that cadence is configured they come
+            * back into force — but a ceiling that refuses nobody has to say so, or an
+            * administrator types 5 and cannot work out why nothing is held.
+            */}
+          {!rollingEnforced && (
+            <p className="w-full text-[12px] text-faint">
+              {t('No upstream reports a rolling allowance, so only the monthly ceiling is enforced. The other two are kept and come back when one does.')}
+            </p>
+          )}
+          <div className={clsx('w-32', !rollingEnforced && 'opacity-50')}>
+            <Field label={t('Per 5 hours')} hint={rollingEnforced ? t('empty = unlimited') : t('not enforced')}>
               <WithUnit
                 className="block"
                 unit={user.quota.currency}
@@ -288,8 +311,8 @@ function UserRow({ user, onChange }: { user: AdminUser; onChange: () => void }) 
               />
             </Field>
           </div>
-          <div className="w-32">
-            <Field label={t('Per week')} hint={t('empty = unlimited')}>
+          <div className={clsx('w-32', !rollingEnforced && 'opacity-50')}>
+            <Field label={t('Per week')} hint={rollingEnforced ? t('empty = unlimited') : t('not enforced')}>
               <WithUnit
                 className="block"
                 unit={user.quota.currency}

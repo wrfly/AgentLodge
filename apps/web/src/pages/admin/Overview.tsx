@@ -576,7 +576,17 @@ function LiveWindowCard({
 
   return (
     <Card
-      title={t('This 5-hour window')}
+      /*
+       * Named by the window the gate is enforcing, not by the 5-hour one. With no upstream
+       * reporting a rolling allowance — a Cursor subscription reports none — the month is
+       * the only window anybody is cut at, and a card headed "5-hour" would be describing
+       * a boundary that exists nowhere. See quota.enforcedScopes() on the server.
+       */
+      title={
+        w.scope === 'window' ? t('This 5-hour window')
+          : w.scope === 'week' ? t('This 7-day window')
+            : t('This month')
+      }
       description={t('The user quota window. Spend below is per configured subscription.')}
     >
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
@@ -792,7 +802,19 @@ function SubscriptionsCard({
       )}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {rows.map((row) => {
-          const spend = row.spend ?? ZERO_SPEND;
+          /*
+           * Spend over the interval this subscription is actually billed on.
+           *
+           * The platform window — 5 hours, or whatever the gate enforces — is the right
+           * frame for a Claude subscription, whose pool refills on exactly that cadence.
+           * Cursor's is a monthly dollar pot with a cycle it reports itself, and cutting it
+           * at five hours reported a figure its invoice has no counterpart for. So a cycle,
+           * where the balance read found one, wins over the window.
+           */
+          const cycleSpend = row.balance?.spend;
+          const cycleFrom = row.balance?.cycleStart;
+          const onCycle = Boolean(cycleSpend && cycleFrom);
+          const spend = (onCycle ? cycleSpend : row.spend) ?? ZERO_SPEND;
           const windows = Object.entries(row.allowance?.windows ?? {}).filter(
             ([, w]) => w.utilization !== null || w.resetsAt !== null,
           );
@@ -814,12 +836,21 @@ function SubscriptionsCard({
               </div>
 
               <div className="mb-3">
-                <p className="text-[12px] text-muted">{t('Spent this window')}</p>
+                <p className="text-[12px] text-muted">
+                  {onCycle ? t('Spent this billing cycle') : t('Spent this window')}
+                </p>
                 <div className="mb-0.5 flex flex-wrap items-baseline gap-x-2">
                   <Money totals={spend} currency={currency} className="text-[16px]" />
                   <span className="text-[11.5px] text-faint">{t('{n} turns', { n: spend.turns })}</span>
                 </div>
                 <TokenSplit totals={spend} />
+                {onCycle && (
+                  <p className="mt-1 text-[11.5px] text-faint">
+                    {row.balance?.cycleSource === 'anchor'
+                      ? t('since {t} — this subscription reported no cycle, so the monthly anchor is used', { t: fmtDate(cycleFrom!) })
+                      : t('since {t}, the cycle this subscription reports', { t: fmtDate(cycleFrom!) })}
+                  </p>
+                )}
               </div>
 
               {row.balance && (

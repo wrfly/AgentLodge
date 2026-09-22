@@ -29,6 +29,51 @@ export function scopeLabel(scope: QuotaScope): string {
 }
 
 /**
+ * How long a reported reset stays evidence that some upstream has rolling windows.
+ *
+ * The two settings below hold an instant, not a timestamp of when we learned it, so age is
+ * the only thing there is to go on. A deployment that moved off a Claude subscription keeps
+ * whatever that subscription last reported for ever, and would keep being cut on a cadence
+ * nothing refills on any more. Well past a week — the longest window anything reports — and
+ * long enough that a quiet fortnight does not change how anybody is billed.
+ */
+const WINDOW_EVIDENCE_MS = 30 * 24 * 3600_000;
+
+/**
+ * Whether any upstream has said it has a 5-hour or weekly allowance.
+ *
+ * Only Anthropic's `anthropic-ratelimit-unified-*` headers write these two settings
+ * (gateway/upstream-allowance.ts), so this is the one honest way to ask. The provider's
+ * `kind` is not: a Claude subscription is `anthropic-native`, and so are DeepSeek and
+ * anybody's own gateway.
+ *
+ * It matters because Cursor has no such thing. Its plan is a monthly dollar pot — see
+ * core/cursor-balance.ts — and cutting a Cursor-only deployment into 5-hour windows
+ * phase-locked to nothing invents a cadence for it.
+ */
+export function upstreamWindowsSeen(now = new Date()): boolean {
+  const fresh = (key: string): boolean => {
+    const at = getStringFresh(key);
+    if (!at) return false;
+    const ms = new Date(at).getTime();
+    return Number.isFinite(ms) && now.getTime() - ms < WINDOW_EVIDENCE_MS;
+  };
+  return fresh('quota.windowResetAt') || fresh('quota.weekResetAt');
+}
+
+/**
+ * The scopes the gate actually enforces, in the order a refusal should name them.
+ *
+ * All three are still computed and shown — an administrator's typed ceilings stay in the
+ * database and the figures stay on the page — but a window no upstream has a counterpart for
+ * refuses nobody. Otherwise a Cursor-only deployment holds people at a 5-hour boundary that
+ * exists only here, against a pot that refills monthly.
+ */
+export function enforcedScopes(now = new Date()): QuotaScope[] {
+  return upstreamWindowsSeen(now) ? SCOPES : ['month'];
+}
+
+/**
  * Where each window begins and ends.
  *
  * The two the upstream also has — 5 hours and a week — follow its cadence rather than the
@@ -141,7 +186,14 @@ export function status(
     SCOPES.map((scope) => [scope, windowStatus(userId, q, scope, now)]),
   ) as Record<QuotaScope, QuotaWindow>;
 
-  const limited = SCOPES.map((s) => windows[s]).filter((w) => w.limit !== null);
+  /*
+   * Every window is computed, only the enforced ones decide anything. A ceiling on a window
+   * the gate is not enforcing is still shown — it is what the administrator typed, and it
+   * comes back into force the day a subscription with that cadence is configured — but it
+   * must not refuse, warn, or be named as the one closest to refusing.
+   */
+  const enforced = enforcedScopes(now);
+  const limited = enforced.map((s) => windows[s]).filter((w) => w.limit !== null);
   // The one that will refuse first: whichever limited window is furthest along
   const tightest = limited.length
     ? limited.reduce((a, b) => (b.ratio > a.ratio ? b : a)).scope
@@ -151,6 +203,7 @@ export function status(
     currency: q.currency,
     hardStop: q.hardStop,
     windows,
+    enforced,
     exceeded: limited.some((w) => w.exceeded),
     warning: limited.some((w) => w.ratio >= 0.9),
     tightest,
@@ -182,7 +235,7 @@ export interface Verdict {
  */
 export function clearsAt(s: QuotaStatus): Date | null {
   if (!s.exceeded || !s.hardStop) return null;
-  const over = SCOPES.map((scope) => s.windows[scope]).filter((w) => w.exceeded);
+  const over = s.enforced.map((scope) => s.windows[scope]).filter((w) => w.exceeded);
   if (!over.length) return null;
   return new Date(Math.max(...over.map((w) => new Date(w.endsAt).getTime())));
 }
@@ -197,7 +250,7 @@ export function check(userId: string, now = new Date()): Verdict {
   const s = status(userId, now);
   if (!s.exceeded || !s.hardStop) return { allow: true, status: s };
 
-  const hit = SCOPES.map((scope) => s.windows[scope]).find((w) => w.exceeded)!;
+  const hit = s.enforced.map((scope) => s.windows[scope]).find((w) => w.exceeded)!;
   const { unit, amount } = amountIn(s.currency);
 
   return {
