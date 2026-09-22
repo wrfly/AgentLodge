@@ -26,8 +26,7 @@ import { needsHttp2, postHttp2 } from './h2.js';
  *
  * Neither call is anything but a POST with a protobuf body, so the audit proxy, the egress
  * gate and the abort signal all work the way they do for every other upstream. The proxy
- * has to speak HTTP/2 on the way out (`PROXY_HTTP2=1`) or the agent host will refuse it
- * the same way `fetch` did.
+ * speaks HTTP/2 to the agent host on its own, once h1 gets h2 frames back.
  */
 
 /** The bidirectional RPC, and the server-streaming stand-in that carries it */

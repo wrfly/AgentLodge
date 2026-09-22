@@ -108,8 +108,8 @@ Claude Code 带来的短名（`opus` / `sonnet` / `haiku` / `fable`）和带日�
 
 - **要放开两个域名。** 一个 turn 分两个调用：消息发到 `api2.cursor.sh`（HTTP/1.1 即可），回来的流从 agent host
   （默认 `agentn.us.api5.cursor.sh`）读。**agent host 只讲 HTTP/2**，网关这一跳走 `node:http2` 而不是 `fetch`。
-  有 egress allowlist 的部署两个都要放。上游填了 Base URL 的话两个都走那一个地址。前面挂了审计代理
-  时还要开 `PROXY_HTTP2=1`，否则代理仍会用 HTTP/1.1 打到 agent host，turn 过不去。
+  有 egress allowlist 的部署两个都要放。上游填了 Base URL 的话两个都走那一个地址。审计代理遇到只讲
+  HTTP/2 的 origin 会自动改用 h2，不用另外配置。
 - **thinking 不往下传。** Cursor 单独发思考内容，Chat Completions 没有这个字段，翻译层也不读
   任何厂商自创的那几种，所以这条上游的思考在界面上是空的。
 - **Cursor 会反过来要求执行工具，跑在用户自己的机器上。** agent 协议里服务端会让客户端读文件、
@@ -1333,7 +1333,7 @@ header + `protocol` 字段），`request.json` 里多一份 `raw_headers`（客�
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `PROXY_HTTP2` | `0` | 默认 h1，与 Claude Code 直连一致；`1` 改用 h2 |
+| `PROXY_HTTP2` | `0` | 默认 h1，与 Claude Code 直连一致；`1` 改用 h2。只讲 h2 的 origin 不管这个值都走 h2 |
 | `PROXY_IDENTITY` | `0` | `1` = 要求上游别压缩（省解压，但流量不保真） |
 
 > `ja3-probe.js` 实测 Claude Code 的 ClientHello，得到两条结论，代理的默认值就是据此定的：
