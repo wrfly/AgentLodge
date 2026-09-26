@@ -191,8 +191,25 @@ function sseErrorFrame(wire: Wire, anthropicType: string, openaiCode: string, me
   return `event: error\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-/** An SSE comment. Parsers skip it; it is not an `event: ping`. */
-const EDGE_COMMENT = ': keepalive\n\n';
+/**
+ * The keep-alive this wire already understands.
+ *
+ * Claude's stream is an event, the same one api.anthropic.com sends. Codex and every
+ * other Chat or Responses client get a comment, which a frame parser skips. Neither
+ * carries content.
+ */
+function streamPing(wire: Wire): string {
+  return wire === 'anthropic' ? 'event: ping\ndata: {"type":"ping"}\n\n' : ': ping\n\n';
+}
+
+/**
+ * What goes out before any real frame.
+ *
+ * An `event: ping` read as the first event is rejected by a consumer that takes that
+ * event to be the message, which is exactly the slow first token this exists for. The
+ * comment is the form Codex already uses, and a Claude parser skips it too.
+ */
+const PING_COMMENT = ': ping\n\n';
 
 /* ---------------- Forwarding ---------------- */
 
@@ -435,9 +452,10 @@ async function handleProxy(
    * byte has left here. A non-streaming client is left alone — a comment in front of a
    * JSON body is not a body it can parse, and those answers are short.
    *
-   * `wroteFrame` is the ping's "something has been written already", and the comment must
-   * not satisfy it. A comment is a whole frame, so until a real one exists there is no
-   * boundary to miss; after that it waits, same as the ping, rather than cutting one.
+   * `wroteFrame` is the ping's "something has been written already", and a keep-alive
+   * must not satisfy it. Until a real frame exists both wires get Codex's comment —
+   * Claude's `event: ping` cannot be the first event. After one, each wire gets the
+   * ping it already understands, and only between frames.
    */
   const wantsStream = body?.stream === true;
   let wroteFrame = false;
@@ -462,7 +480,7 @@ async function handleProxy(
           ...(wire === 'anthropic' ? allowanceHeaders(verdict.status, target) : {}),
         });
       }
-      reply.raw.write(EDGE_COMMENT);
+      reply.raw.write(wroteFrame ? streamPing(wire) : PING_COMMENT);
     } catch {
       stopEdge();
     }
@@ -817,7 +835,7 @@ async function handleProxy(
        * though, so a ping is only injected when the last chunk ended one — a frame cut in
        * half by a ping is worse than a stream that goes quiet.
        */
-      const ping = wire === 'anthropic' ? 'event: ping\ndata: {"type":"ping"}\n\n' : ': ping\n\n';
+      const ping = streamPing(wire);
       /*
        * Three things have to hold before one goes out.
        *

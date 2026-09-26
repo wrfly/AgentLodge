@@ -7,6 +7,10 @@
  * event: a fast answer is unchanged, a JSON answer never grows one, and a refusal
  * that arrives after the comment has committed the status is said in the stream.
  *
+ * Claude's frame is `event: ping`. Codex's is the comment `: ping`. The stretch before
+ * any real frame uses the comment on both wires: an event ping read as the first event
+ * is what a consumer that takes that event to be the message rejects.
+ *
  * Run: npm -w @agentlodge/server run test:edge-keepalive
  */
 import fs from 'node:fs';
@@ -108,11 +112,11 @@ async function run(): Promise<void> {
       res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n');
     });
     const res = await ask('native-model', true);
-    ok('no comment', !res.body.includes(': keepalive'), res.body.slice(0, 160));
+    ok('no ping', !res.body.includes(': ping') && !res.body.includes('event: ping'), res.body.slice(0, 160));
     ok('and the frame is intact', res.body.includes('message_stop'), res.body.slice(0, 160));
   }
 
-  console.log('\n=== Silence before the upstream headers is commented, and it repeats ===');
+  console.log('\n=== Silence before the first frame is a comment, and it repeats ===');
   {
     reply = (res) => {
       setTimeout(() => {
@@ -121,15 +125,16 @@ async function run(): Promise<void> {
       }, SLOW_MS);
     };
     const res = await ask('native-model', true);
-    const n = res.body.match(/: keepalive/g)?.length ?? 0;
-    const commentAt = res.body.indexOf(': keepalive');
+    const n = res.body.match(/: ping/g)?.length ?? 0;
+    const commentAt = res.body.indexOf(': ping');
     const bodyAt = res.body.indexOf('hello-slow');
     ok('more than one, so the wait cannot grow back to the proxy timeout', n >= 2, String(n));
     ok('and they precede the real frame', commentAt !== -1 && bodyAt !== -1 && commentAt < bodyAt, res.body.slice(0, 220));
+    ok('not an event, which would be the first thing a client reads', !res.body.includes('event: ping'), res.body.slice(0, 220));
     ok('status stays 200', res.statusCode === 200, String(res.statusCode));
   }
 
-  console.log('\n=== A quiet stream is commented between frames, without claiming the upstream is alive ===');
+  console.log('\n=== Once a frame exists, Claude gets its own ping ===');
   {
     sse((res) => {
       res.write('event: content_block_delta\ndata: {"text":"one"}\n\n');
@@ -140,10 +145,31 @@ async function run(): Promise<void> {
     });
     const res = await ask('native-model', true);
     const one = res.body.indexOf('"text":"one"');
-    const keep = res.body.indexOf(': keepalive');
+    const ping = res.body.indexOf('event: ping\ndata: {"type":"ping"}');
     const two = res.body.indexOf('"text":"two"');
-    ok('the comment lands in the gap', one !== -1 && keep > one && two > keep, res.body);
-    ok('it is not an event ping', !res.body.includes('event: ping'), res.body.slice(0, 240));
+    ok('the ping lands in the gap', one !== -1 && ping > one && two > ping, res.body);
+  }
+
+  console.log('\n=== And Codex gets the comment, on the same gap ===');
+  {
+    sse((res) => {
+      res.write('data: {"choices":[{"delta":{"content":"one"}}]}\n\n');
+      setTimeout(() => {
+        res.write('data: {"choices":[{"delta":{"content":"two"}}]}\n\n');
+        res.end();
+      }, SLOW_MS);
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      payload: { model: 'local-model', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+    });
+    const one = res.body.indexOf('"content":"one"');
+    const ping = res.body.indexOf(': ping');
+    const two = res.body.indexOf('"content":"two"');
+    ok('the comment lands in the gap', one !== -1 && ping > one && two > ping, res.body.slice(0, 300));
+    ok('and not Claude\'s event', !res.body.includes('event: ping'), res.body.slice(0, 240));
   }
 
   console.log('\n=== A slow refusal after the comment is said in the stream ===');
@@ -167,7 +193,7 @@ async function run(): Promise<void> {
       res.end(JSON.stringify({ error: { message: 'model missing' } }));
     };
     const res = await ask('local-model', true);
-    ok('no comment', !res.body.includes(': keepalive'), res.body.slice(0, 160));
+    ok('no ping', !res.body.includes(': ping') && !res.body.includes('event: ping'), res.body.slice(0, 160));
     ok('the status is the upstream\'s', res.statusCode === 400, String(res.statusCode));
     const out = JSON.parse(res.body) as { type?: string; error?: { message?: string } };
     ok('and the body parses', out.type === 'error' && out.error?.message === 'model missing', res.body);
@@ -186,7 +212,7 @@ async function run(): Promise<void> {
       }, SLOW_MS);
     };
     const res = await ask('local-model', false);
-    ok('no comment in front of the JSON', !res.body.includes(': keepalive'), res.body.slice(0, 160));
+    ok('no ping in front of the JSON', !res.body.includes(': ping') && !res.body.includes('event: ping'), res.body.slice(0, 160));
     const out = JSON.parse(res.body) as { content?: Array<{ text?: string }> };
     ok('and it still parses', out.content?.[0]?.text === 'plain', res.body);
   }
