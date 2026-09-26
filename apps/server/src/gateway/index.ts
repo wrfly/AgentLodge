@@ -466,7 +466,9 @@ async function handleProxy(
     clearInterval(edgeTimer);
     edgeTimer = null;
   };
-  const touchEdge = (): void => edgeTimer?.refresh();
+  const touchEdge = (): void => {
+    edgeTimer?.refresh();
+  };
   const writeEdge = (): void => {
     try {
       if (reply.raw.destroyed || reply.raw.writableEnded) return;
