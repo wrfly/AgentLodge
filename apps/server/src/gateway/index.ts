@@ -176,6 +176,41 @@ function sendError(
     );
 }
 
+/**
+ * A refusal that can no longer be a status.
+ *
+ * The edge comment commits the response the moment it writes, so a queue timeout or an
+ * upstream error that arrives afterwards has nowhere to put a 429. The frame is the same
+ * shape the stream already uses when a turn is cut off mid-way.
+ */
+function sseErrorFrame(wire: Wire, anthropicType: string, openaiCode: string, message: string): string {
+  const data =
+    wire === 'anthropic'
+      ? { type: 'error', error: { type: anthropicType, message } }
+      : { type: 'error', code: openaiCode, message };
+  return `event: error\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+/**
+ * The keep-alive this wire already understands.
+ *
+ * Claude's stream is an event, the same one api.anthropic.com sends. Codex and every
+ * other Chat or Responses client get a comment, which a frame parser skips. Neither
+ * carries content.
+ */
+function streamPing(wire: Wire): string {
+  return wire === 'anthropic' ? 'event: ping\ndata: {"type":"ping"}\n\n' : ': ping\n\n';
+}
+
+/**
+ * What goes out before any real frame.
+ *
+ * An `event: ping` read as the first event is rejected by a consumer that takes that
+ * event to be the message, which is exactly the slow first token this exists for. The
+ * comment is the form Codex already uses, and a Claude parser skips it too.
+ */
+const PING_COMMENT = ': ping\n\n';
+
 /* ---------------- Forwarding ---------------- */
 
 interface Egress {
@@ -409,6 +444,65 @@ async function handleProxy(
   reply.raw.on('close', onDisconnect);
   reply.raw.on('error', onDisconnect);
 
+  /*
+   * Bytes for the proxy in front of us, on a request the client already asked to stream.
+   *
+   * Nothing above this line waits. Everything below it can: the queue, then the upstream
+   * headers, and either one is long enough for Cloudflare to return 524 before a single
+   * byte has left here. A non-streaming client is left alone — a comment in front of a
+   * JSON body is not a body it can parse, and those answers are short.
+   *
+   * `wroteFrame` is the ping's "something has been written already", and a keep-alive
+   * must not satisfy it. Until a real frame exists both wires get Codex's comment —
+   * Claude's `event: ping` cannot be the first event. After one, each wire gets the
+   * ping it already understands, and only between frames.
+   */
+  const wantsStream = body?.stream === true;
+  let wroteFrame = false;
+  let atFrameBoundary = false;
+  let edgeTimer: ReturnType<typeof setInterval> | null = null;
+  const stopEdge = (): void => {
+    if (!edgeTimer) return;
+    clearInterval(edgeTimer);
+    edgeTimer = null;
+  };
+  const touchEdge = (): void => {
+    edgeTimer?.refresh();
+  };
+  const writeEdge = (): void => {
+    try {
+      if (reply.raw.destroyed || reply.raw.writableEnded) return;
+      if (wroteFrame && !atFrameBoundary) return;
+      if (!reply.raw.headersSent) {
+        reply.raw.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache, no-transform',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+          ...(wire === 'anthropic' ? allowanceHeaders(verdict.status, target) : {}),
+        });
+      }
+      reply.raw.write(wroteFrame ? streamPing(wire) : PING_COMMENT);
+    } catch {
+      stopEdge();
+    }
+  };
+  if (wantsStream && config.edgeKeepAliveMs > 0) {
+    edgeTimer = setInterval(writeEdge, config.edgeKeepAliveMs);
+  }
+
+  /** A refusal after the comment has already committed the status. */
+  const failInBand = (anthropicType: string, openaiCode: string, message: string): void => {
+    stopEdge();
+    if (reply.raw.destroyed || reply.raw.writableEnded) return;
+    try {
+      reply.raw.write(sseErrorFrame(wire, anthropicType, openaiCode, message));
+      reply.raw.end();
+    } catch {
+      /* The client went away between the comment and the refusal. */
+    }
+  };
+
   let lease;
   try {
     lease = await gate.for(target.provider.id).acquire({
@@ -423,6 +517,21 @@ async function handleProxy(
       },
     });
   } catch (err) {
+    if (reply.raw.headersSent) {
+      if (err instanceof OverloadedError) {
+        failInBand('overloaded_error', 'rate_limit_exceeded', tr(req, 'The gateway is busy; try again shortly'));
+      } else if (err instanceof QueueTimeoutError) {
+        failInBand('rate_limit_error', 'rate_limit_exceeded', tr(req, 'Timed out waiting in the queue; try again'));
+      } else if (!(err instanceof AbortedError)) {
+        req.log.error({ err }, 'gateway failed after the edge comment had started the response');
+        failInBand('api_error', 'server_error', tr(req, 'The upstream request failed'));
+      } else {
+        stopEdge();
+        if (!reply.raw.writableEnded) reply.raw.end();
+      }
+      return undefined;
+    }
+    stopEdge();
     if (err instanceof OverloadedError) {
       reply.header('retry-after', '5');
       return sendError(reply, wire, 529, 'overloaded_error', 'rate_limit_exceeded', tr(req, 'The gateway is busy; try again shortly'));
@@ -449,12 +558,15 @@ async function handleProxy(
           : mockStream(wire, body, await localAgentText(body, ac.signal));
       absorbStream(wire, stream, acc);
       acc.ttftMs = Date.now() - startedAt;
-      reply.raw.writeHead(200, {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-cache, no-transform',
-        connection: 'keep-alive',
-        ...(wire === 'anthropic' ? allowanceHeaders(verdict.status, target) : {}),
-      });
+      stopEdge();
+      if (!reply.raw.headersSent) {
+        reply.raw.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache, no-transform',
+          connection: 'keep-alive',
+          ...(wire === 'anthropic' ? allowanceHeaders(verdict.status, target) : {}),
+        });
+      }
       reply.raw.write(stream);
       reply.raw.end();
       return undefined;
@@ -655,7 +767,7 @@ async function handleProxy(
      * failed to arrive, the client had already been told 200, and the best left to say was
      * an error object under a success. Held back, the same failure is a 504.
      */
-    if (streaming) reply.raw.writeHead(status, outHeaders);
+    if (streaming && !reply.raw.headersSent) reply.raw.writeHead(status, outHeaders);
 
     /*
      * How long the body may take, whichever shape it is.
@@ -673,7 +785,11 @@ async function handleProxy(
 
     if (!upstream.body) {
       if (idle) clearTimeout(idle);
-      reply.raw.writeHead(status, outHeaders);
+      if (!reply.raw.headersSent) reply.raw.writeHead(status, outHeaders);
+      else if (status >= 400) {
+        failInBand('api_error', 'server_error', tr(req, 'The upstream request failed'));
+        return undefined;
+      }
       reply.raw.end();
     } else if (streaming) {
       // Streaming: relay the bytes untouched while sniffing usage alongside. When
@@ -721,7 +837,7 @@ async function handleProxy(
        * though, so a ping is only injected when the last chunk ended one — a frame cut in
        * half by a ping is worse than a stream that goes quiet.
        */
-      const ping = wire === 'anthropic' ? 'event: ping\ndata: {"type":"ping"}\n\n' : ': ping\n\n';
+      const ping = streamPing(wire);
       /*
        * Three things have to hold before one goes out.
        *
@@ -742,7 +858,6 @@ async function handleProxy(
        * a ping spliced into the middle of a frame supplies the blank line the upstream had
        * not sent yet — the event dispatches early and the real one arrives untyped.
        */
-      let atFrameBoundary = false;
       let heardSincePing = false;
       const keepAlive =
         config.streamKeepAliveMs > 0
@@ -751,14 +866,18 @@ async function handleProxy(
               if (!heardSincePing || !atFrameBoundary) return;
               heardSincePing = false;
               reply.raw.write(ping);
+              // A ping is bytes on the wire. The edge comment measures the same silence.
+              touchEdge();
             }, config.streamKeepAliveMs)
           : null;
       /** Every write to the client goes through here, so the ping clock cannot drift from it */
       const toClient = (chunk: string | Buffer, endsFrame: boolean): void => {
         if (!chunk.length) return;
         reply.raw.write(chunk);
+        wroteFrame = true;
         atFrameBoundary = endsFrame;
         keepAlive?.refresh();
+        touchEdge();
       };
       /** Whether a chunk we are about to relay leaves the stream between frames */
       const endsFrame = (s: string): boolean => /\r?\n\r?\n$/.test(s);
@@ -848,6 +967,12 @@ async function handleProxy(
         req.log.error({ phase: ac.signal.reason.phase }, 'gateway upstream timed out');
         status = 504;
         const msg = tr(req, 'The upstream did not answer in time; try again');
+        // The edge comment may already have committed a 200. The status is gone; the
+        // frame is the only place left to say the body never arrived.
+        if (reply.raw.headersSent) {
+          failInBand('api_error', 'server_error', msg);
+          return undefined;
+        }
         reply.raw.writeHead(504, { 'content-type': 'application/json' });
         reply.raw.write(
           JSON.stringify(wire === 'anthropic' ? anthropicError('api_error', msg) : openaiError('server_error', msg)),
@@ -876,16 +1001,32 @@ async function handleProxy(
        */
       const folded = upstreamSse && target.translate && wire === 'anthropic' ? chatStreamToResponse(text) : text;
       const refused = target.translate && wire === 'anthropic' && isErrorBody(safeParse(folded));
+      const payload = refused
+        ? JSON.stringify(anthropicError('api_error', errorTextOf(safeParse(folded))))
+        : target.translate && wire === 'anthropic'
+          ? chatResponseToAnthropic(folded, reqModel)
+          : wire === 'anthropic'
+            ? text
+            : (stripRateLimits(text, (rl) => allowance.recordCodex(target.provider.name, target.wire, rl)) ?? text);
+      /*
+       * The client asked for a stream and the comment already opened one, but the upstream
+       * answered with a single body. A status cannot be written now. An error becomes the
+       * same frame a mid-stream failure uses; anything else goes out as one data field so
+       * the bytes that follow the comment are still a frame.
+       */
+      if (reply.raw.headersSent) {
+        if (status >= 400 || refused) {
+          const said = errorTextOf(safeParse(folded));
+          failInBand('api_error', 'server_error', said && said !== '{}' ? said : tr(req, 'The upstream request failed'));
+        } else if (!reply.raw.writableEnded) {
+          stopEdge();
+          reply.raw.write(`data: ${payload.replace(/\r?\n/g, '\ndata: ')}\n\n`);
+          reply.raw.end();
+        }
+        return undefined;
+      }
       reply.raw.writeHead(status, outHeaders);
-      reply.raw.write(
-        refused
-          ? JSON.stringify(anthropicError('api_error', errorTextOf(safeParse(folded))))
-          : target.translate && wire === 'anthropic'
-            ? chatResponseToAnthropic(folded, reqModel)
-            : wire === 'anthropic'
-              ? text
-              : (stripRateLimits(text, (rl) => allowance.recordCodex(target.provider.name, target.wire, rl)) ?? text),
-      );
+      reply.raw.write(payload);
       reply.raw.end();
     }
   } catch (err) {
@@ -895,16 +1036,16 @@ async function handleProxy(
       req.log.error({ err, phase: timedOut?.phase }, timedOut ? 'gateway upstream timed out' : 'gateway upstream failed');
       // For the trace: a request that never got a status still needs to say what happened
       if (timedOut && !status) status = 504;
+      // A dead proxy and a dead upstream have to be told apart: one is our component,
+      // the other is theirs. Reporting both as "the upstream request failed" sends
+      // whoever is on call to the provider's status page while the problem is here.
+      const viaProxy = auditProxyBase();
+      const msg = timedOut
+        ? tr(req, 'The upstream did not answer in time; try again')
+        : viaProxy
+          ? tr(req, 'The audit proxy is unreachable ({url}); the request was not sent', { url: viaProxy })
+          : tr(req, 'The upstream request failed');
       if (!reply.raw.headersSent) {
-        // A dead proxy and a dead upstream have to be told apart: one is our component,
-        // the other is theirs. Reporting both as "the upstream request failed" sends
-        // whoever is on call to the provider's status page while the problem is here.
-        const viaProxy = auditProxyBase();
-        const msg = timedOut
-          ? tr(req, 'The upstream did not answer in time; try again')
-          : viaProxy
-            ? tr(req, 'The audit proxy is unreachable ({url}); the request was not sent', { url: viaProxy })
-            : tr(req, 'The upstream request failed');
         // 504 for a timeout: a 5xx the CLI retries, which for an upstream that is merely
         // slow is the right reflex
         reply.raw.writeHead(timedOut ? 504 : 502, { 'content-type': 'application/json' });
@@ -913,10 +1054,13 @@ async function handleProxy(
             wire === 'anthropic' ? anthropicError('api_error', msg) : openaiError('server_error', msg),
           ),
         );
+        reply.raw.end();
+      } else {
+        failInBand('api_error', 'server_error', msg);
       }
-      reply.raw.end();
     }
   } finally {
+    stopEdge();
     req.raw.off('close', onDisconnect);
     req.raw.off('aborted', onDisconnect);
     reply.raw.off('close', onDisconnect);

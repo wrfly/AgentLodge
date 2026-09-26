@@ -49,6 +49,7 @@
     "test:cursor-relay": "tsx src/gateway/cursor/relay.test.ts",
     "cursor:probe": "tsx src/gateway/cursor/probe.ts",
     "test:relay": "tsx src/gateway/relay.test.ts",
+    "test:edge-keepalive": "tsx src/gateway/edge-keepalive.test.ts",
     "test:cost": "tsx src/core/db/cost.test.ts",
     "test:currency": "tsx src/core/db/currency.test.ts",
     "test:refusal": "tsx src/core/db/refusal.test.ts",
