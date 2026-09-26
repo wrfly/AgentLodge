@@ -148,6 +148,9 @@ services:
       # a closed list: documented but unforwarded, they would look settable and do nothing.
       UPSTREAM_IDLE_TIMEOUT_MS: ${UPSTREAM_IDLE_TIMEOUT_MS:-330000}
       STREAM_KEEP_ALIVE_MS: ${STREAM_KEEP_ALIVE_MS:-15000}
+      # A comment, not a ping: keeps a proxy with a ~120s read timeout (Cloudflare 524)
+      # from cutting a stream that is still waiting to have something to say.
+      EDGE_KEEP_ALIVE_MS: ${EDGE_KEEP_ALIVE_MS:-60000}
       UPSTREAM_HEADERS_TIMEOUT_MS: ${UPSTREAM_HEADERS_TIMEOUT_MS:-90000}
       LOG_LEVEL: ${LOG_LEVEL:-warn}
       # Must match app's

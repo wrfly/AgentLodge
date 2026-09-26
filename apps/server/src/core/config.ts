@@ -202,6 +202,19 @@ export const config = {
   streamKeepAliveMs: ms(process.env.STREAM_KEEP_ALIVE_MS, 15_000),
 
   /**
+   * How often to write an SSE comment on a stream that has nothing else to send.
+   *
+   * Distinct from the ping above, which is a liveness signal and stays silent while the
+   * upstream does. Cloudflare closes a proxied request that produces no response for 120
+   * seconds (524), and that clock starts when the request is forwarded: the queue, the
+   * wait for upstream headers, and a stream the ping will not touch all write nothing.
+   * A comment is not an event, so a client reading frames skips it, and it does not claim
+   * the upstream is alive. The first one commits the status — past that, a refusal is
+   * said in the stream, because the status line has already gone out. 0 turns it off.
+   */
+  edgeKeepAliveMs: ms(process.env.EDGE_KEEP_ALIVE_MS, 60_000),
+
+  /**
    * How long the platform-wide total behind a pool share is reused. It is one scan over
    * every user's rows in the window, asked for on every response to a user with no ceiling
    * of their own; a few seconds of staleness in a denominator nobody sees costs nothing.
